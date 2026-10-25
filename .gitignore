@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-electron/
+release/
+resources/bin/*.exe
+*.log
+.env
+.env.*
