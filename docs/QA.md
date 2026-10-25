@@ -7,6 +7,8 @@
 **Test date:** 25 October 2026
 **Live catalogue:** YouTube Music anonymous session
 
+> **Release note:** 1.0.3 is a focused fix for the Now Playing header. This document records the 1.0.2 feature baseline; the 1.0.3 patch was verified with typecheck, production build, packaged launch, portable launch and a focused Now Playing regression test.
+
 ## Summary
 
 | Area | Result |

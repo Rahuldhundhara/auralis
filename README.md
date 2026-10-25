@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>Version 1.0.2</strong> · Windows x64 · GPL-3.0-or-later
+  <strong>Version 1.0.3</strong> · Windows x64 · GPL-3.0-or-later
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -39,7 +39,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 
 | Now Playing | Album |
 | --- | --- |
-| ![Now Playing with lyrics](docs/screenshots/now-playing.png) | ![Album detail](docs/screenshots/album.png) |
+| ![Now Playing with queue](docs/screenshots/now-playing.png) | ![Album detail](docs/screenshots/album.png) |
 
 | Artist | Podcast |
 | --- | --- |
@@ -55,8 +55,8 @@ Download the latest Windows x64 build from the [GitHub Releases page](https://gi
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| Installer | [`Auralis-Setup-1.0.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.0.2.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.0.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.0.2.exe) | You want a single executable that does not need installation |
+| Installer | [`Auralis-Setup-1.0.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.0.3.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
+| Portable | [`Auralis-Portable-1.0.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.0.3.exe) | You want a single executable that does not need installation |
 
 The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
 
@@ -71,14 +71,11 @@ These community builds are not code-signed, so Windows SmartScreen may show "Win
 
 Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
 
-### What's new in 1.0.2
+### What's new in 1.0.3
 
-- Picking a search result now starts a related-song station from that song instead of playing the other search results underneath it.
-- Albums, playlists and one-off picks keep going after their last track: Auralis seeds a radio station from the song that just ended. Radio stations follow continuation tokens, so they do not stop after the first batch.
-- Seed-based radio keeps the seed's language and scene; a Hindi song seeds Hindi recommendations, verified live against YouTube Music.
-- Supplied Auralis logo: green "A" play mark with soundwave arcs, used by the installer, window, title bar, splash, tray and README.
-- Hardened live QA: 21 end-to-end checks covering search filters, playback, related autoplay, queue editing, playlists, downloads, lyrics, settings and restart persistence.
-- Rebuilt NSIS installer and portable EXE with the 1.0.2 binaries and refreshed SHA-256 checksums.
+- Fixed the Now Playing close/back button being hidden behind the window titlebar.
+- The Now Playing header, queue and more-options controls now sit below the titlebar and remain visible at every supported window size.
+- Rebuilt NSIS installer and portable EXE with the 1.0.3 binaries and refreshed SHA-256 checksums.
 
 ## Where your data lives
 
@@ -128,8 +125,8 @@ npm run preview
 ### Installer and portable builds
 
 ```powershell
-npm run dist            # release/Auralis-Setup-1.0.2.exe
-npm run dist:portable   # release/Auralis-Portable-1.0.2.exe
+npm run dist            # release/Auralis-Setup-1.0.3.exe
+npm run dist:portable   # release/Auralis-Portable-1.0.3.exe
 ```
 
 Packaging uses `electron-builder` with `npmRebuild: false`; the Electron main process is bundled by esbuild, so no native modules are rebuilt at package time. The bundled tools in `resources/bin` are copied into the app's `resources/bin` directory.
