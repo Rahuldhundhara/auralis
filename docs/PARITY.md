@@ -1,6 +1,28 @@
 # Feature parity
 
-Auralis targets the day-to-day feature set of the reference Android YouTube Music client, rebuilt for Windows. Platform-specific Android features are replaced by native desktop equivalents rather than removed. Most of the matrix is implemented; the five reference features still missing from 1.0.2 are listed under [Remaining gaps](#remaining-gaps-in-102).
+Auralis targets the day-to-day feature set of the reference Android YouTube Music client, rebuilt for desktop (Windows 10/11 and Linux x64). Platform-specific Android features are replaced by native desktop equivalents rather than removed. Most of the matrix is implemented; the five reference features still missing from 1.0.2 are listed under [Remaining gaps](#remaining-gaps-in-102).
+
+## Linux port
+
+The Linux x64 build uses the same renderer, catalogue client, playback pipeline and JSON stores. Windows evidence in this matrix is unchanged. Linux-specific substitutions:
+
+| Windows feature | Linux equivalent |
+| --- | --- |
+| Global media-key shortcuts | MPRIS through the renderer's Media Session handlers |
+| Windows DPAPI cookie encryption | libsecret/GNOME Keyring or KWallet via Electron `safeStorage` |
+| Segoe UI / Cascadia Code | Bundled Selawik / Cascadia Code, with local fonts preferred |
+| Bundled `yt-dlp.exe` / FFmpeg EXE | Native `yt-dlp` / static FFmpeg, with a writable yt-dlp copy for updates |
+| NSIS / portable EXE | AppImage and `.deb` |
+
+The live Linux results are recorded in [`QA-LINUX.md`](QA-LINUX.md). In short,
+21/21 end-to-end checks passed on the unpackaged build; packaged playback,
+downloads, the AppImage and the extracted `.deb` passed; AppImage relaunch,
+tray integration, metadata fonts and MPRIS play/pause were verified; and native
+Wayland passed a home/catalogue smoke test. Login, Last.fm, Discord, translation,
+Shazam, a real `.deb` installation and a Windows runtime regression remain
+unverified or blocked.
+
+
 
 **Status key**
 
@@ -164,3 +186,23 @@ These are credential-bound, not mocked: the buttons call the real services and s
 | Portable EXE cold start | Pass (home feed, bundled yt-dlp/FFmpeg, 122 cards) |
 | Related radio and queue-end autoplay | Pass (5 search rows -> 50-track Hindi station; auto-continue kept 49 related rows) |
 | Silent install / uninstall | Pass (1.0.2 installed app launched with bundled tools, then removed cleanly) |
+
+## Linux verification snapshot
+
+Separate from the Windows snapshot above; see [`QA-LINUX.md`](QA-LINUX.md) for the full record.
+
+| Check | Result |
+| --- | --- |
+| Linux build and packaging | Pass (AppImage and `.deb` built) |
+| Full `qa-full` end-to-end pass | 21/21 checks; no JS/page errors (one remote artwork 404 on the final run) |
+| Packaged `linux-unpacked` playback/download | Pass |
+| AppImage launch, streaming and download | Pass |
+| AppImage relaunch | Pass (new process and window) |
+| `.deb` extracted launch | Pass; install blocked (requires `sudo`) |
+| MPRIS metadata and play/pause | Pass |
+| Keyring backend | Pass (`gnome_libsecret`) |
+| Tray item and close-to-tray | Pass |
+| Tray no-host fallback | Pass (forced probe failure) |
+| Native Wayland smoke test | Pass (home/catalogue) |
+| Metadata fonts | Pass (Selawik, Cascadia Code) |
+| Windows runtime regression | Blocked (requires a Windows host) |

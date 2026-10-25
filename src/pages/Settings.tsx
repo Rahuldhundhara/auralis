@@ -36,6 +36,7 @@ import { useAppStore } from '../stores/app';
 import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
+import { platformId, platformName } from '../lib/platform';
 import { Button, IconButton, Range } from '../components/primitives';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
@@ -237,6 +238,7 @@ function SettingsCard({ title, description, children, icon }: { title: string; d
 
 function GeneralTab() {
   const settings = useAppStore((state) => state.settings);
+  const appInfo = useAppStore((state) => state.appInfo);
   const update = useAppStore((state) => state.updateSettings);
   const reset = useAppStore((state) => state.resetSettings);
 
@@ -270,7 +272,7 @@ function GeneralTab() {
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="Window & system" description="How Auralis behaves with the rest of Windows." icon={<Monitor size={19} />}>
+      <SettingsCard title="Window & system" description={`How Auralis behaves with the rest of ${platformName()}.`} icon={<Monitor size={19} />}>
         <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
           <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
         </SettingRow>
@@ -292,6 +294,12 @@ function GeneralTab() {
             Restart now
           </Button>
         </SettingRow>
+        {appInfo?.trayAvailable === false ? (
+          <p className="settings-footnote">
+            A desktop tray host was not found. On GNOME, install and enable the AppIndicator extension to use the tray icon; otherwise
+            Auralis quits when its window closes.
+          </p>
+        ) : null}
       </SettingsCard>
 
       <SettingsCard title="Reset" description="Return every preference to its original value." icon={<Trash2 size={19} />}>
@@ -330,12 +338,12 @@ function AppearanceTab() {
     { id: 'dark', label: 'Dark', description: 'Soft charcoal surfaces', icon: <Moon size={18} /> },
     { id: 'black', label: 'Black', description: 'True black for OLED', icon: <Moon size={18} /> },
     { id: 'light', label: 'Light', description: 'Bright and airy', icon: <Sun size={18} /> },
-    { id: 'system', label: 'System', description: 'Follow Windows', icon: <Monitor size={18} /> },
+    { id: 'system', label: 'System', description: `Follow ${platformName()}`, icon: <Monitor size={18} /> },
   ];
 
   return (
     <>
-      <SettingsCard title="Theme" description="Auralis switches instantly. System follows your Windows appearance." icon={<Palette size={19} />}>
+      <SettingsCard title="Theme" description={`Auralis switches instantly. System follows your ${platformName()} appearance.`} icon={<Palette size={19} />}>
         <div className="theme-grid">
           {themes.map((theme) => (
             <button
@@ -669,6 +677,7 @@ function LyricsTab() {
 
 function DownloadsTab() {
   const settings = useAppStore((state) => state.settings);
+  const appInfo = useAppStore((state) => state.appInfo);
   const library = useAppStore((state) => state.library);
   const update = useAppStore((state) => state.updateSettings);
   const clearDownloads = useAppStore((state) => state.clearDownloads);
@@ -687,7 +696,15 @@ function DownloadsTab() {
   return (
     <>
       <SettingsCard title="Storage" description="Downloads are saved as audio files that Auralis can play offline." icon={<HardDrive size={19} />}>
-        <SettingRow label="Downloads folder" description={settings.downloadDir || 'Default Music\\Auralis folder'}>
+        <SettingRow
+          label="Downloads folder"
+          description={
+            settings.downloadDir ||
+            (platformId() === 'win32'
+              ? 'Default Music\\Auralis folder'
+              : appInfo?.downloadsDir || 'Default Music/Auralis folder')
+          }
+        >
           <div className="folder-control">
             <Button variant="outline" size="sm" icon={<FolderOpen size={15} />} onClick={() => void chooseFolder()}>
               Change
@@ -1092,7 +1109,7 @@ function AboutTab() {
           <img src="./icon.png" alt="Auralis" />
         </div>
         <div>
-          <span className="eyebrow">Auralis for Windows</span>
+          <span className="eyebrow">Auralis for {platformName()}</span>
           <h1>Auralis</h1>
           <p>A calm, local-first desktop client for YouTube Music. Built with an independent brand and GPL-licensed code.</p>
           <span className="about-version">Version {appInfo?.version || '1.0.0'} · GPL-3.0-or-later</span>
@@ -1111,7 +1128,7 @@ function AboutTab() {
           </div>
           <div>
             <span>Platform</span>
-            <code>{appInfo?.platform || 'win32'}</code>
+            <code>{appInfo?.platform || platformId()}</code>
           </div>
           <div>
             <span>yt-dlp</span>
@@ -1174,7 +1191,7 @@ function AboutTab() {
       </SettingsCard>
 
       <div className="about-footer">
-        <span>Made for Windows · {formatDate(Date.now())}</span>
+        <span>Made for {platformName()} · {formatDate(Date.now())}</span>
         <span>Support the artists you love by listening on official platforms.</span>
       </div>
     </>
@@ -1236,7 +1253,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
 }
 
 const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
-  general: 'Language, region, startup and Windows behaviour.',
+  general: `Language, region, startup and ${platformName()} behaviour.`,
   appearance: 'Theme, accent colour and sidebar layout.',
   playback: 'Streaming quality, volume, speed and the ten-band equalizer.',
   lyrics: 'Provider order, translations and lyric keys.',

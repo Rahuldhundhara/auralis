@@ -170,6 +170,8 @@ export interface AppInfo {
   downloadsDir: string;
   ytDlpVersion?: string;
   ffmpegAvailable: boolean;
+  /** False on Linux desktops without a StatusNotifier/AppIndicator host. */
+  trayAvailable: boolean;
 }
 
 export type ThemeMode = 'dark' | 'light' | 'black' | 'system';

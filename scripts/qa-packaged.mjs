@@ -3,16 +3,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const executablePath = path.resolve('release/win-unpacked/Auralis.exe');
+const executablePath =
+  process.platform === 'win32'
+    ? path.resolve('release/win-unpacked/Auralis.exe')
+    : process.platform === 'linux'
+      ? path.resolve('release/linux-unpacked/auralis')
+      : path.resolve('release/mac/Auralis.app/Contents/MacOS/Auralis');
 if (!fs.existsSync(executablePath)) throw new Error(`Packaged app not found: ${executablePath}`);
 
-fs.mkdirSync('qa', { recursive: true });
+const shotsDir = path.resolve(process.env.AURALIS_QA_SHOTS || (process.platform === 'linux' ? 'qa/linux' : 'qa'));
+fs.mkdirSync(shotsDir, { recursive: true });
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-packaged-'));
 const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-packaged-downloads-'));
 
 const app = await electron.launch({
   executablePath,
-  args: [`--user-data-dir=${userData}`],
+  args: [
+    `--user-data-dir=${userData}`,
+    ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+  ],
   timeout: 90000,
 });
 const page = await app.firstWindow({ timeout: 90000 });
@@ -44,7 +53,7 @@ try {
     downloadsDir: info?.downloadsDir,
     packagedResources: info?.userData,
   }));
-  await page.screenshot({ path: 'qa/packaged-home.png' });
+  await page.screenshot({ path: path.join(shotsDir, 'packaged-home.png') });
 
   // Confirm the packaged UI can reach the live catalogue.
   const shelves = await page.locator('.shelf').count();
@@ -101,7 +110,7 @@ try {
   }));
   await page.locator('.sidebar-item', { hasText: 'Downloads' }).first().click();
   await page.waitForTimeout(1800);
-  await page.screenshot({ path: 'qa/packaged-downloads.png' });
+  await page.screenshot({ path: path.join(shotsDir, 'packaged-downloads.png') });
 
   // Moods and podcasts, the two browse shapes touched in the final pass.
   await page.locator('.sidebar-item', { hasText: 'Explore' }).first().click();
@@ -118,7 +127,7 @@ try {
   });
   console.log('[packaged podcast]', JSON.stringify(podcast));
 
-  await page.screenshot({ path: 'qa/packaged-final.png' });
+  await page.screenshot({ path: path.join(shotsDir, 'packaged-final.png') });
   console.log('[packaged issues]', issues);
 } finally {
   await app.close();

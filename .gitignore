@@ -3,6 +3,8 @@ dist/
 dist-electron/
 release/
 resources/bin/*.exe
+resources/bin/yt-dlp
+resources/bin/ffmpeg
 *.log
 .env
 .env.*

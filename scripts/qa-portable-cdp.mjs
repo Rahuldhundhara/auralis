@@ -4,15 +4,37 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const executablePath = path.resolve(process.argv[2] || 'release/Auralis-Portable-1.0.2.exe');
+function defaultExecutable() {
+  if (process.platform === 'win32') return 'release/Auralis-Portable-1.0.2.exe';
+  if (process.platform === 'linux') {
+    const candidates = fs
+      .readdirSync('release')
+      .filter((name) => /\.AppImage$/i.test(name))
+      .map((name) => path.join('release', name))
+      .sort();
+    return candidates[candidates.length - 1] || 'release/Auralis-1.0.2-x64.AppImage';
+  }
+  return 'release/Auralis-Portable-1.0.2.exe';
+}
+
+const executablePath = path.resolve(process.argv[2] || defaultExecutable());
 const label = process.argv[2] ? 'installed' : 'portable';
 if (!fs.existsSync(executablePath)) throw new Error(`Packaged build not found: ${executablePath}`);
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-portable-'));
 const port = 9333;
-const child = spawn(executablePath, [`--user-data-dir=${userData}`, `--remote-debugging-port=${port}`], {
-  stdio: 'ignore',
-  windowsHide: true,
-});
+const child = spawn(
+  executablePath,
+  [
+    `--user-data-dir=${userData}`,
+    `--remote-debugging-port=${port}`,
+    ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+  ],
+  {
+    stdio: 'ignore',
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+  },
+);
 
 let browser;
 try {
@@ -54,21 +76,37 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 2500));
 } finally {
   await browser?.close().catch(() => {});
-  if (!child.killed) child.kill();
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-  // The portable stub can exit while its extracted child keeps running. Only
-  // terminate processes that belong to this QA profile.
-  try {
-    execFileSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-Command',
-        'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "Auralis.exe" -and $_.CommandLine -like "*$env:AURALIS_QA_USER_DATA*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }',
-      ],
-      { windowsHide: true, env: { ...process.env, AURALIS_QA_USER_DATA: userData } },
-    );
-  } catch {
-    // Nothing left to clean up.
+  if (process.platform === 'win32') {
+    if (!child.killed) child.kill();
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    // The portable stub can exit while its extracted child keeps running. Only
+    // terminate processes that belong to this QA profile.
+    try {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "Auralis.exe" -and $_.CommandLine -like "*$env:AURALIS_QA_USER_DATA*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }',
+        ],
+        { windowsHide: true, env: { ...process.env, AURALIS_QA_USER_DATA: userData } },
+      );
+    } catch {
+      // Nothing left to clean up.
+    }
+  } else {
+    // AppImage/Electron may have child processes; terminate the QA process
+    // group rather than matching unrelated user processes.
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      // Already exited.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // Already exited.
+    }
   }
 }

@@ -44,14 +44,14 @@ const stream = await window.auralis.player.resolve(results.songs[0]);
 
 | Method | Purpose |
 | --- | --- |
-| `info()` | App, Electron, yt-dlp and FFmpeg versions; user-data and downloads paths. |
+| `info()` | App, Electron, yt-dlp and FFmpeg versions; user-data and downloads paths; tray availability. |
 | `minimize()`, `toggleMaximize()`, `close()` | Frameless window controls. |
 | `openExternal(url)` | Opens only `http:`, `https:` and `mailto:` URLs in the default browser. |
-| `showItemInFolder(path)` | Reveals a downloaded file in Explorer. |
+| `showItemInFolder(path)` | Reveals a downloaded file in Explorer (Windows) or the desktop file manager (Linux). |
 | `chooseFolder(defaultPath?)` | Native directory picker for the downloads folder. |
-| `setBadge(text)`, `flashFrame(flag)` | Taskbar feedback. |
+| `setBadge(text)`, `flashFrame(flag)` | Best-effort taskbar/dock feedback. GNOME has no badge API. |
 | `setTheme(dark)` | Keeps the native window chrome in sync with the renderer theme. |
-| `relaunch()` | Restarts to apply graphics changes. |
+| `relaunch()` | Restarts to apply graphics changes. On Linux AppImage it restarts the outer AppImage. |
 
 ### `settings`
 
@@ -140,7 +140,7 @@ Download progress arrives asynchronously through `events.onDownloadProgress`.
 | `events.onDownloadProgress` | `{ id, progress, status, error?, path? }` |
 | `events.onLibraryChange` | Complete updated `LibraryData`. |
 | `events.onSettingsChange` | Complete updated `Settings`. |
-| `events.onMediaKey` | `play-pause`, `next`, `previous` or `stop`. |
+| `events.onMediaKey` | `play-pause`, `next`, `previous` or `stop` (Windows global shortcuts; Linux uses MPRIS). |
 | `events.onNavigate` | Route string sent by the tray menu. |
 | `events.onLyricsTranslation` | `{ lineIndex, text }` for progressive translation. |
 | `events.onSessionChange` | Updated `SessionState` after login, cookie import or sign-out. |
@@ -187,7 +187,7 @@ The shared domain types are deliberately platform-neutral. Every card carries ei
 4. The URL is cached for 90 minutes per track and quality, and wrapped as `auralis-media://stream/<base64url(remote URL)>`.
 5. The protocol handler in `main.ts` fetches the remote URL with YouTube `Referer`, `Origin`, a desktop user agent and the incoming `Range` header, then returns the response with permissive CORS headers.
 6. The renderer plays that URL through a single `HTMLAudioElement`. It is not appended to the DOM but is connected to a Web Audio graph: preamp → 10 peaking filters → compressor → master gain → destination.
-7. Media Session metadata and Windows transport controls are updated on play, pause and position changes.
+7. Media Session metadata and transport controls are updated on play, pause and position changes. Windows receives these through its media integration; Linux exposes them as MPRIS.
 
 The media protocol is what lets the Web Audio EQ inspect the stream. Fetching a cross-origin audio URL directly would taint or block `createMediaElementSource` without CORS.
 
@@ -197,9 +197,9 @@ The media protocol is what lets the Web Audio EQ inspect the stream. Fetching a 
 
 ### Downloads
 
-- Output directory comes from Settings; default `%USERPROFILE%\Music\Auralis`.
+- Output directory comes from Settings; default `%USERPROFILE%\Music\Auralis` on Windows and `~/Music/Auralis` on Linux.
 - Filename is `<videoId>.<ext>`; existing completed files are reused.
-- yt-dlp runs with `--newline --no-part --windows-filenames`, the selected quality selector and the watch URL.
+- yt-dlp runs with `--newline --no-part`, the selected quality selector and the watch URL. `--windows-filenames` is added only on Windows.
 - Progress is parsed from yt-dlp output and broadcast to the renderer.
 - Cancellation kills the process; the library marks the entry `cancelled`.
 - Quality preference maps to yt-dlp audio selectors; `best` keeps the native container (usually M4A/Opus).
@@ -250,7 +250,7 @@ This is an original implementation, not an embedded third-party binary. It is us
 
 ## Persistence
 
-All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis` on Windows). Writes go through a temporary file and atomic rename; writes are debounced by 120 ms.
+All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis` on Windows, `${XDG_CONFIG_HOME:-~/.config}/Auralis` on Linux). Writes go through a temporary file and atomic rename; writes are debounced by 120 ms.
 
 | File | Contents |
 | --- | --- |
@@ -258,9 +258,9 @@ All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis
 | `library.json` | `liked`, `playlists`, `recent`, `events`, `downloads`, `savedAlbums`, `savedArtists`, `searchHistory`. |
 | `session.json` | `cookieEncrypted`, `visitorData`, `dataSyncId`, `authUser`, cached `account`. |
 
-The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). If encryption is unavailable, the cookie falls back to plain storage in `session.json`; this is logged by Electron's storage API behaviour and should be avoided on shared machines. Last.fm, Discord and translation credentials are user-entered settings and are not encrypted separately.
+The YouTube cookie is encrypted with Electron `safeStorage`: DPAPI on Windows, libsecret/GNOME Keyring or KWallet on Linux. If encryption is unavailable, the cookie falls back to plain storage in `session.json`; on Linux the selected backend is logged at startup (`basic_text` indicates the fallback). Last.fm, Discord and translation credentials are user-entered settings and are not encrypted separately.
 
-`settings.json` validation clamps volume to 0–1, speed to 0.5–2 and requires exactly 10 EQ bands. Missing library arrays are repaired to empty arrays on load.
+`settings.json` validation clamps volume to 0–1, speed to 0.5–2 and requires exactly 10 EQ bands. Missing library arrays are repaired to empty arrays on load. On non-Windows systems a copied Windows absolute `downloadDir` is ignored at runtime and replaced with the platform default; library entries are not rewritten.
 
 ## Security model
 
@@ -272,7 +272,7 @@ The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). 
 | Cookies | Encrypted at rest with DPAPI when available; never sent anywhere except YouTube Music and yt-dlp's temporary cookie file. |
 | Temporary cookie file | Created with a random name for yt-dlp, removed when the child process exits. |
 | File paths | Local media URLs are decoded and checked for existence; only app-generated URLs reach the protocol handler. |
-| External binaries | Only the bundled `resources/bin` executables are used; user input is passed as arguments, not through a shell. |
+| External binaries | Only the bundled `resources/bin` executables are used; on Linux yt-dlp is first copied to the writable user-data directory so `-U` works. User input is passed as arguments, not through a shell. |
 | Telemetry | None. Auralis has no backend and no analytics endpoint. |
 | Downloads | Written only to the configured folder. No automatic executable execution. |
 
@@ -285,8 +285,10 @@ The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). 
 | Production preview | `npm run preview` | Runs Electron against `dist/` |
 | NSIS installer | `npm run dist` | `release/Auralis-Setup-1.0.2.exe` |
 | Portable | `npm run dist:portable` | `release/Auralis-Portable-1.0.2.exe` |
+| Linux AppImage | `npm run dist:linux:appimage` | `release/Auralis-1.0.2-x86_64.AppImage` |
+| Linux Debian package | `npm run dist:linux:deb` | `release/Auralis-1.0.2-amd64.deb` |
 
-`electron-builder` packs only `dist`, `dist-electron`, `package.json` and `LICENSE`; `node_modules` is excluded because all runtime dependencies are bundled by esbuild. Icons and `resources/bin/{yt-dlp,ffmpeg}.exe` are copied to `resources/` via `extraResources`. `npmRebuild` is disabled because there are no native Node modules in the packaged runtime.
+`electron-builder` packs only `dist`, `dist-electron`, `package.json` and `LICENSE`; `node_modules` is excluded because all runtime dependencies are bundled by esbuild. Icons, `resources/licenses`, and the platform's `resources/bin` tools are copied to `resources/` via per-platform `extraResources`. Linux packaging runs `scripts/after-pack.cjs` to verify `yt-dlp`/`ffmpeg`, make them executable, and fail the build if either is missing. `npmRebuild` is disabled because there are no native Node modules in the packaged runtime.
 
 ## Compatibility notes
 

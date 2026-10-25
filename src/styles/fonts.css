@@ -1,0 +1,36 @@
+/*
+ * Metric-compatible fallbacks for Linux, where Segoe UI and Cascadia Code are
+ * not installed. On Windows the local fonts are used first, so the interface
+ * keeps its original rendering.
+ */
+@font-face {
+  font-family: 'Selawik';
+  src: local('Selawik'), url('../assets/fonts/selawik-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Selawik';
+  src: local('Selawik Semibold'), url('../assets/fonts/selawik-semibold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Selawik';
+  src: local('Selawik Bold'), url('../assets/fonts/selawik-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Cascadia Code';
+  src: local('Cascadia Code'), url('../assets/fonts/CascadiaCode.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

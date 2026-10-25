@@ -12,6 +12,7 @@ import { useNavStore } from './stores/nav';
 import { useAppStore } from './stores/app';
 import { usePlayerStore } from './stores/player';
 import { useUiStore } from './stores/ui';
+import { platformName } from './lib/platform';
 import { Button, ContextMenu, Toasts, useScrollStore } from './components/primitives';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
@@ -140,7 +141,7 @@ function Splash() {
         <img src="./icon.png" alt="" className="splash-logo" draggable={false} />
         <div className="splash-word">
           <span>Auralis</span>
-          <small>Music for Windows</small>
+          <small>Music for {platformName()}</small>
         </div>
       </div>
       <div className="splash-eq" aria-hidden="true">

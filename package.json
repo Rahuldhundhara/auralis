@@ -6,6 +6,7 @@
   "author": "Auralis",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Rahuldhundhara/auralis#readme",
+  "desktopName": "auralis.desktop",
   "repository": {
     "type": "git",
     "url": "https://github.com/Rahuldhundhara/auralis.git"
@@ -24,7 +25,15 @@
     "dist:portable": "npm run build && electron-builder --win portable",
     "preview": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
-    "test:api": "tsx scripts/test-api.ts"
+    "test:api": "tsx scripts/test-api.ts",
+    "fetch:tools:linux": "node scripts/fetch-tools.mjs",
+    "verify:tools:linux": "node scripts/verify-tools.mjs",
+    "dist:linux": "npm run build && npm run verify:tools:linux && electron-builder --linux",
+    "dist:linux:appimage": "npm run build && npm run verify:tools:linux && electron-builder --linux AppImage",
+    "dist:linux:deb": "npm run build && npm run verify:tools:linux && electron-builder --linux deb",
+    "qa:linux": "node scripts/qa.mjs",
+    "qa:linux:full": "node scripts/qa-full.mjs",
+    "qa:linux:packaged": "node scripts/qa-packaged.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
@@ -75,23 +84,7 @@
       "LICENSE",
       "!node_modules/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "resources/bin",
-        "to": "bin",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "resources/icon.png",
-        "to": "icon.png"
-      },
-      {
-        "from": "resources/tray.png",
-        "to": "tray.png"
-      }
-    ],
+    "afterPack": "scripts/after-pack.cjs",
     "win": {
       "target": [
         {
@@ -102,7 +95,105 @@
         }
       ],
       "icon": "resources/icon.png",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "extraResources": [
+        {
+          "from": "resources/bin",
+          "to": "bin",
+          "filter": [
+            "**/*",
+            "!yt-dlp",
+            "!ffmpeg"
+          ]
+        },
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        },
+        {
+          "from": "resources/tray.png",
+          "to": "tray.png"
+        },
+        {
+          "from": "resources/licenses",
+          "to": "licenses",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "AudioVideo;Audio;Player",
+      "icon": "resources/icon.png",
+      "executableName": "auralis",
+      "maintainer": "Auralis Maintainers <maintainers@auralis.invalid>",
+      "syncDesktopName": true,
+      "synopsis": "Desktop YouTube Music client",
+      "description": "A desktop YouTube Music client.",
+      "desktop": {
+        "entry": {
+          "Name": "Auralis",
+          "Comment": "Desktop YouTube Music client",
+          "StartupWMClass": "auralis"
+        }
+      },
+      "extraResources": [
+        {
+          "from": "resources/bin",
+          "to": "bin",
+          "filter": [
+            "**/*",
+            "!**/*.exe"
+          ]
+        },
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        },
+        {
+          "from": "resources/tray.png",
+          "to": "tray.png"
+        },
+        {
+          "from": "resources/licenses",
+          "to": "licenses",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "xdg-utils"
+      ],
+      "recommends": [
+        "libayatana-appindicator3-1"
+      ],
+      "packageCategory": "sound"
     },
     "nsis": {
       "oneClick": false,

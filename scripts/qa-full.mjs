@@ -3,14 +3,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const shotsDir = path.resolve('qa', 'full');
+const shotsDir = path.resolve(process.env.AURALIS_QA_SHOTS || (process.platform === 'linux' ? 'qa/linux/full' : 'qa/full'));
 fs.mkdirSync(shotsDir, { recursive: true });
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-full-'));
 const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-full-dl-'));
 
 const launch = () =>
   electron.launch({
-    args: ['.', `--user-data-dir=${userData}`],
+    args: [
+      '.',
+      `--user-data-dir=${userData}`,
+      ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
     cwd: process.cwd(),
     env: { ...process.env, AURALIS_FORCE_PROD: '1' },
     timeout: 60000,
@@ -349,6 +353,16 @@ try {
   });
 
   await check('sleep timer sets, expires and clears', async () => {
+    // Start a fresh known track so the timer test does not inherit a paused
+    // or buffering transport left by the queue test.
+    await searchFor('Tera Fitoor');
+    await chip('Songs');
+    await page.locator('.search-page .track-row').first().click();
+    await page.waitForTimeout(4000);
+    const playButton = page.locator('.play-button');
+    const startedLabel = await playButton.getAttribute('aria-label');
+    expect(startedLabel === 'Pause', `fresh playback did not start: ${startedLabel}`);
+
     const button = page.locator('.player-right button[aria-label^="Sleep timer"]');
     await button.click();
     await page.waitForSelector('.context-menu');
@@ -361,9 +375,14 @@ try {
       window.__auralisRealNow = Date.now;
       Date.now = () => window.__auralisRealNow() + 6 * 60 * 1000;
     });
-    await page.waitForTimeout(1600);
-    const afterExpiry = await button.getAttribute('aria-label');
-    const playLabel = await page.locator('.play-button').getAttribute('aria-label');
+    let afterExpiry = '';
+    let playLabel = '';
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await page.waitForTimeout(700);
+      afterExpiry = (await button.getAttribute('aria-label')) || '';
+      playLabel = (await playButton.getAttribute('aria-label')) || '';
+      if (afterExpiry === 'Sleep timer' && playLabel === 'Play') break;
+    }
     expect(afterExpiry === 'Sleep timer', `timer did not clear: ${afterExpiry}`);
     expect(playLabel === 'Play', `playback did not pause: ${playLabel}`);
     await page.evaluate(() => {

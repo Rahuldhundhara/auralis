@@ -22,10 +22,41 @@ export function resourcesBinDir(): string {
   return path.join(app?.getAppPath?.() || process.cwd(), 'resources', 'bin');
 }
 
+let cachedYtdlpPath: string | undefined;
+
+/**
+ * Linux packages mount the app read-only (AppImage) or install it under /opt
+ * (deb). Copy yt-dlp into the writable user-data directory once so its
+ * built-in `-U` update works after installation. Windows keeps using the
+ * bundled executable exactly as before.
+ */
 export function ytdlpPath(): string {
-  const exe = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  if (process.platform === 'win32') {
+    const exe = 'yt-dlp.exe';
+    const bundled = path.join(resourcesBinDir(), exe);
+    return fs.existsSync(bundled) ? bundled : exe;
+  }
+
+  if (cachedYtdlpPath) return cachedYtdlpPath;
+  const exe = 'yt-dlp';
   const bundled = path.join(resourcesBinDir(), exe);
-  return fs.existsSync(bundled) ? bundled : exe;
+  try {
+    const user = path.join(app.getPath('userData'), 'bin', exe);
+    if (!fs.existsSync(user) && fs.existsSync(bundled)) {
+      fs.mkdirSync(path.dirname(user), { recursive: true });
+      fs.copyFileSync(bundled, user);
+    }
+    if (fs.existsSync(user)) {
+      fs.chmodSync(user, 0o755);
+      cachedYtdlpPath = user;
+      return user;
+    }
+  } catch (error) {
+    console.warn('[auralis] could not stage yt-dlp in userData; using bundled copy', error);
+  }
+
+  cachedYtdlpPath = fs.existsSync(bundled) ? bundled : exe;
+  return cachedYtdlpPath;
 }
 
 export function ffmpegPath(): string | null {
@@ -47,7 +78,7 @@ function cookieFile(): string | null {
     lines.push(`.youtube.com\tTRUE\t/\tTRUE\t${Math.floor(Date.now() / 1000) + 86400}\t${name}\t${value}`);
   }
   const file = path.join(os.tmpdir(), `auralis-cookies-${crypto.randomUUID()}.txt`);
-  fs.writeFileSync(file, lines.join('\n'), 'utf8');
+  fs.writeFileSync(file, lines.join('\n'), { encoding: 'utf8', mode: 0o600 });
   return file;
 }
 
@@ -212,7 +243,7 @@ export class StreamService {
       ...commonArgs(),
       '--newline',
       '--no-part',
-      '--windows-filenames',
+      ...(process.platform === 'win32' ? ['--windows-filenames'] : []),
       '-f',
       qualityFormat(settingsStore.get().downloadQuality === 'high' ? 'high' : settingsStore.get().downloadQuality),
       '-o',

@@ -407,7 +407,11 @@ export class RecognitionService {
   private decodeToPcm(file: string): Promise<Buffer> {
     const ffmpeg = ffmpegPath();
     if (!ffmpeg) {
-      throw new Error('ffmpeg is required for audio recognition. Place ffmpeg.exe next to yt-dlp.exe.');
+      throw new Error(
+        process.platform === 'win32'
+          ? 'ffmpeg is required for audio recognition. Place ffmpeg.exe next to yt-dlp.exe.'
+          : 'FFmpeg is required for audio recognition. Install it on PATH or place the ffmpeg binary in the app\'s bin folder.',
+      );
     }
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];

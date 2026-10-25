@@ -1,8 +1,9 @@
 import { _electron as electron } from 'playwright-core';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const shotsDir = path.resolve('qa');
+const shotsDir = path.resolve(process.env.AURALIS_QA_SHOTS || (process.platform === 'linux' ? 'qa/linux' : 'qa'));
 fs.mkdirSync(shotsDir, { recursive: true });
 const issues = [];
 let step = 0;
@@ -16,7 +17,11 @@ async function shot(page, name) {
 }
 
 const app = await electron.launch({
-  args: ['.', `--user-data-dir=${path.join(process.env.TEMP || '.', 'auralis-qa-userdata')}`],
+  args: [
+    '.',
+    `--user-data-dir=${path.join(os.tmpdir(), 'auralis-qa-userdata')}`,
+    ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+  ],
   cwd: process.cwd(),
   env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', AURALIS_FORCE_PROD: '1' },
   timeout: 60000,

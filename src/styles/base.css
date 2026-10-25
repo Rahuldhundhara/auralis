@@ -20,8 +20,8 @@
   --radius-xl: 28px;
   --radius-pill: 999px;
 
-  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
-  --font-display: 'Segoe UI Variable Display', 'Segoe UI', Inter, system-ui, sans-serif;
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', Selawik, Inter, system-ui, -apple-system, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', Selawik, Inter, system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 
   --ease: cubic-bezier(0.22, 0.8, 0.24, 1);

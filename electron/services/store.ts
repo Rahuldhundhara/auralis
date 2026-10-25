@@ -1,5 +1,6 @@
 import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   AccountInfo,
@@ -11,13 +12,17 @@ import type {
 
 let cachedUserData: string | undefined;
 
+function fallbackTestDir(): string {
+  return path.join(os.tmpdir(), 'auralis-test');
+}
+
 /** Resolves Electron's per-user data directory lazily (also lets scripts import this module). */
 export function userDataDir(): string {
   if (cachedUserData) return cachedUserData;
   try {
-    cachedUserData = app?.getPath?.('userData') || process.env.AURALIS_USER_DATA || path.join(process.env.TEMP || '.', 'auralis-test');
+    cachedUserData = app?.getPath?.('userData') || process.env.AURALIS_USER_DATA || fallbackTestDir();
   } catch {
-    cachedUserData = process.env.AURALIS_USER_DATA || path.join(process.env.TEMP || '.', 'auralis-test');
+    cachedUserData = process.env.AURALIS_USER_DATA || fallbackTestDir();
   }
   return cachedUserData;
 }
@@ -183,6 +188,21 @@ class JsonFile<T> {
   }
 }
 
+const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]|^\\\\/;
+
+/**
+ * A settings.json copied from the Windows build may contain C:\... paths.
+ * Ignore them at runtime instead of deleting files or rewriting the user's
+ * library data. The next settings write persists the Linux default.
+ */
+function normalizePlatformSettings(settings: Settings): Settings {
+  if (process.platform !== 'win32' && WINDOWS_ABSOLUTE_PATH.test(settings.downloadDir || '')) {
+    console.warn('[auralis] ignoring Windows download folder on Linux:', settings.downloadDir);
+    settings.downloadDir = downloadsDir();
+  }
+  return settings;
+}
+
 export const settingsStore = new JsonFile<Settings>(path.join(userDataDir(), 'settings.json'), DEFAULT_SETTINGS, (value) => {
   const merged = deepMerge(DEFAULT_SETTINGS, value);
   if (!Array.isArray(merged.eq?.bands) || merged.eq.bands.length !== 10) {
@@ -190,7 +210,7 @@ export const settingsStore = new JsonFile<Settings>(path.join(userDataDir(), 'se
   }
   merged.volume = Math.min(1, Math.max(0, Number(merged.volume) || 0));
   merged.playbackRate = Math.min(2, Math.max(0.5, Number(merged.playbackRate) || 1));
-  return merged;
+  return normalizePlatformSettings(merged);
 });
 
 export const libraryStore = new JsonFile<LibraryData>(path.join(userDataDir(), 'library.json'), DEFAULT_LIBRARY, (value) => {
@@ -208,6 +228,32 @@ interface SessionFile {
   dataSyncId?: string;
   authUser?: string;
   account?: AccountInfo;
+}
+
+let backendLogged = false;
+
+function encryptionAvailable(): boolean {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/** Log the Linux secret-service backend once, after the app is ready. */
+function logSecretBackend(): void {
+  if (backendLogged || process.platform !== 'linux' || !app.isReady()) return;
+  backendLogged = true;
+  try {
+    const backend = safeStorage.getSelectedStorageBackend();
+    if (backend === 'basic_text') {
+      console.warn('[auralis] no OS keyring available; session cookies use Electron basic_text storage');
+    } else {
+      console.info('[auralis] secret storage backend:', backend);
+    }
+  } catch {
+    // Older Electron builds do not expose the backend.
+  }
 }
 
 export class SessionStore {
@@ -228,8 +274,9 @@ export class SessionStore {
 
   get cookie(): string | null {
     if (this.cookieCache !== null) return this.cookieCache;
+    logSecretBackend();
     let cookie = this.data.cookie || null;
-    if (this.data.cookieEncrypted && safeStorage.isEncryptionAvailable()) {
+    if (this.data.cookieEncrypted && encryptionAvailable()) {
       try {
         cookie = safeStorage.decryptString(Buffer.from(this.data.cookieEncrypted, 'base64'));
       } catch {
@@ -242,10 +289,17 @@ export class SessionStore {
 
   set cookie(value: string | null) {
     this.cookieCache = value;
+    logSecretBackend();
     if (value) {
-      if (safeStorage.isEncryptionAvailable()) {
-        this.data.cookieEncrypted = safeStorage.encryptString(value).toString('base64');
-        delete this.data.cookie;
+      if (encryptionAvailable()) {
+        try {
+          this.data.cookieEncrypted = safeStorage.encryptString(value).toString('base64');
+          delete this.data.cookie;
+        } catch (error) {
+          console.error('[auralis] could not encrypt session cookie; storing plaintext', error);
+          this.data.cookie = value;
+          delete this.data.cookieEncrypted;
+        }
       } else {
         this.data.cookie = value;
         delete this.data.cookieEncrypted;
