@@ -1,4 +1,4 @@
-﻿# Quality assurance record
+# Quality assurance record
 
 **Build:** Auralis 1.0.2
 **Platform:** Windows 11 x64 (build 10.0.26300)
@@ -67,14 +67,14 @@ Run the packaged check after `npm run dist`:
 node scripts/qa-packaged.mjs
 ```
 
-## Packaged EXE â€” final result
+## Packaged EXE — final result
 
 Launch: `release/win-unpacked/Auralis.exe` built from the final source, with the app's bundled binaries and icon resources.
 
 ```text
 [packaged info] {"name":"Auralis","version":"1.0.2","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
-  "downloadsDir":"C:\\Users\\rv888\\Music\\Auralis"}
+  "downloadsDir":"%USERPROFILE%\\Music\\Auralis"}
 [packaged home] {"shelves":6,"cards":122}
 [packaged playback] {"title":"Kesariya (From \"Brahmastra\")",
   "playerTitle":"Kesariya (From \"Brahmastra\")",
@@ -90,7 +90,7 @@ Launch: `release/win-unpacked/Auralis.exe` built from the final source, with the
 
 The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:04 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 49 navigation tiles.
 
-## Portable EXE â€” final result
+## Portable EXE — final result
 
 The portable build was started directly, allowed to finish unpacking, then inspected over the Chromium debugging protocol:
 
@@ -102,7 +102,7 @@ The portable build was started directly, allowed to finish unpacking, then inspe
 
 This confirms that the portable stub unpacks and launches the same app, the home feed loads, and the bundled yt-dlp/FFmpeg resources are present. The QA script closes the app through its own API and then terminates only processes belonging to its isolated test profile. A follow-up process check confirmed that no Auralis processes were left running.
 
-## Silent install â€” final result
+## Silent install — final result
 
 The 1.0.2 NSIS installer was installed silently into a temporary directory:
 
