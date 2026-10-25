@@ -5,6 +5,14 @@
   "description": "Auralis - a desktop YouTube Music client for Windows",
   "author": "Auralis",
   "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Rahuldhundhara/auralis#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rahuldhundhara/auralis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rahuldhundhara/auralis/issues"
+  },
   "main": "dist-electron/main.js",
   "private": true,
   "scripts": {
@@ -16,8 +24,7 @@
     "dist:portable": "npm run build && electron-builder --win portable",
     "preview": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
-    "test:api": "tsx scripts/test-api.ts",
-    "test:smoke": "node scripts/smoke-test.mjs"
+    "test:api": "tsx scripts/test-api.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

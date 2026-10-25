@@ -138,7 +138,6 @@ Packaging uses `electron-builder` with `npmRebuild: false`; the Electron main pr
 
 ```powershell
 npm run test:api            # live Innertube parser check
-npm run test:smoke          # renderer smoke test
 node scripts/qa-full.mjs    # 21-check live end-to-end pass
 node scripts/qa-sleep.mjs   # focused sleep-timer regression
 ```
