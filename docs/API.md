@@ -283,8 +283,8 @@ The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). 
 | Main/preload bundle | `npm run build:main` | `dist-electron/main.js`, `preload.js` |
 | Renderer | `npm run build:renderer` | `dist/` |
 | Production preview | `npm run preview` | Runs Electron against `dist/` |
-| NSIS installer | `npm run dist` | `release/Auralis-Setup-1.0.3.exe` |
-| Portable | `npm run dist:portable` | `release/Auralis-Portable-1.0.3.exe` |
+| NSIS installer | `npm run dist` | `release/<version>/Auralis-Setup-<version>.exe` |
+| Portable | `npm run dist:portable` | `release/<version>/Auralis-Portable-<version>.exe` |
 
 `electron-builder` packs only `dist`, `dist-electron`, `package.json` and `LICENSE`; `node_modules` is excluded because all runtime dependencies are bundled by esbuild. Icons and `resources/bin/{yt-dlp,ffmpeg}.exe` are copied to `resources/` via `extraResources`. `npmRebuild` is disabled because there are no native Node modules in the packaged runtime.
 

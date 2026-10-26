@@ -4,8 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const executablePath = path.resolve(process.argv[2] || 'release/Auralis-Portable-1.0.2.exe');
-const label = process.argv[2] ? 'installed' : 'portable';
+const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const executablePath = path.resolve(
+  process.argv[2] || `release/${packageJson.version}/Auralis-Portable-${packageJson.version}.exe`,
+);
+const label = path.basename(executablePath).toLowerCase().includes('portable') ? 'portable' : 'installed';
 if (!fs.existsSync(executablePath)) throw new Error(`Packaged build not found: ${executablePath}`);
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-portable-'));
 const port = 9333;

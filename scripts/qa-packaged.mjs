@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const executablePath = path.resolve('release/win-unpacked/Auralis.exe');
+const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const executablePath = path.resolve(
+  process.env.AURALIS_PACKAGED_EXE || `release/${packageJson.version}/win-unpacked/Auralis.exe`,
+);
 if (!fs.existsSync(executablePath)) throw new Error(`Packaged app not found: ${executablePath}`);
 
 fs.mkdirSync('qa', { recursive: true });

@@ -125,8 +125,8 @@ npm run preview
 ### Installer and portable builds
 
 ```powershell
-npm run dist            # release/Auralis-Setup-1.0.3.exe
-npm run dist:portable   # release/Auralis-Portable-1.0.3.exe
+npm run dist            # release/<version>/Auralis-Setup-<version>.exe
+npm run dist:portable   # release/<version>/Auralis-Portable-<version>.exe
 ```
 
 Packaging uses `electron-builder` with `npmRebuild: false`; the Electron main process is bundled by esbuild, so no native modules are rebuilt at package time. The bundled tools in `resources/bin` are copied into the app's `resources/bin` directory.
@@ -201,7 +201,7 @@ src/                 React renderer (pages, components, stores, styles)
 resources/           App icons and bundled binaries
 scripts/             Build and Playwright QA scripts
 docs/                Screenshots, API notes, parity matrix and QA record
-release/             Installer and portable output (generated)
+release/             Versioned installer and portable output (generated)
 ```
 
 ## License

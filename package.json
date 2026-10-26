@@ -65,7 +65,7 @@
     "npmRebuild": false,
     "compression": "normal",
     "directories": {
-      "output": "release",
+      "output": "release/${version}",
       "buildResources": "resources"
     },
     "files": [
