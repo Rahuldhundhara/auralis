@@ -126,7 +126,10 @@ ELECTRON_OZONE_PLATFORM_HINT=auto ./Auralis-1.0.2-x86_64.AppImage
 ```
 
 Native Wayland support depends on the compositor, GPU driver and Electron's
-Ozone backend. Screen sharing/portals are not part of Auralis's feature set.
+Ozone backend. The packaged build passed the focused controls (16/16), player
+(7/7) and page (8/8) audits under explicit native Wayland, including the
+native-framed Google sign-in window. The full 21-check suite used the default
+XWayland path. Screen sharing/portals are not part of Auralis's feature set.
 
 ### System tray
 
@@ -175,8 +178,11 @@ The bundled FFmpeg is used read-only and does not need updating at runtime.
 - GNOME requires the AppIndicator extension for the tray icon.
 - Hardware badge counts and window urgency hints are desktop-dependent.
 - Windows DPAPI cookies cannot be migrated; sign in again.
-- Login, Last.fm, Discord, translation and Shazam require accounts, keys or an
-  audio sample and are not verified by the automated suite.
+- The sign-in window opens and closes, but login/session restore, Last.fm,
+  Discord, translation and Shazam require accounts, keys or an audio sample and
+  are not verified end-to-end by the automated suite.
+- Copy link shows the app toast and updates Electron's clipboard; pasting into
+  a separate native-Wayland application was not verified.
 - The application has no auto-updater. Download a newer package to update.
 - The AppImage desktop launcher uses electron-builder's `--no-sandbox`
   default; AppRun also adds it when unprivileged user namespaces are not
@@ -187,7 +193,8 @@ The bundled FFmpeg is used read-only and does not need updating at runtime.
   not an Auralis-branded name. Media controls work, but the service name is a
   runtime artifact of Electron.
 - `.deb` installation has not been exercised on this host because it needs
-  root; the extracted package did launch and play audio. See
+  root. `apt-get -s install` dependency resolution passed on Ubuntu 26.04, and
+  the extracted package launched and played audio. See
   [`QA-LINUX.md`](QA-LINUX.md) for the current test record.
 
 ## Troubleshooting

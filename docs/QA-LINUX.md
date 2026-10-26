@@ -36,6 +36,10 @@ add `--no-sandbox` itself (see the sandbox limitation below).
 The Linux QA scripts write to `qa/linux` so they do not overwrite the Windows
 screenshots in `qa/`. Set `AURALIS_QA_SHOTS` to override the output directory.
 
+The focused desktop audits ignore clicks on the custom titlebar close button.
+That guard is test-only: without it, outside pointer input can close the visible
+test window and end an unattended run. It is not present in release builds.
+
 ## Build gates
 
 | Check | Status | Evidence |
@@ -51,27 +55,36 @@ screenshots in `qa/`. Set `AURALIS_QA_SHOTS` to override the output directory.
 Final artifact checksums from the last build:
 
 ```
-1c1156331c272c4571e0dcb9a1a785f4b8d22eef788cdd154eb2b3545728e13a  Auralis-1.0.2-x86_64.AppImage
-17ee90ad9b8c6fbe2a59a3eb42d0b8483a866eafb3504467b7ff24d6565050cc  Auralis-1.0.2-amd64.deb
+b4daf6711d5679d9a6d2b5f85ba4603c273d6a8884fe09f48bac2aee45848363  Auralis-1.0.2-x86_64.AppImage
+8ee164e330c9c552c6d9fd22c4d0addd9af2ada54d926d75959e66411bb004e8  Auralis-1.0.2-amd64.deb
 ```
+
+The original Windows release artifacts in the source checkout were not rebuilt
+or overwritten; their SHA-256 values still match `docs/QA.md`.
+
+The focused page audit found a renderer crash in the **More options** menu on an
+artist detail page. The subscribe item passed a React element where the
+context-menu renderer expects a lucide component, producing React error #130.
+`src/pages/Detail.tsx` now passes `BellOff`/`Bell` directly. Typecheck, build,
+packaging and the rebuilt artist/album/playlist/podcast menu probe passed with no
+renderer errors.
 
 ## End-to-end QA
 
 `scripts/qa-full.mjs` exercises the live service through the real UI. The final
-run passed all checks with no JavaScript/page errors; it logged one remote
-artwork 404, described below.
+run passed all checks with no JavaScript/page errors and no console issues.
 
 | Check | Status | Detail |
 | --- | --- | --- |
 | Home hero and shelves | pass | 6 shelves, 122 cards |
 | Explore / Charts / New / Moods | pass | 5, 3, 1 and 2 shelves; 49 mood cards |
-| Search filters | pass | 26 results; Songs 5, Videos 3, Albums 3, Artists 3, Playlists 6, Podcasts 4 |
+| Search filters | pass | 26 results; Songs 5, Videos 3, Albums 20, Artists 10, Playlists 20, Podcasts 3 |
 | Song playback | pass | Playback started and advanced |
 | Likes and library | pass | Like/unlike round trip |
 | Related radio/autoplay | pass | 50 rows, queue advanced to a related track |
 | Album detail | pass | Tracks rendered, back navigation |
 | Artist detail | pass | 9 shelves |
-| Playlist detail | pass | 100 rows |
+| Playlist detail | pass | 27 rows (live playlist) |
 | Podcast detail | pass | 20 episodes |
 | Queue reorder/remove | pass | Reordered and removed upcoming tracks |
 | Sleep timer | pass | Set, expired, paused and cleared |
@@ -87,16 +100,41 @@ artwork 404, described below.
 
 **Result: 21/21 checks passed, 0 failed. No JavaScript/page errors.**
 
-The final run logged one non-fatal remote artwork 404 from
-`yt3.googleusercontent.com`; earlier full runs were clean. The 404 is live
-catalogue content, not an application exception. The QA harness records it as
-an issue.
+An earlier full run logged one non-fatal remote artwork 404 from
+`yt3.googleusercontent.com`; the final run above was clean. The 404 is live
+catalogue content, not an application exception.
 
-Two earlier full runs failed only the sleep-timer check because that check
-inherited a paused transport left by the queue test. The focused
-`scripts/qa-sleep.mjs` passed, and the sleep check now starts a fresh track before
-setting the timer. The final full run above is the accepted result. No product
-code was changed to make the check pass.
+The sleep-timer check starts a fresh track and waits up to 45 seconds for it to
+reach `Pause`, retrying the row click if the first attempt is still buffering.
+A focused sleep probe on the rebuilt package also passed. The final full run
+above is the accepted result; no product code was changed to make the check
+pass.
+
+## Focused desktop and workflow audits
+
+Three focused Playwright audits ran against the rebuilt `linux-unpacked`
+binary with isolated profiles, explicit native Wayland
+(`--ozone-platform=wayland`) and the test-only close-button guard. They
+supplement the 21-check catalogue suite.
+
+| Audit | Result | Coverage |
+| --- | --- | --- |
+| Desktop controls, settings, windows and keyboard | pass 16/16 | Window minimize/maximize/restore/double-click; sidebar collapse and persistence; back/forward/account/search focus; suggestions/history/clear; identify dialog; General, Appearance, Playback & EQ, Lyrics, Downloads, Integrations, Account and About tabs; settings reset; restart affordance; Space/M/L/Q/arrows/Ctrl+,/Alt+Left shortcuts; toast dismissal |
+| Player, queue, Now Playing and context menus | pass 7/7 | Transport, shuffle/repeat/next/previous, seek/volume/mute/sleep timer, like/lyrics/queue/more, Now Playing tabs/details/like/playlist, queue reorder/remove/clear, track and card context menus, download and show-downloaded-file |
+| Page workflows | pass 8/8 | Home hero/quick actions/shelves/scroll/Show all; Explore tabs; search top result/filters/detail links; library playlist create/rename/delete; liked play/shuffle; recent clear; downloads filters/play/menu/open-folder/clear; album/artist/playlist detail actions/menus; podcast episodes/playback |
+
+The page audit covered 6 home shelves and 122 cards; Explore rendered 50
+Charts, 131 new-release, 49 mood and 96 Explore cards; search returned 20 Songs,
+20 Videos, 20 Albums, 3 Artists, 20 Playlists and 11 Podcasts; the podcast
+detail rendered 20 episodes. These are live catalogue counts and vary between
+runs. The home **Show more**, Explore genre-chip and search **Load more**
+controls were absent for this live response; their absence is not a failure.
+The page audit clicked the top-result play control; transport itself is covered
+by the player audit.
+
+Downloads **Open folder** was invoked with the OS handoff stubbed, and
+copy-link was checked through the app toast and Electron clipboard. External
+`xdg-open`/system-clipboard behavior is listed under Known items.
 
 ## Packaged application
 
@@ -113,12 +151,14 @@ code was changed to make the check pass.
 | AppImage streaming playback | pass | Kesariya started, 0:02 progress, no player error |
 | AppImage download | pass | 3,048,719-byte `.m4a`, writable `userData/bin/yt-dlp` created |
 | AppImage offline playback | pass | Downloaded track played from disk |
-| AppImage relaunch | pass | New AppImage process and new X11 window after restart |
+| Rebuilt AppImage smoke | pass | Native Wayland; 6 shelves/122 cards, Kesariya playback and artist More menu; immediate rerun had no console issues (one earlier attempt hit a transient remote 403) |
+| Rebuilt `.deb` extracted smoke | pass | Default X11; 6 shelves/122 cards, Kesariya playback and artist More menu; no console issues |
+| AppImage relaunch | pass | New AppImage process and new X11 window after restart (verified before the renderer fix; relaunch code unchanged) |
 | `.deb` build | pass | `release/Auralis-1.0.2-amd64.deb` |
 | `.deb` extracted launch | pass | `dpkg-deb -x`; home, search, streaming playback (one earlier attempt hit a transient live-service 403; immediate rerun passed) |
-| `.deb` extracted relaunch | pass | Standard `app.relaunch`; new process and home window |
+| `.deb` extracted relaunch | pass | Standard `app.relaunch`; new process and home window (verified before the renderer fix; relaunch code unchanged) |
 | `.deb` install/launch | blocked | Requires `sudo`; not installed on this host |
-| `.deb` dependency resolution | untested | Dependencies are declared; `apt` resolution was not run |
+| `.deb` dependency resolution | pass (simulated) | `apt-get -s install ./Auralis-1.0.2-amd64.deb` resolves; Ubuntu 26.04 `t64` packages provide `libgtk-3-0` and `libatspi2.0-0`. No install was performed |
 
 ### AppImage relaunch detail
 
@@ -158,7 +198,7 @@ removed during teardown.
 | Edge resize | untested | Needs a dedicated pointer test on X11 and Wayland |
 | X11 rendering | pass | Default XWayland path; QA screenshots |
 | AppImage sandbox | limitation | electron-builder's AppImage desktop entry passes `--no-sandbox`; AppRun also adds it when user namespaces are unavailable. The `.deb` post-install logic retains the Chromium sandbox (SUID `chrome-sandbox` fallback) |
-| Native Wayland rendering | pass (smoke) | `--ozone-platform=wayland` loaded home and 122 cards; full workflows not repeated |
+| Native Wayland rendering | pass (focused) | `--ozone-platform=wayland` passed the focused controls (16/16), player (7/7) and page (8/8) audits, including the native-framed Google sign-in window; the full 21-check suite used the default XWayland path |
 | Fonts | pass | CDP platform-font check: Selawik for UI, Cascadia Code for monospace |
 | 100% scaling | pass | 1440×920 and 1442×864 logical captures |
 | 125% reference comparison | pass (layout) | Windows 1803×1080 reference normalized to 1442×864; moods and settings near-identical |
@@ -189,11 +229,12 @@ loaded when the About badge was rendered.
 | Discord Rich Presence | blocked | No Discord application ID/client |
 | Translation (DeepL/OpenAI) | blocked | No API keys |
 | Shazam recognition | blocked | No microphone/sample in automated run |
+| Sign-in window opens/closes | pass | Native-framed Google sign-in window opened and closed safely; no credentials entered |
 | Microphone permission dialog copy | untested | No interactive microphone test |
 | File chooser | untested | Not exercised in automated run |
 | Open downloads folder | untested | `xdg-open` handoff not exercised |
 | Notifications | untested | Not exercised |
-| yt-dlp in-app update | untested | Network updater not exercised; writable copy creation was verified |
+| yt-dlp in-app update | pass | **Settings → About → Update yt-dlp** completed, produced a success toast and reported the updated version; writable `userData/bin/yt-dlp` copy was used |
 
 ## Screenshots
 
@@ -202,6 +243,8 @@ Linux captures are in `qa/linux`; the Windows reference screenshots in
 
 - `qa/linux/01-home.png` … `13-settings-about.png` — 1440×920 layout pass
 - `qa/linux/full/` — final 21-check sequence and `results.json`
+- `qa/linux/pages/` — focused page-workflow captures (home, Explore, search,
+  library, liked, downloads, detail and podcast)
 - `qa/linux/packaged-home.png`, `packaged-downloads.png`, `packaged-final.png`
 - `qa/linux/compare-1803/` — 1803×1080 captures at 100% logical scale
 - `qa/linux/compare-125/` — 1442×864 logical captures and side-by-side
@@ -226,7 +269,8 @@ will differ even when geometry matches.
 
 ## Known failures and open items
 
-1. `.deb` installation and dependency resolution need a host with `sudo`.
+1. `.deb` installation needs a host with `sudo`. Dependency resolution was
+   simulated with `apt-get -s install` and passed; no package was installed.
 2. Login/session restore, Last.fm, Discord, translation and Shazam need
    credentials or media samples.
 3. Tray context-menu items and double-click were not automated; the tray item,
@@ -234,14 +278,21 @@ will differ even when geometry matches.
 4. The AppImage desktop launcher disables Chromium's sandbox
    (`--no-sandbox`); use the `.deb` when sandbox isolation matters. This is
    electron-builder's AppImage behavior, not an Auralis feature choice.
-5. Native Wayland passed a home/catalogue smoke test only.
+5. Native Wayland passed the focused controls (16/16), player (7/7) and page
+   (8/8) audits, including the native-framed Google sign-in window. The full
+   21-check suite was run on the default XWayland path; a native-Wayland full
+   run was not repeated.
 6. OS-level 125%/150% desktop scaling was not changed; the 125% comparison uses
    matching logical geometry and a normalized Windows reference.
-7. Hardware media keys, file chooser, notifications, `xdg-open` and the in-app
-   yt-dlp updater remain untested.
+7. Hardware media keys, the native file chooser, notifications and `xdg-open`
+   remain untested. The in-app yt-dlp update passed.
 8. The MPRIS D-Bus service is Chromium-branded
    (`org.mpris.MediaPlayer2.chromium.instance<pid>`), not Auralis-branded.
 9. Windows runtime regression needs a Windows host. Static typecheck/build
    against shared code passed on Linux, but no Windows executable was run.
+10. Copy-link actions show the success toast and update Electron's clipboard.
+    Pasting into a separate native-Wayland application was not verified; the
+    external clipboard readers used by the harness did not consistently see
+    the new value while the test window was unfocused.
 
 No Windows runtime result is claimed.

@@ -372,7 +372,7 @@ export function DetailPage({
     if (kind === 'artist' && header) {
       items.push({
         label: header.subscribed ? 'Unsubscribe on YouTube Music' : 'Subscribe on YouTube Music',
-        icon: header.subscribed ? <BellOff size={16} /> : <Bell size={16} />,
+        icon: header.subscribed ? BellOff : Bell,
         onClick: () => void subscribe(),
         disabled: !session.hasCookies,
       });

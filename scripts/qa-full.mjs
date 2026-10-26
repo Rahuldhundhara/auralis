@@ -357,10 +357,21 @@ try {
     // or buffering transport left by the queue test.
     await searchFor('Tera Fitoor');
     await chip('Songs');
-    await page.locator('.search-page .track-row').first().click();
-    await page.waitForTimeout(4000);
     const playButton = page.locator('.play-button');
-    const startedLabel = await playButton.getAttribute('aria-label');
+    await page.locator('.search-page .track-row').first().click();
+    let startedLabel = '';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await page
+        .waitForFunction(
+          () => document.querySelector('.play-button')?.getAttribute('aria-label') === 'Pause',
+          undefined,
+          { timeout: 45000 },
+        )
+        .catch(() => {});
+      startedLabel = (await playButton.getAttribute('aria-label')) || '';
+      if (startedLabel === 'Pause') break;
+      await page.locator('.search-page .track-row').first().click().catch(() => {});
+    }
     expect(startedLabel === 'Pause', `fresh playback did not start: ${startedLabel}`);
 
     const button = page.locator('.player-right button[aria-label^="Sleep timer"]');

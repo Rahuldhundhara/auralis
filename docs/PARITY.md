@@ -194,15 +194,22 @@ Separate from the Windows snapshot above; see [`QA-LINUX.md`](QA-LINUX.md) for t
 | Check | Result |
 | --- | --- |
 | Linux build and packaging | Pass (AppImage and `.deb` built) |
-| Full `qa-full` end-to-end pass | 21/21 checks; no JS/page errors (one remote artwork 404 on the final run) |
+| Full `qa-full` end-to-end pass | 21/21 checks; no JS/page errors or console issues |
+| Focused desktop controls, settings, windows and keyboard | Pass (16/16) |
+| Focused player, queue, Now Playing and context menus | Pass (7/7) |
+| Focused page workflows | Pass (8/8) |
+| Artist detail More menu | Pass after fixing React error #130 |
+| Native-framed sign-in window opens/closes | Pass (no credentials entered) |
 | Packaged `linux-unpacked` playback/download | Pass |
 | AppImage launch, streaming and download | Pass |
+| Rebuilt AppImage/.deb smoke | Pass (launch, playback, artist menu) |
 | AppImage relaunch | Pass (new process and window) |
 | `.deb` extracted launch | Pass; install blocked (requires `sudo`) |
+| `.deb` dependency resolution | Pass (simulated with `apt-get -s install`) |
 | MPRIS metadata and play/pause | Pass |
 | Keyring backend | Pass (`gnome_libsecret`) |
 | Tray item and close-to-tray | Pass |
 | Tray no-host fallback | Pass (forced probe failure) |
-| Native Wayland smoke test | Pass (home/catalogue) |
+| Native Wayland focused audits | Pass (controls 16/16, player 7/7, pages 8/8) |
 | Metadata fonts | Pass (Selawik, Cascadia Code) |
 | Windows runtime regression | Blocked (requires a Windows host) |
