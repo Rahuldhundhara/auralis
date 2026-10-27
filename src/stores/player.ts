@@ -15,6 +15,8 @@ interface PlayerState {
   buffering: boolean;
   position: number;
   duration: number;
+  /** Furthest buffered position in seconds, when the media element exposes it. */
+  buffered: number;
   volume: number;
   muted: boolean;
   rate: number;
@@ -67,12 +69,17 @@ let audio: HTMLAudioElement | null = null;
 let audioContext: AudioContext | null = null;
 let sourceNode: MediaElementAudioSourceNode | null = null;
 let preampNode: GainNode | null = null;
+let bassNode: BiquadFilterNode | null = null;
 let compressorNode: DynamicsCompressorNode | null = null;
+let limiterNode: DynamicsCompressorNode | null = null;
 let eqNodes: BiquadFilterNode[] = [];
 let masterNode: GainNode | null = null;
 let graphAttempted = false;
 let initialized = false;
 let loadToken = 0;
+let activeSrc = '';
+let prefetchTimer: number | undefined;
+let retryCurrent: (() => void) | undefined;
 let pendingSeek = 0;
 let recorded = false;
 let playbackStartedAt = 0;
@@ -105,7 +112,7 @@ function updateMediaSession(track: Track | undefined, playing: boolean) {
           artwork: mediaArtwork(track),
         })
       : null;
-    navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    navigator.mediaSession.playbackState = track ? (playing ? 'playing' : 'paused') : 'none';
   } catch {
     // Media Session is best-effort.
   }
@@ -138,13 +145,22 @@ function ensureAudio(): HTMLAudioElement {
 
 function buildGraph() {
   if (graphAttempted || !audio) return;
-  graphAttempted = true;
   try {
     const Ctor = window.AudioContext || (window as any).webkitAudioContext;
     audioContext = new Ctor();
     sourceNode = audioContext.createMediaElementSource(audio);
     preampNode = audioContext.createGain();
+    bassNode = audioContext.createBiquadFilter();
+    bassNode.type = 'lowshelf';
+    bassNode.frequency.value = 80;
+    bassNode.gain.value = 0;
     compressorNode = audioContext.createDynamicsCompressor();
+    limiterNode = audioContext.createDynamicsCompressor();
+    limiterNode.threshold.value = -1;
+    limiterNode.knee.value = 0;
+    limiterNode.ratio.value = 20;
+    limiterNode.attack.value = 0.003;
+    limiterNode.release.value = 0.12;
     masterNode = audioContext.createGain();
     eqNodes = EQ_FREQUENCIES.map((frequency) => {
       const filter = audioContext!.createBiquadFilter();
@@ -155,40 +171,57 @@ function buildGraph() {
       return filter;
     });
     sourceNode.connect(preampNode);
-    let node: AudioNode = preampNode;
+    preampNode.connect(bassNode);
+    let node: AudioNode = bassNode;
     for (const filter of eqNodes) {
       node.connect(filter);
       node = filter;
     }
     node.connect(compressorNode);
-    compressorNode.connect(masterNode);
+    compressorNode.connect(limiterNode);
+    limiterNode.connect(masterNode);
     masterNode.connect(audioContext.destination);
+    graphAttempted = true;
     applyDsp(useAppStore.getState().settings);
   } catch {
     audioContext = null;
     sourceNode = null;
     preampNode = null;
+    bassNode = null;
     compressorNode = null;
+    limiterNode = null;
     masterNode = null;
     eqNodes = [];
   }
 }
 
 function applyDsp(settings: Settings) {
+  const enabled = settings.eq.enabled;
   if (preampNode && audioContext) {
-    preampNode.gain.setTargetAtTime(Math.pow(10, (settings.eq.enabled ? settings.eq.preamp : 0) / 20), audioContext.currentTime, 0.02);
+    preampNode.gain.setTargetAtTime(Math.pow(10, (enabled ? settings.eq.preamp : 0) / 20), audioContext.currentTime, 0.02);
+  }
+  if (bassNode && audioContext) {
+    bassNode.gain.setTargetAtTime(enabled ? settings.eq.bassBoost || 0 : 0, audioContext.currentTime, 0.03);
   }
   eqNodes.forEach((filter, index) => {
-    const gain = settings.eq.enabled ? settings.eq.bands[index] || 0 : 0;
+    const gain = enabled ? settings.eq.bands[index] || 0 : 0;
     filter.gain.setTargetAtTime(gain, audioContext?.currentTime || 0, 0.03);
   });
   if (compressorNode && audioContext) {
-    const enabled = settings.normalize;
-    compressorNode.threshold.setTargetAtTime(enabled ? -24 : 0, audioContext.currentTime, 0.05);
-    compressorNode.knee.setTargetAtTime(enabled ? 30 : 0, audioContext.currentTime, 0.05);
-    compressorNode.ratio.setTargetAtTime(enabled ? 4 : 1, audioContext.currentTime, 0.05);
-    compressorNode.attack.setTargetAtTime(enabled ? 0.004 : 0.003, audioContext.currentTime, 0.05);
-    compressorNode.release.setTargetAtTime(enabled ? 0.25 : 0.25, audioContext.currentTime, 0.05);
+    const normalize = settings.normalize;
+    compressorNode.threshold.setTargetAtTime(normalize ? -24 : 0, audioContext.currentTime, 0.05);
+    compressorNode.knee.setTargetAtTime(normalize ? 30 : 0, audioContext.currentTime, 0.05);
+    compressorNode.ratio.setTargetAtTime(normalize ? 4 : 1, audioContext.currentTime, 0.05);
+    compressorNode.attack.setTargetAtTime(normalize ? 0.004 : 0.003, audioContext.currentTime, 0.05);
+    compressorNode.release.setTargetAtTime(0.25, audioContext.currentTime, 0.05);
+  }
+  if (masterNode && audioContext) {
+    // Automatic headroom: if the user boosts bands, reduce the master gain
+    // by the same amount so the limiter is a safety net rather than the sound.
+    const maxBoost = enabled
+      ? Math.max(0, settings.eq.preamp, settings.eq.bassBoost || 0, ...settings.eq.bands)
+      : 0;
+    masterNode.gain.setTargetAtTime(Math.pow(10, -maxBoost / 20), audioContext.currentTime, 0.03);
   }
 }
 
@@ -271,7 +304,22 @@ function attachAudioListeners() {
       pendingSeek = 0;
     }
     usePlayerStore.setState({ loading: false });
+    updatePositionState();
     void state;
+  });
+  audio.addEventListener('progress', () => {
+    if (!audio) return;
+    try {
+      const ranges = audio.buffered;
+      if (ranges.length) usePlayerStore.setState({ buffered: ranges.end(ranges.length - 1) });
+    } catch {
+      // buffered ranges are not available for every stream
+    }
+  });
+  audio.addEventListener('durationchange', () => {
+    if (!audio || !Number.isFinite(audio.duration)) return;
+    usePlayerStore.setState({ duration: audio.duration });
+    updatePositionState();
   });
   audio.addEventListener('timeupdate', () => {
     if (!audio) return;
@@ -287,15 +335,21 @@ function attachAudioListeners() {
   audio.addEventListener('play', () => {
     usePlayerStore.setState({ playing: true, buffering: false, error: undefined });
     updateMediaSession(usePlayerStore.getState().current, true);
+    updatePositionState();
     notifyDiscord();
   });
   audio.addEventListener('pause', () => {
     usePlayerStore.setState({ playing: false, buffering: false });
     updateMediaSession(usePlayerStore.getState().current, false);
+    updatePositionState();
     notifyDiscord();
   });
+  audio.addEventListener('seeked', () => updatePositionState());
   audio.addEventListener('waiting', () => usePlayerStore.setState({ buffering: true }));
-  audio.addEventListener('playing', () => usePlayerStore.setState({ buffering: false, loading: false, playing: true }));
+  audio.addEventListener('playing', () => {
+    usePlayerStore.setState({ buffering: false, loading: false, playing: true });
+    updatePositionState();
+  });
   audio.addEventListener('canplay', () => usePlayerStore.setState({ loading: false, buffering: false }));
   audio.addEventListener('ended', () => {
     const state = usePlayerStore.getState();
@@ -318,6 +372,7 @@ function attachAudioListeners() {
   });
   audio.addEventListener('error', () => {
     if (!audio || !audio.src) return;
+    if (!activeSrc || audio.src !== activeSrc) return;
     const state = usePlayerStore.getState();
     if (!state.current) return;
     if (errorRetries < 1) {
@@ -326,9 +381,7 @@ function attachAudioListeners() {
       window.auralis.player.invalidate(track.id).catch(() => {});
       window.setTimeout(() => {
         const current = usePlayerStore.getState();
-        if (current.current?.id === track.id) {
-          current.playAt(current.index);
-        }
+        if (current.current?.id === track.id) retryCurrent?.();
       }, 700);
       return;
     }
@@ -417,6 +470,7 @@ function restoreSession() {
     current: track,
     duration: track.duration || 0,
     position: pendingSeek,
+    buffered: pendingSeek,
     radio: Boolean(saved.radio),
     radioSeed: saved.radioSeed,
     radioContinuation: saved.radioContinuation,
@@ -438,24 +492,30 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       errorRetries = 0;
     }
     const el = ensureAudio();
+    const playable = playableTrack(track);
     buildGraph();
+    window.clearTimeout(prefetchTimer);
+    prefetchTimer = undefined;
     loadToken++;
     const token = loadToken;
     recorded = false;
     playbackStartedAt = Date.now();
     pendingSeek = startAt;
+    activeSrc = '';
     el.pause();
     set({
-      current: track,
+      current: playable,
       loading: true,
       playing: false,
       buffering: false,
       position: startAt,
+      buffered: startAt,
       duration: track.duration || 0,
       error: undefined,
       streamFormat: undefined,
     });
-    updateMediaSession(track, false);
+    updateMediaSession(playable, false);
+    updatePositionState();
     schedulePersist();
     useAppStore.getState().addRecent(track).catch(() => {});
     const settings = useAppStore.getState().settings;
@@ -464,14 +524,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     notifyDiscord();
     try {
-      const stream = await window.auralis.player.resolve(playableTrack(track));
+      const stream = await window.auralis.player.resolve(playable);
       if (token !== loadToken || get().current?.id !== track.id) return;
       audioContext?.resume().catch(() => {});
       el.src = stream.url;
+      activeSrc = stream.url;
       el.playbackRate = settings.playbackRate || 1;
       el.volume = settings.muted ? 0 : settings.volume;
       el.muted = settings.muted;
-      el.load();
       set({ streamFormat: stream.format });
       if (autoplay) {
         try {
@@ -482,8 +542,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       } else {
         set({ loading: false });
       }
-      const nextTrack = get().queue[get().index + 1];
-      if (nextTrack) window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 2200);
+      const nextIndex = get().index + 1;
+      const nextTrack = get().queue[nextIndex];
+      if (nextTrack) {
+        prefetchTimer = window.setTimeout(() => {
+          const current = usePlayerStore.getState();
+          if (current.queue[current.index + 1]?.id === nextTrack.id) {
+            void window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {});
+          }
+        }, 1800);
+      }
     } catch (error: any) {
       if (token !== loadToken) return;
       set({
@@ -493,6 +561,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       });
       useUiStore.getState().toast(`Could not play “${track.title}”: ${error?.message || error}`, 'error');
     }
+  };
+
+  retryCurrent = () => {
+    const state = get();
+    if (state.current) void load(state.current, true, Math.max(0, audio?.currentTime || 0), true);
   };
 
   const radioTracksForQueue = (tracks: Track[]) => {
@@ -559,6 +632,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     buffering: false,
     position: 0,
     duration: 0,
+    buffered: 0,
     volume: 0.9,
     muted: false,
     rate: 1,
@@ -592,6 +666,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         else if (key === 'next') get().next();
         else if (key === 'previous') get().previous();
         else if (key === 'stop') get().stop();
+        else if (key === 'like') {
+          const track = get().current;
+          if (track) {
+            void useAppStore
+              .getState()
+              .toggleLike(track)
+              .then((liked) => useUiStore.getState().toast(liked ? 'Added to liked songs.' : 'Removed from liked songs.', 'success'))
+              .catch((error: any) => useUiStore.getState().toast(`Could not update liked songs: ${error?.message || error}`, 'error'));
+          }
+        }
       });
 
       useAppStore.subscribe((state, previous) => {
@@ -687,6 +771,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     toggle: () => {
       const state = get();
+      if (state.loading) {
+        loadToken++;
+        activeSrc = '';
+        set({ loading: false, playing: false });
+        return;
+      }
       if (state.playing) {
         get().pause();
         return;
@@ -825,6 +915,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const rate = Math.min(2, Math.max(0.5, value));
       if (audio) audio.playbackRate = rate;
       set({ rate });
+      updatePositionState();
       useAppStore.getState().updateSettings({ playbackRate: rate }).catch(() => {});
     },
 
@@ -902,6 +993,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           playing: false,
           position: 0,
           duration: 0,
+          buffered: 0,
           radio: false,
           radioSeed: undefined,
           radioContinuation: undefined,
@@ -972,7 +1064,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         audio.pause();
         audio.currentTime = 0;
       }
-      set({ playing: false, position: 0 });
+      set({ playing: false, position: 0, buffered: 0 });
       updateMediaSession(get().current, false);
       notifyDiscord();
       persistNow();

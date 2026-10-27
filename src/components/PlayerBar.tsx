@@ -30,6 +30,8 @@ import { Artwork, IconButton, Range } from './primitives';
 export function SeekBar({ compact = false }: { compact?: boolean }) {
   const position = usePlayerStore((state) => state.position);
   const duration = usePlayerStore((state) => state.duration);
+  const buffered = usePlayerStore((state) => state.buffered);
+  const loading = usePlayerStore((state) => state.loading);
   const seek = usePlayerStore((state) => state.seek);
   const safeDuration = duration > 0 ? duration : 1;
   return (
@@ -41,11 +43,35 @@ export function SeekBar({ compact = false }: { compact?: boolean }) {
         max={safeDuration}
         step={0.25}
         value={Math.min(position, safeDuration)}
+        buffer={Math.max(position, Math.min(buffered, safeDuration))}
         onValueChange={seek}
         aria-label="Seek"
+        aria-valuetext={`${formatDuration(position)} of ${formatDuration(duration)}`}
+        disabled={loading || duration <= 0}
       />
       {!compact ? <span className="time">{formatDuration(duration)}</span> : null}
     </div>
+  );
+}
+
+function MiniProgress() {
+  const position = usePlayerStore((state) => state.position);
+  const duration = usePlayerStore((state) => state.duration);
+  const buffered = usePlayerStore((state) => state.buffered);
+  const seek = usePlayerStore((state) => state.seek);
+  if (!duration || duration <= 0) return null;
+  return (
+    <Range
+      className="player-mini-progress"
+      min={0}
+      max={duration}
+      step={0.25}
+      value={Math.min(position, duration)}
+      buffer={Math.max(position, Math.min(buffered, duration))}
+      onValueChange={seek}
+      aria-label="Song progress"
+      aria-valuetext={`${formatDuration(position)} of ${formatDuration(duration)}`}
+    />
   );
 }
 
@@ -178,7 +204,7 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
         className="player-art-button"
         onClick={() => {
           const ui = useUiStore.getState();
-          ui.setNowPlayingOpen(true);
+          ui.setNowPlayingOpen(true, 'queue');
         }}
         title="Open now playing"
       >
@@ -255,6 +281,7 @@ export function PlayerBar() {
 
   return (
     <footer className="player-bar">
+      <MiniProgress />
       <div className="player-left">
         <PlayerTrackInfo track={current} />
       </div>
@@ -270,7 +297,7 @@ export function PlayerBar() {
           active={nowPlayingOpen && nowPlayingTab === 'lyrics'}
           onClick={() => {
             setNowPlayingTab('lyrics');
-            setNowPlayingOpen(true);
+            setNowPlayingOpen(true, 'lyrics');
           }}
         >
           <MicVocal size={18} />
@@ -286,7 +313,7 @@ export function PlayerBar() {
           <MoreHorizontal size={19} />
         </IconButton>
         <VolumeControl />
-        <IconButton label="Open now playing" size="sm" onClick={() => setNowPlayingOpen(true)}>
+        <IconButton label="Open now playing" size="sm" onClick={() => setNowPlayingOpen(true, 'queue')}>
           <ChevronUp size={19} />
         </IconButton>
       </div>

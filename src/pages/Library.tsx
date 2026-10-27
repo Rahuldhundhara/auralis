@@ -8,6 +8,7 @@ import {
   History,
   LibraryBig,
   ListMusic,
+  Link2,
   MoreHorizontal,
   Pencil,
   Play,
@@ -263,9 +264,14 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
               <h2>Playlists</h2>
               <span className="section-subtitle">Your own collections, ordered however you like.</span>
             </div>
-            <Button variant="outline" size="sm" icon={<Plus size={16} />} onClick={() => openDialog({ type: 'create-playlist' })}>
-              Create
-            </Button>
+            <div className="section-heading-actions">
+              <Button variant="ghost" size="sm" icon={<Link2 size={15} />} onClick={() => openDialog({ type: 'import-playlist' })}>
+                Import
+              </Button>
+              <Button variant="outline" size="sm" icon={<Plus size={16} />} onClick={() => openDialog({ type: 'create-playlist' })}>
+                Create
+              </Button>
+            </div>
           </div>
           {library.playlists.length ? (
             <div className="media-grid library-playlist-grid">

@@ -38,6 +38,7 @@ import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
 import { platformId, platformName } from '../lib/platform';
 import { Button, IconButton, Range } from '../components/primitives';
+import { EQ_PRESETS, applyPreset } from '../lib/eqPresets';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
   { id: 'general', label: 'General', icon: <Settings2 size={17} /> },
@@ -434,13 +435,13 @@ function PlaybackTab() {
   return (
     <>
       <SettingsCard title="Audio quality" description="Streaming quality is resolved through yt-dlp for every track." icon={<Gauge size={19} />}>
-        <SettingRow label="Streaming quality" description="Automatic picks the best available format for your connection.">
+        <SettingRow label="Streaming quality" description="Quality caps are enforced by the stream selector; Automatic and Best use the highest available audio format.">
           <Select value={settings.audioQuality} onChange={(value) => void update({ audioQuality: value as Settings['audioQuality'] })}>
-            <option value="auto">Automatic</option>
+            <option value="auto">Automatic (best available)</option>
             <option value="best">Best available</option>
-            <option value="high">High (256 kbps)</option>
-            <option value="medium">Medium (128 kbps)</option>
-            <option value="low">Data saver</option>
+            <option value="high">High (up to 256 kbps)</option>
+            <option value="medium">Medium (up to 192 kbps)</option>
+            <option value="low">Data saver (up to 128 kbps)</option>
           </Select>
         </SettingRow>
         <SettingRow label="Normalise volume" description="Evens out loud and quiet tracks with a gentle compressor.">
@@ -464,10 +465,34 @@ function PlaybackTab() {
         description="Ten peaking filters and a preamp, applied in real time through the Web Audio API."
         icon={<AudioLines size={19} />}
       >
-        <SettingRow label="Enable equalizer" description="Bypass leaves the audio untouched.">
+        <SettingRow label="Enable equalizer" description="Disabling the EQ returns every band, bass shelf and preamp to neutral.">
           <Toggle checked={settings.eq.enabled} onChange={(value) => void update({ eq: { ...settings.eq, enabled: value } })} />
         </SettingRow>
         <div className={`eq-panel ${settings.eq.enabled ? '' : 'is-disabled'}`}>
+          <div className="eq-presets" role="group" aria-label="Equalizer presets">
+            {EQ_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="eq-preset"
+                onClick={() => void update({ eq: applyPreset(settings.eq, preset) })}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="eq-head">
+            <span>Bass boost · 80 Hz shelf</span>
+            <span className="eq-value">{settings.eq.bassBoost > 0 ? '+' : ''}{(settings.eq.bassBoost || 0).toFixed(1)} dB</span>
+          </div>
+          <Range
+            min={-12}
+            max={12}
+            step={0.5}
+            value={settings.eq.bassBoost || 0}
+            onValueChange={(value) => void update({ eq: { ...settings.eq, bassBoost: value } })}
+            aria-label="Bass boost"
+          />
           <div className="eq-head">
             <span>Preamp</span>
             <span className="eq-value">{settings.eq.preamp > 0 ? '+' : ''}{settings.eq.preamp.toFixed(1)} dB</span>
@@ -500,12 +525,12 @@ function PlaybackTab() {
             ))}
           </div>
           <div className="eq-footer">
-            <span>31 Hz – 16 kHz · ±12 dB</span>
+            <span>31 Hz – 16 kHz · ±12 dB · automatic headroom + limiter</span>
             <Button
               variant="ghost"
               size="sm"
               icon={<RotateCcw size={14} />}
-              onClick={() => void update({ eq: { ...settings.eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 } })}
+              onClick={() => void update({ eq: { ...settings.eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 } })}
             >
               Flatten
             </Button>
@@ -685,38 +710,20 @@ function DownloadsTab() {
   const done = library.downloads.filter((item) => item.status === 'done');
   const total = library.downloads.reduce((sum, item) => sum + (item.size || 0), 0);
 
-  const chooseFolder = async () => {
-    const folder = await window.auralis.app.chooseFolder(settings.downloadDir);
-    if (folder) {
-      await update({ downloadDir: folder });
-      toast('Downloads folder updated.', 'success');
-    }
-  };
-
   return (
     <>
       <SettingsCard title="Storage" description="Downloads are saved as audio files that Auralis can play offline." icon={<HardDrive size={19} />}>
         <SettingRow
-          label="Downloads folder"
-          description={
-            settings.downloadDir ||
-            (platformId() === 'win32'
-              ? 'Default Music\\Auralis folder'
-              : appInfo?.downloadsDir || 'Default Music/Auralis folder')
-          }
+          label="App-private offline storage"
+          description={appInfo?.downloadsDir || 'Managed by Auralis in its private application data folder.'}
         >
-          <div className="folder-control">
-            <Button variant="outline" size="sm" icon={<FolderOpen size={15} />} onClick={() => void chooseFolder()}>
-              Change
-            </Button>
-            <IconButton
-              label="Open downloads folder"
-              size="sm"
-              onClick={() => void window.auralis.shell.openPath(settings.downloadDir || appInfo?.downloadsDir || '')}
-            >
-              <FolderOpen size={16} />
-            </IconButton>
-          </div>
+          <IconButton
+            label="Open downloads folder"
+            size="sm"
+            onClick={() => void window.auralis.shell.openPath(appInfo?.downloadsDir || '')}
+          >
+            <FolderOpen size={16} />
+          </IconButton>
         </SettingRow>
         <SettingRow label="Download quality" description="Higher quality uses more disk space per song.">
           <Select value={settings.downloadQuality} onChange={(value) => void update({ downloadQuality: value as Settings['downloadQuality'] })}>

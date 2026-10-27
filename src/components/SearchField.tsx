@@ -1,23 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock3, Search, X } from 'lucide-react';
+import { Clock3, Mic, Search, Square, X } from 'lucide-react';
 import type { SearchSuggestion } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
+import { toast } from '../stores/ui';
+import { useVoiceSearch } from '../lib/useVoiceSearch';
 import { IconButton, Spinner } from './primitives';
 
 export function SearchField({
   autoFocus,
   large,
   onSubmitted,
+  onActivate,
+  activateOnFocus = false,
 }: {
   autoFocus?: boolean;
   large?: boolean;
   onSubmitted?: () => void;
+  onActivate?: () => void;
+  activateOnFocus?: boolean;
 }) {
   const route = useNavStore((state) => state.entries[state.index]);
   const navigate = useNavStore((state) => state.navigate);
   const history = useAppStore((state) => state.library.searchHistory);
-  const addHistory = useAppStore((state) => state.addSearchHistory);
   const [value, setValue] = useState(route.page === 'search' ? route.q || '' : '');
   const [open, setOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -25,6 +30,12 @@ export function SearchField({
   const [activeIndex, setActiveIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const voice = useVoiceSearch((text) => {
+    setValue(text);
+    setOpen(true);
+    setActiveIndex(-1);
+    inputRef.current?.focus();
+  });
 
   useEffect(() => {
     if (route.page === 'search') setValue(route.q || '');
@@ -55,6 +66,18 @@ export function SearchField({
   }, []);
 
   useEffect(() => {
+    if (!voice.error) return;
+    toast(voice.error, 'error');
+    voice.clearError();
+  }, [voice.error, voice.clearError]);
+
+  useEffect(() => {
+    // Leaving the search surface must never leave the microphone open.
+    voice.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, route.page === 'search' ? route.q : null]);
+
+  useEffect(() => {
     const query = value.trim();
     if (!query) {
       setSuggestions([]);
@@ -83,11 +106,14 @@ export function SearchField({
   const submit = (query: string) => {
     const q = query.trim();
     if (!q) return;
-    void addHistory(q);
     navigate({ page: 'search', q });
     setOpen(false);
     inputRef.current?.blur();
     onSubmitted?.();
+  };
+
+  const activate = () => {
+    if (activateOnFocus && route.page !== 'search') onActivate?.();
   };
 
   const items = value.trim()
@@ -96,7 +122,14 @@ export function SearchField({
   const heading = value.trim() ? 'Suggestions' : history.length ? 'Recent searches' : '';
 
   return (
-    <div ref={wrapRef} className={`search-field ${large ? 'is-large' : ''} ${open ? 'is-open' : ''}`}>
+    <div
+      ref={wrapRef}
+      className={`search-field ${large ? 'is-large' : ''} ${open ? 'is-open' : ''}`}
+      onClick={() => {
+        inputRef.current?.focus();
+        activate();
+      }}
+    >
       <Search size={large ? 20 : 17} className="search-icon" />
       <input
         ref={inputRef}
@@ -108,7 +141,10 @@ export function SearchField({
           setOpen(true);
           setActiveIndex(-1);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setOpen(true);
+          activate();
+        }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
@@ -127,6 +163,25 @@ export function SearchField({
         aria-label="Search"
       />
       {loading ? <Spinner size={16} className="search-spinner" /> : null}
+      <IconButton
+        label={
+          voice.transcribing
+            ? 'Transcribing voice search'
+            : voice.recording
+              ? 'Stop voice search'
+              : 'Search with your voice'
+        }
+        size="xs"
+        className={`search-mic ${voice.recording ? 'is-recording' : ''}`}
+        disabled={voice.transcribing}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (voice.recording) voice.stop();
+          else void voice.start();
+        }}
+      >
+        {voice.transcribing ? <Spinner size={15} /> : voice.recording ? <Square size={13} fill="currentColor" /> : <Mic size={15} />}
+      </IconButton>
       {value ? (
         <IconButton
           label="Clear search"

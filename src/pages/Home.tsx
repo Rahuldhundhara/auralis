@@ -1,46 +1,111 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Compass, Play, Radio, Sparkles } from 'lucide-react';
-import type { Shelf as ShelfType } from '@shared/types';
+import type { Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
+import { toast } from '../stores/ui';
 import { greeting, shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
 import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
 
+function uniqueTracks<T extends { id: string }>(tracks: T[]): T[] {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+}
+
 function QuickAccess() {
-  const recent = useAppStore((state) => state.library.recent).slice(0, 6);
+  const library = useAppStore((state) => state.library);
+  const recent = library.recent.slice(0, 12);
   const navigate = useNavStore((state) => state.navigate);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const prefetchedRef = useRef(new Set<string>());
+
+  const prefetch = (track: Track | undefined) => {
+    if (!track?.id || prefetchedRef.current.has(track.id)) return;
+    prefetchedRef.current.add(track.id);
+    void window.auralis.player.prefetch(track).catch(() => {});
+  };
+
+  useEffect(() => {
+    if (!recent[0]?.id) return;
+    const timer = window.setTimeout(() => prefetch(recent[0]), 1200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recent[0]?.id]);
+
+  const createMix = () => {
+    const downloaded = library.downloads
+      .filter((item) => item.status === 'done')
+      .map((item) => item.track);
+    const pool = uniqueTracks([...library.liked, ...recent, ...downloaded]);
+    if (!pool.length) {
+      toast('Play or like a few songs first, then Auralis can build a mix.', 'info');
+      navigate({ page: 'explore' });
+      return;
+    }
+    const mix = shuffleArray(pool).slice(0, 40);
+    usePlayerStore.getState().playQueue(mix, 0);
+    toast(`Created a ${mix.length}-song mix from your library.`, 'success');
+  };
+
+  const nudge = (direction: -1 | 1) => {
+    carouselRef.current?.scrollBy({ left: direction * Math.max(260, carouselRef.current.clientWidth * 0.7), behavior: 'smooth' });
+  };
+
   if (!recent.length) return null;
   return (
     <section className="quick-access">
       <div className="section-heading">
-        <h2>Jump back in</h2>
-        <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
-          See all
-        </button>
-      </div>
-      <div className="quick-grid">
-        {recent.map((track, index) => (
-          <button
-            type="button"
-            key={track.id}
-            className="quick-card"
-            onClick={() => usePlayerStore.getState().playQueue(recent, index)}
-          >
-            <Artwork src={track.thumbnail} alt={track.title} className="quick-art" />
-            <span className="quick-text">
-              <span className="quick-title">{track.title}</span>
-              <span className="quick-artist">{track.artists.map((artist) => artist.name).join(', ')}</span>
-            </span>
-            <span className="quick-play">
-              <Play size={15} fill="currentColor" />
-            </span>
+        <div>
+          <h2>Jump back in</h2>
+          <span className="section-subtitle">Your recent listening, ready when you are.</span>
+        </div>
+        <div className="section-heading-actions">
+          <Button variant="ghost" size="sm" icon={<Sparkles size={15} />} onClick={createMix}>
+            Create a Mix
+          </Button>
+          <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
+            See all
           </button>
-        ))}
+        </div>
+      </div>
+      <div className="quick-carousel-wrap">
+        <button type="button" className="quick-carousel-arrow is-left" aria-label="Scroll recent songs left" onClick={() => nudge(-1)}>
+          ‹
+        </button>
+        <div ref={carouselRef} className="quick-grid" role="list" aria-label="Recently played songs">
+          {recent.map((track, index) => (
+            <button
+              type="button"
+              role="listitem"
+              key={track.id}
+              className="quick-card"
+              onClick={() => usePlayerStore.getState().playQueue(recent, index)}
+              onMouseEnter={() => prefetch(track)}
+              onFocus={() => prefetch(track)}
+            >
+              <Artwork src={track.thumbnail} alt={track.title} className="quick-art" />
+              <span className="quick-text">
+                <span className="quick-title">{track.title}</span>
+                <span className="quick-artist">{track.artists.map((artist) => artist.name).join(', ')}</span>
+              </span>
+              <span className="quick-play">
+                <Play size={15} fill="currentColor" />
+              </span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="quick-carousel-arrow is-right" aria-label="Scroll recent songs right" onClick={() => nudge(1)}>
+          ›
+        </button>
       </div>
     </section>
   );

@@ -370,7 +370,6 @@ export class RecognitionService {
     const args = [
       '--no-warnings',
       '--no-playlist',
-      '--no-check-certificates',
       '-f',
       'bestaudio/best',
       '--download-sections',
@@ -419,8 +418,6 @@ export class RecognitionService {
         '-hide_banner',
         '-loglevel',
         'error',
-        '-ss',
-        '8',
         '-t',
         '12',
         '-i',

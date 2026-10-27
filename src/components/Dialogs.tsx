@@ -25,7 +25,8 @@ import { useUiStore, type DialogState } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { useUiStore as useUi } from '../stores/ui';
 import { platformName } from '../lib/platform';
-import { Artwork, Button, IconButton, Modal, Spinner } from './primitives';
+import { EQ_PRESETS, applyPreset } from '../lib/eqPresets';
+import { Artwork, Button, IconButton, Modal, Range, Spinner } from './primitives';
 import { SearchField } from './SearchField';
 
 function CreatePlaylistDialog({ track, onClose }: { track?: import('@shared/types').Track; onClose: () => void }) {
@@ -785,6 +786,8 @@ function DialogContent({ dialog, onClose }: { dialog: DialogState; onClose: () =
   switch (dialog.type) {
     case 'create-playlist':
       return <CreatePlaylistDialog track={dialog.track} onClose={onClose} />;
+    case 'import-playlist':
+      return <ImportPlaylistDialog onClose={onClose} />;
     case 'rename-playlist':
       return <RenamePlaylistDialog playlist={dialog.playlist} onClose={onClose} />;
     case 'add-to-playlist':
@@ -798,14 +801,181 @@ function DialogContent({ dialog, onClose }: { dialog: DialogState; onClose: () =
     case 'yt-playlist':
       return <YouTubePlaylistDialog track={dialog.track} onClose={onClose} />;
     case 'eq':
-      return (
-        <Modal open onClose={onClose} title="Equalizer" subtitle="Fine-tune your sound in Settings → Playback.">
-          <p className="dialog-hint">The equalizer lives with the rest of your playback settings.</p>
-        </Modal>
-      );
+      return <EqualizerDialog onClose={onClose} />;
     default:
       return null;
   }
+}
+
+function ImportPlaylistDialog({ onClose }: { onClose: () => void }) {
+  const importPlaylist = useAppStore((state) => state.importPlaylist);
+  const navigate = useNavStore((state) => state.navigate);
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  const submit = async () => {
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await importPlaylist(url.trim());
+      toast(`Imported ${result.imported} songs${result.skipped ? `, skipped ${result.skipped} duplicates` : ''}.`, 'success');
+      navigate({ page: 'local', id: result.playlist.id });
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Import a playlist"
+      subtitle="Copy a YouTube or YouTube Music playlist into your local library. Your source playlist is never changed."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void submit()}
+            disabled={!url.trim() || busy}
+            icon={busy ? <Spinner size={16} /> : <Link2 size={16} />}
+          >
+            {busy ? 'Importing…' : 'Import playlist'}
+          </Button>
+        </>
+      }
+    >
+      <div className="form-stack">
+        <label className="field">
+          <span>Playlist link or ID</span>
+          <input
+            autoFocus
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            onKeyDown={(event) => event.key === 'Enter' && void submit()}
+            placeholder="https://music.youtube.com/playlist?list=..."
+            spellCheck={false}
+          />
+        </label>
+        <p className="dialog-hint">
+          Auralis reads every page of the public playlist and saves a local copy with the original order. Private playlists use your signed-in session. Spotify, Apple Music and other services are not supported by this importer.
+        </p>
+        {error ? <p className="form-error">{error}</p> : null}
+      </div>
+    </Modal>
+  );
+}
+
+function EqualizerDialog({ onClose }: { onClose: () => void }) {
+  const settings = useAppStore((state) => state.settings);
+  const update = useAppStore((state) => state.updateSettings);
+  const eq = settings.eq;
+  const setBand = (index: number, value: number) => {
+    const bands = [...eq.bands];
+    bands[index] = value;
+    void update({ eq: { ...eq, bands } });
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Equalizer"
+      subtitle="Real-time DSP: 10 peaking bands, an 80 Hz bass shelf and automatic headroom."
+      footer={
+        <>
+          <Button
+            variant="ghost"
+            onClick={() => void update({ eq: { ...eq, enabled: !eq.enabled } })}
+          >
+            {eq.enabled ? 'Disable EQ' : 'Enable EQ'}
+          </Button>
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        </>
+      }
+    >
+      <div className={`eq-panel ${eq.enabled ? '' : 'is-disabled'}`}>
+        <div className="eq-presets" role="group" aria-label="Equalizer presets">
+          {EQ_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="eq-preset"
+              onClick={() => void update({ eq: applyPreset(eq, preset) })}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <div className="eq-head">
+          <span>Bass boost · 80 Hz shelf</span>
+          <span className="eq-value">{eq.bassBoost > 0 ? '+' : ''}{(eq.bassBoost || 0).toFixed(1)} dB</span>
+        </div>
+        <Range
+          min={-12}
+          max={12}
+          step={0.5}
+          value={eq.bassBoost || 0}
+          onValueChange={(value) => void update({ eq: { ...eq, bassBoost: value } })}
+          aria-label="Bass boost"
+        />
+        <div className="eq-head">
+          <span>Preamp</span>
+          <span className="eq-value">{eq.preamp > 0 ? '+' : ''}{eq.preamp.toFixed(1)} dB</span>
+        </div>
+        <Range
+          min={-12}
+          max={12}
+          step={0.5}
+          value={eq.preamp}
+          onValueChange={(value) => void update({ eq: { ...eq, preamp: value } })}
+          aria-label="Preamp"
+        />
+        <div className="eq-bands">
+          {[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency, index) => (
+            <div className="eq-band" key={frequency}>
+              <span className="eq-frequency">{frequency >= 1000 ? `${frequency / 1000}k` : frequency}</span>
+              <Range
+                className="eq-range"
+                min={-12}
+                max={12}
+                step={0.5}
+                value={eq.bands[index] || 0}
+                onValueChange={(value) => setBand(index, value)}
+                aria-label={`${frequency} Hz`}
+              />
+              <span className="eq-value">
+                {eq.bands[index] > 0 ? '+' : ''}
+                {(eq.bands[index] || 0).toFixed(1)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="eq-footer">
+          <span>31 Hz – 16 kHz · ±12 dB · limiter active</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              void update({
+                eq: { ...eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 },
+              })
+            }
+          >
+            Flatten
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 function ConfirmDialog({ dialog, onClose }: { dialog: Extract<DialogState, { type: 'confirm' }>; onClose: () => void }) {

@@ -38,12 +38,14 @@ const api: AuralisApi = {
     addRecent: (track) => invoke('library:add-recent', track),
     recordEvent: (event) => invoke('library:record-event', event),
     createPlaylist: (name, description) => invoke('library:create-playlist', name, description),
+    importPlaylist: (url) => invoke('library:import-playlist', url),
     renamePlaylist: (id, name, description) => invoke('library:rename-playlist', id, name, description),
     deletePlaylist: (id) => invoke('library:delete-playlist', id),
     addToPlaylist: (id, track) => invoke('library:add-to-playlist', id, track),
     removeFromPlaylist: (id, trackId) => invoke('library:remove-from-playlist', id, trackId),
     reorderPlaylist: (id, from, to) => invoke('library:reorder-playlist', id, from, to),
     addSearchHistory: (query) => invoke('library:add-search-history', query),
+    removeSearchHistory: (query) => invoke('library:remove-search-history', query),
     clearSearchHistory: () => invoke('library:clear-search-history'),
     clearRecent: () => invoke('library:clear-recent'),
     saveAlbum: (album) => invoke('library:save-album', album),
@@ -96,6 +98,8 @@ const api: AuralisApi = {
     prefetch: (track) => invoke('player:prefetch', track),
     download: (track) => invoke('player:download', track),
     cancelDownload: (id) => invoke('player:cancel-download', id),
+    pauseDownload: (id) => invoke('player:pause-download', id),
+    resumeDownload: (id) => invoke('player:resume-download', id),
     invalidate: (trackId) => invoke('player:invalidate', trackId),
     ffmpegAvailable: () => invoke('player:ffmpeg-available'),
     ytdlpUpdate: () => invoke('player:ytdlp-update'),
@@ -103,6 +107,9 @@ const api: AuralisApi = {
   lyrics: {
     fetch: (track, providers) => invoke('lyrics:fetch', track, providers),
     translate: (lines, targetLanguage) => invoke('lyrics:translate', lines, targetLanguage),
+  },
+  speech: {
+    transcribe: (audio, mimeType) => invoke('speech:transcribe', audio, mimeType),
   },
   lastfm: {
     state: () => invoke('lastfm:state'),

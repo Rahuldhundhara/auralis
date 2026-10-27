@@ -47,7 +47,8 @@ export const libraryService = {
 
   addRecent(track: Track): LibraryData {
     const data = libraryStore.get();
-    const recent = [{ ...track }, ...data.recent.filter((item) => item.id !== track.id)].slice(0, 100);
+    if (!track?.id) return data;
+    const recent = [{ ...track }, ...data.recent.filter((item) => item?.id !== track.id)].slice(0, 100);
     return commit({ ...data, recent });
   },
 
@@ -77,6 +78,16 @@ export const libraryService = {
     const data = libraryStore.get();
     const searchHistory = [value, ...data.searchHistory.filter((item) => item.toLowerCase() !== value.toLowerCase())].slice(0, 25);
     return commit({ ...data, searchHistory });
+  },
+
+  removeSearchHistory(query: string): LibraryData {
+    const value = clip(query, 120).toLowerCase();
+    if (!value) return libraryStore.get();
+    const data = libraryStore.get();
+    return commit({
+      ...data,
+      searchHistory: data.searchHistory.filter((item) => item.toLowerCase() !== value),
+    });
   },
 
   clearSearchHistory(): LibraryData {
@@ -116,6 +127,29 @@ export const libraryService = {
       createdAt: now,
       updatedAt: now,
       tracks: [],
+    };
+    commit({ ...data, playlists: [playlist, ...data.playlists] });
+    return playlist;
+  },
+
+  importPlaylist(name: string, tracks: Track[], remoteId: string, description = ''): LocalPlaylist {
+    const data = libraryStore.get();
+    const now = Date.now();
+    const seen = new Set<string>();
+    const unique = tracks.filter((track) => {
+      if (!track?.id || seen.has(track.id)) return false;
+      seen.add(track.id);
+      return true;
+    });
+    const playlist: LocalPlaylist = {
+      id: newId('pl'),
+      name: clip(name, 100) || 'Imported playlist',
+      description: clip(description, 500),
+      createdAt: now,
+      updatedAt: now,
+      tracks: unique,
+      cover: unique[0]?.thumbnail,
+      remoteId,
     };
     commit({ ...data, playlists: [playlist, ...data.playlists] });
     return playlist;

@@ -18,11 +18,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { SessionState, Settings, Track } from '../shared/types';
+import type { PlaylistImportResult, SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
 import { innertube } from './services/innertube';
 import { streams } from './services/streams';
 import { lyricsService } from './services/lyrics';
+import { transcribeSpeech } from './services/speech';
 import { lastfm } from './services/lastfm';
 import { discord } from './services/discord';
 import { recognition } from './services/shazam';
@@ -33,6 +34,7 @@ import {
   ensureDownloadsDir,
   flushStores,
   sanitizeCookieString,
+  libraryStore,
   sessionStore,
   settingsStore,
   userDataDir,
@@ -165,6 +167,7 @@ function createTray() {
       { label: 'Play / Pause', click: () => broadcast('media-key', 'play-pause') },
       { label: 'Next track', click: () => broadcast('media-key', 'next') },
       { label: 'Previous track', click: () => broadcast('media-key', 'previous') },
+      { label: 'Like current track', click: () => broadcast('media-key', 'like') },
       { type: 'separator' },
       { label: 'Quit', click: () => { quitting = true; app.quit(); } },
     ]),
@@ -186,6 +189,7 @@ function registerShortcuts() {
     ['MediaNextTrack', 'next'],
     ['MediaPreviousTrack', 'previous'],
     ['MediaStop', 'stop'],
+    ['CommandOrControl+Alt+L', 'like'],
   ];
   for (const [accelerator, key] of bindings) {
     try {
@@ -288,13 +292,38 @@ function readWindowSessionCookies(): string {
   return '';
 }
 
+function isAllowedLocalMedia(filePath: string): boolean {
+  try {
+    const resolved = fs.realpathSync(filePath);
+    const root = fs.realpathSync(downloadsDir());
+    if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return true;
+    return libraryStore
+      .get()
+      .downloads.some((item) => item.path && fs.existsSync(item.path) && fs.realpathSync(item.path) === resolved);
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedStreamUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+    return /(^|\.)googlevideo\.com$|(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)googleusercontent\.com$|(^|\.)ytimg\.com$/i.test(
+      url.hostname,
+    );
+  } catch {
+    return false;
+  }
+}
+
 function registerMediaProtocol() {
   protocol.handle('auralis-media', async (request) => {
     try {
       const url = new URL(request.url);
       if (url.host === 'local') {
         const filePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
-        if (!filePath || !fs.existsSync(filePath)) {
+        if (!filePath || !fs.existsSync(filePath) || !isAllowedLocalMedia(filePath)) {
           return new Response('Not found', { status: 404 });
         }
         const response = await net.fetch(pathToFileURL(filePath).toString());
@@ -303,7 +332,7 @@ function registerMediaProtocol() {
       if (url.host === 'stream') {
         const encoded = url.pathname.replace(/^\//, '');
         const remote = Buffer.from(encoded, 'base64url').toString('utf8');
-        if (!/^https?:\/\//.test(remote)) return new Response('Bad request', { status: 400 });
+        if (!isAllowedStreamUrl(remote)) return new Response('Bad request', { status: 400 });
         const headers: Record<string, string> = {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
@@ -430,9 +459,36 @@ function settingsPatchHandlers() {
   });
 }
 
+function parsePlaylistId(input: string): string {
+  const raw = (input || '').trim();
+  if (!raw) throw new Error('Paste a YouTube or YouTube Music playlist link.');
+  if (!raw.includes('/') && /^[A-Za-z0-9_-]{10,}$/.test(raw)) return raw.replace(/^VL/, '');
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    throw new Error('That does not look like a playlist link.');
+  }
+  if (!/(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(url.hostname)) {
+    throw new Error('Only YouTube and YouTube Music playlist links are supported.');
+  }
+  const list = url.searchParams.get('list');
+  if (!list) throw new Error('This link does not contain a playlist id.');
+  return list.replace(/^VL/, '');
+}
+
+function tracksFromBrowse(page: { shelves: Array<{ items: Array<{ track?: Track }> }> }): Track[] {
+  return page.shelves.flatMap((shelf) => shelf.items.map((item) => item.track).filter((track): track is Track => Boolean(track)));
+}
+
 function mergeSettings(current: Settings, patch: Partial<Settings>): Settings {
   const next: Settings = { ...current, ...patch };
-  if (patch.eq) next.eq = { ...current.eq, ...patch.eq, bands: patch.eq.bands ? [...patch.eq.bands] : current.eq.bands };
+  if (patch.eq) {
+    next.eq = { ...current.eq, ...patch.eq, bands: patch.eq.bands ? [...patch.eq.bands] : current.eq.bands };
+    next.eq.preamp = Math.min(12, Math.max(-12, Number(next.eq.preamp) || 0));
+    next.eq.bassBoost = Math.min(12, Math.max(-12, Number(next.eq.bassBoost) || 0));
+    next.eq.bands = next.eq.bands.map((value) => Math.min(12, Math.max(-12, Number(value) || 0)));
+  }
   if (patch.lastfm) next.lastfm = { ...current.lastfm, ...patch.lastfm };
   if (patch.discord) next.discord = { ...current.discord, ...patch.discord };
   if (patch.translation) next.translation = { ...current.translation, ...patch.translation };
@@ -451,7 +507,7 @@ function registerIpc() {
     userData: userDataDir(),
     // Do not create or probe the folder here. A stale network/FUSE path can
     // block the main process and prevent the window from becoming usable.
-    downloadsDir: settingsStore.get().downloadDir || downloadsDir(),
+    downloadsDir: downloadsDir(),
     ytDlpVersion: await streams.ytdlpVersion(),
     ffmpegAvailable: await streams.ffmpegAvailable(),
     trayAvailable,
@@ -553,6 +609,32 @@ function registerIpc() {
   ipcMain.handle('library:create-playlist', (_event, name: string, description?: string) =>
     libraryService.createPlaylist(name, description),
   );
+  ipcMain.handle('library:import-playlist', async (_event, input: string): Promise<PlaylistImportResult> => {
+    const remoteId = parsePlaylistId(input);
+    const page = await ytm.playlist(remoteId);
+    const tracks = tracksFromBrowse(page);
+    let continuation = page.continuation;
+    let pages = 0;
+    while (continuation && pages < 80 && tracks.length < 5000) {
+      const next = await ytm.detailContinuation(continuation);
+      tracks.push(...next.tracks);
+      continuation = next.continuation;
+      pages++;
+    }
+    if (!tracks.length) throw new Error('That playlist did not contain any playable songs.');
+    const playlist = libraryService.importPlaylist(
+      page.header?.title || 'Imported playlist',
+      tracks,
+      remoteId,
+      `Imported from YouTube Music · ${remoteId}`,
+    );
+    return {
+      playlist,
+      imported: playlist.tracks.length,
+      skipped: Math.max(0, tracks.length - playlist.tracks.length),
+      total: tracks.length,
+    };
+  });
   ipcMain.handle('library:rename-playlist', (_event, id: string, name: string, description?: string) =>
     libraryService.renamePlaylist(id, name, description),
   );
@@ -567,6 +649,7 @@ function registerIpc() {
     libraryService.reorderPlaylist(id, from, to),
   );
   ipcMain.handle('library:add-search-history', (_event, query: string) => libraryService.addSearchHistory(query));
+  ipcMain.handle('library:remove-search-history', (_event, query: string) => libraryService.removeSearchHistory(query));
   ipcMain.handle('library:clear-search-history', () => libraryService.clearSearchHistory());
   ipcMain.handle('library:clear-recent', () => libraryService.clearRecent());
   ipcMain.handle('library:save-album', (_event, album) => libraryService.saveAlbum(album));
@@ -574,10 +657,14 @@ function registerIpc() {
   ipcMain.handle('library:save-artist', (_event, artist) => libraryService.saveArtist(artist));
   ipcMain.handle('library:remove-artist', (_event, id: string) => libraryService.removeArtist(id));
   ipcMain.handle('library:get-downloads', () => libraryService.getDownloads());
-  ipcMain.handle('library:remove-download', (_event, id: string, deleteFile?: boolean) =>
-    libraryService.removeDownload(id, deleteFile),
-  );
-  ipcMain.handle('library:clear-downloads', (_event, deleteFiles?: boolean) => libraryService.clearDownloads(deleteFiles));
+  ipcMain.handle('library:remove-download', (_event, id: string, deleteFile?: boolean) => {
+    streams.cancelDownload(id);
+    return libraryService.removeDownload(id, deleteFile);
+  });
+  ipcMain.handle('library:clear-downloads', (_event, deleteFiles?: boolean) => {
+    for (const item of libraryService.get().downloads) streams.cancelDownload(item.id);
+    return libraryService.clearDownloads(deleteFiles);
+  });
 
   ipcMain.handle('yt:session', () => ytm.session());
   ipcMain.handle('yt:set-cookies', (_event, cookie: string) => ytm.setCookies(sanitizeCookieString(cookie)));
@@ -635,7 +722,15 @@ function registerIpc() {
   );
   ipcMain.handle('player:cancel-download', (_event, id: string) => {
     streams.cancelDownload(id);
+    broadcast('library-change', libraryService.get());
   });
+  ipcMain.handle('player:pause-download', (_event, id: string) => {
+    streams.pauseDownload(id);
+    broadcast('library-change', libraryService.get());
+  });
+  ipcMain.handle('player:resume-download', (_event, id: string) =>
+    streams.resumeDownload(id, (progress) => broadcast('download-progress', progress)),
+  );
   ipcMain.handle('player:invalidate', (_event, trackId: string) => {
     streams.invalidate(trackId);
   });
@@ -645,6 +740,9 @@ function registerIpc() {
   ipcMain.handle('lyrics:fetch', (_event, track: Track, providers?: string[]) => lyricsService.fetch(track, providers));
   ipcMain.handle('lyrics:translate', (_event, lines: string[], targetLanguage?: string) =>
     lyricsService.translate(lines, targetLanguage),
+  );
+  ipcMain.handle('speech:transcribe', (_event, audio: ArrayBuffer, mimeType: string) =>
+    transcribeSpeech(audio, mimeType),
   );
 
   ipcMain.handle('lastfm:state', () => lastfm.state());
@@ -695,6 +793,16 @@ async function bootstrap() {
       // The method is Linux-only and may be unavailable on older Electron.
     }
   }
+  // Voice search needs microphone access from the app's own renderer only.
+  // Deny camera and every other permission request from this bridge.
+  const trustedOrigin = (url: string) => url.startsWith('file://') || url.startsWith(devUrl);
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const mediaTypes = 'mediaTypes' in details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    callback(permission === 'media' && trustedOrigin(contents.getURL()) && !mediaTypes.includes('video'));
+  });
+  session.defaultSession.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
+    return permission === 'media' && trustedOrigin(requestingOrigin) && details?.mediaType !== 'video';
+  });
   // Innertube is constructed at module load, before safeStorage exists on
   // Linux. Refresh after ready so encrypted session cookies can be restored.
   // Windows already had a usable safeStorage at module load.

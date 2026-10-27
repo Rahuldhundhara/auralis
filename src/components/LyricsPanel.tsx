@@ -25,26 +25,33 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const [error, setError] = useState<string | undefined>();
   const [translations, setTranslations] = useState<string[]>([]);
   const [translating, setTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState<string | undefined>();
+  const [view, setView] = useState<'both' | 'original' | 'translated'>('both');
   const [follow, setFollow] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
   const autoTranslatedRef = useRef('');
+  const loadRequestRef = useRef(0);
+  const translateRequestRef = useRef(0);
 
-  const load = async (force = false) => {
+  const load = async () => {
     if (!track) return;
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     setError(undefined);
+    setTranslationError(undefined);
     setTranslations([]);
+    autoTranslatedRef.current = '';
     try {
       const data = await window.auralis.lyrics.fetch(track);
-      if (force || true) {
-        setResult(data);
-        setFollow(true);
-      }
+      if (requestId !== loadRequestRef.current) return;
+      setResult(data);
+      setFollow(true);
     } catch (err: any) {
+      if (requestId !== loadRequestRef.current) return;
       setError(err?.message || 'Could not load lyrics.');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   };
 
@@ -68,19 +75,27 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   }, [index, follow]);
 
   const translate = async () => {
-    if (!result) return;
+    if (!result || translating) return;
+    const requestId = ++translateRequestRef.current;
     setTranslating(true);
+    setTranslationError(undefined);
     try {
       const response = await window.auralis.lyrics.translate(
         result.lines.map((line) => line.text),
         settings.translation.targetLanguage,
       );
+      if (requestId !== translateRequestRef.current) return;
+      if (!response.lines.length) throw new Error('The translator returned no lyrics.');
       setTranslations(response.lines);
+      setView('both');
       toast(`Translated with ${response.provider}.`, 'success');
     } catch (err: any) {
-      toast(`Translation failed: ${err?.message || err}`, 'error');
+      if (requestId !== translateRequestRef.current) return;
+      const message = err?.message || String(err);
+      setTranslationError(message);
+      toast(`Translation failed: ${message}`, 'error');
     } finally {
-      setTranslating(false);
+      if (requestId === translateRequestRef.current) setTranslating(false);
     }
   };
 
@@ -135,9 +150,35 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
             </Button>
           ) : null}
           {translations.length ? (
-            <IconButton label="Hide translation" size="sm" active onClick={() => setTranslations([])}>
-              <Languages size={17} />
-            </IconButton>
+            <>
+              <div className="lyrics-view-toggle" role="group" aria-label="Lyrics language view">
+                {(['original', 'both', 'translated'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={view === mode ? 'is-active' : ''}
+                    aria-pressed={view === mode}
+                    onClick={() => setView(mode)}
+                  >
+                    {mode === 'original' ? 'Original' : mode === 'both' ? 'Both' : 'Translated'}
+                  </button>
+                ))}
+              </div>
+              <IconButton
+                label="Hide translation"
+                size="sm"
+                active
+                onClick={() => {
+                  translateRequestRef.current++;
+                  setTranslations([]);
+                  setTranslationError(undefined);
+                  setTranslating(false);
+                  setView('both');
+                }}
+              >
+                <Languages size={17} />
+              </IconButton>
+            </>
           ) : (
             <Button
               variant="ghost"
@@ -147,14 +188,23 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
               disabled={translating || !result}
               title={settings.translation.provider === 'deepl' ? 'Translate with DeepL' : 'Translate with OpenAI'}
             >
-              Translate
+              {translating ? 'Translating…' : translationError ? 'Retry translation' : 'Translate'}
             </Button>
           )}
-          <IconButton label="Refresh lyrics" size="sm" onClick={() => void load(true)} disabled={loading}>
+          <IconButton label="Refresh lyrics" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
           </IconButton>
         </div>
       </div>
+
+      {translationError ? (
+        <div className="lyrics-translation-error" role="status">
+          <span>{translationError}</span>
+          <button type="button" className="text-button" onClick={() => void translate()} disabled={translating}>
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="lyrics-loading">
@@ -194,6 +244,8 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
           <div className="lyrics-spacer" />
           {result.lines.map((line, lineIndex) => {
             const isActive = lineIndex === index;
+            const translation = line.translation || translations[lineIndex] || '';
+            const showOriginal = view !== 'translated' || !translation;
             return (
               <div
                 key={`${line.time}-${lineIndex}`}
@@ -204,27 +256,30 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
                 }}
               >
                 {line.agent ? <span className="lyric-agent">{line.agent}</span> : null}
-                <span className="lyric-text">
-                  {line.words?.length && isActive
-                    ? line.words.map((word, wordIndex) => (
-                        <span
-                          key={`${word.text}-${wordIndex}`}
-                          className={
-                            word.start <= position && word.end >= position
-                              ? 'lyric-word is-active'
-                              : word.end < position
-                                ? 'lyric-word is-sung'
-                                : 'lyric-word'
-                          }
-                        >
-                          {word.text}
-                        </span>
-                      ))
-                    : line.text || '♪'}
-                </span>
-                {line.romanized ? <span className="lyric-romanized">{line.romanized}</span> : null}
-                {line.translation ? <span className="lyric-translation">{line.translation}</span> : null}
-                {translations[lineIndex] ? <span className="lyric-translation">{translations[lineIndex]}</span> : null}
+                {showOriginal ? (
+                  <span className="lyric-text">
+                    {line.words?.length && isActive
+                      ? line.words.map((word, wordIndex) => (
+                          <span
+                            key={`${word.text}-${wordIndex}`}
+                            className={
+                              word.start <= position && word.end >= position
+                                ? 'lyric-word is-active'
+                                : word.end < position
+                                  ? 'lyric-word is-sung'
+                                  : 'lyric-word'
+                            }
+                          >
+                            {word.text}
+                          </span>
+                        ))
+                      : line.text || '♪'}
+                  </span>
+                ) : null}
+                {line.romanized && showOriginal ? <span className="lyric-romanized">{line.romanized}</span> : null}
+                {translation && view !== 'original' ? (
+                  <span className={`lyric-translation ${view === 'translated' ? 'is-primary' : ''}`}>{translation}</span>
+                ) : null}
               </div>
             );
           })}

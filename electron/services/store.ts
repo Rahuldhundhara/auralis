@@ -28,11 +28,9 @@ export function userDataDir(): string {
 }
 
 export function downloadsDir(): string {
-  try {
-    return path.join(app.getPath('music'), 'Auralis');
-  } catch {
-    return path.join(process.env.USERPROFILE || process.env.HOME || '.', 'Music', 'Auralis');
-  }
+  // Offline media is app-private. It is never placed in Music, Downloads or
+  // any other user-visible folder by default.
+  return path.join(userDataDir(), 'offline');
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -51,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
     enabled: false,
     bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     preamp: 0,
+    bassBoost: 0,
   },
   playbackRate: 1,
   skipSilence: false,
@@ -220,6 +219,14 @@ export const settingsStore = new JsonFile<Settings>(path.join(userDataDir(), 'se
   const merged = deepMerge(DEFAULT_SETTINGS, value);
   if (!Array.isArray(merged.eq?.bands) || merged.eq.bands.length !== 10) {
     merged.eq = { ...DEFAULT_SETTINGS.eq };
+  } else {
+    merged.eq = {
+      ...DEFAULT_SETTINGS.eq,
+      ...merged.eq,
+      preamp: Math.min(12, Math.max(-12, Number(merged.eq.preamp) || 0)),
+      bassBoost: Math.min(12, Math.max(-12, Number(merged.eq.bassBoost) || 0)),
+      bands: merged.eq.bands.map((value) => Math.min(12, Math.max(-12, Number(value) || 0))),
+    };
   }
   merged.volume = Math.min(1, Math.max(0, Number(merged.volume) || 0));
   merged.playbackRate = Math.min(2, Math.max(0.5, Number(merged.playbackRate) || 1));
@@ -231,6 +238,28 @@ export const libraryStore = new JsonFile<LibraryData>(path.join(userDataDir(), '
   for (const key of ['liked', 'playlists', 'recent', 'events', 'downloads', 'savedAlbums', 'savedArtists', 'searchHistory'] as const) {
     if (!Array.isArray((merged as any)[key])) (merged as any)[key] = [];
   }
+  merged.liked = merged.liked.filter((item: LibraryData['liked'][number]) => Boolean(item?.id));
+  merged.recent = merged.recent.filter((item: LibraryData['recent'][number]) => Boolean(item?.id));
+  merged.playlists = merged.playlists
+    .filter((item: LibraryData['playlists'][number]) => Boolean(item?.id))
+    .map((item: LibraryData['playlists'][number]) => ({
+      ...item,
+      tracks: Array.isArray(item.tracks)
+        ? item.tracks.filter((track: Track) => Boolean(track?.id))
+        : [],
+    }));
+  merged.downloads = merged.downloads.filter(
+    (item: LibraryData['downloads'][number]) => Boolean(item?.id && item?.track?.id),
+  );
+  merged.downloads = merged.downloads.map((item: LibraryData['downloads'][number]) => {
+    if (item.status === 'downloading' || item.status === 'queued') {
+      return { ...item, status: 'error' as const, error: 'Download was interrupted when Auralis closed. Retry to resume.' };
+    }
+    if (item.status === 'done' && item.path && !fs.existsSync(item.path)) {
+      return { ...item, status: 'error' as const, error: 'The offline file is missing. Retry the download.' };
+    }
+    return item;
+  });
   return merged;
 });
 
@@ -390,9 +419,9 @@ export function flushStores() {
 }
 
 export async function ensureDownloadsDir(): Promise<string> {
-  const settings = settingsStore.get();
-  const dir = settings.downloadDir || downloadsDir();
-  await fs.promises.mkdir(dir, { recursive: true });
+  const dir = downloadsDir();
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') await fs.promises.chmod(dir, 0o700);
   return dir;
 }
 

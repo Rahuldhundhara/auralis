@@ -288,7 +288,34 @@ a {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  /* Keep scrolling intact but do not reserve a visible scrollbar gutter. */
+  scrollbar-gutter: auto;
+}
+
+/* Hide the visual scrollbar on the main surfaces while preserving wheel,
+   trackpad, keyboard and touch scrolling. */
+.content-scroll,
+.search-popover,
+.drawer-body,
+.lyrics-scroll,
+.np-about,
+.modal-body,
+.modal-overlay,
+.playlist-scroll {
+  scrollbar-width: none;
+}
+
+.content-scroll::-webkit-scrollbar,
+.search-popover::-webkit-scrollbar,
+.drawer-body::-webkit-scrollbar,
+.lyrics-scroll::-webkit-scrollbar,
+.np-about::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar,
+.modal-overlay::-webkit-scrollbar,
+.playlist-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .route-stage {
@@ -536,7 +563,7 @@ a {
   min-height: 0;
   overflow-y: auto;
   padding: 2px 0 8px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .sidebar-playlist {
@@ -833,8 +860,26 @@ a {
   color: var(--accent);
 }
 
-.search-clear {
+.search-clear,
+.search-mic {
   flex: 0 0 auto;
+}
+
+.search-mic.is-recording {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.18);
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0.04);
+  }
 }
 
 .search-popover {
@@ -1118,7 +1163,9 @@ img.artwork {
     var(--accent) 0%,
     var(--accent) var(--range-fill, 0%),
     var(--surface-4) var(--range-fill, 0%),
-    var(--surface-4) 100%
+    var(--surface-4) var(--range-buffer, var(--range-fill, 0%)),
+    color-mix(in srgb, var(--surface-4) 62%, var(--text) 8%) var(--range-buffer, var(--range-fill, 0%)),
+    color-mix(in srgb, var(--surface-4) 62%, var(--text) 8%) 100%
   );
 }
 

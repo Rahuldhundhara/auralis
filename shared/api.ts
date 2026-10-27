@@ -7,6 +7,7 @@ import type {
   DownloadProgress,
   LastFmState,
   LibraryData,
+  PlaylistImportResult,
   LocalPlaylist,
   LyricsResult,
   NavEndpoint,
@@ -56,12 +57,14 @@ export interface AuralisApi {
       completed: boolean;
     }): Promise<LibraryData>;
     createPlaylist(name: string, description?: string): Promise<LocalPlaylist>;
+    importPlaylist(url: string): Promise<PlaylistImportResult>;
     renamePlaylist(id: string, name: string, description?: string): Promise<LocalPlaylist>;
     deletePlaylist(id: string): Promise<LibraryData>;
     addToPlaylist(id: string, track: Track): Promise<LocalPlaylist>;
     removeFromPlaylist(id: string, trackId: string): Promise<LocalPlaylist>;
     reorderPlaylist(id: string, from: number, to: number): Promise<LocalPlaylist>;
     addSearchHistory(query: string): Promise<LibraryData>;
+    removeSearchHistory(query: string): Promise<LibraryData>;
     clearSearchHistory(): Promise<LibraryData>;
     clearRecent(): Promise<LibraryData>;
     saveAlbum(album: Card): Promise<LibraryData>;
@@ -113,6 +116,8 @@ export interface AuralisApi {
     prefetch(track: Track): Promise<void>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;
+    pauseDownload(id: string): Promise<void>;
+    resumeDownload(id: string): Promise<DownloadItem>;
     invalidate(trackId: string): Promise<void>;
     ffmpegAvailable(): Promise<boolean>;
     ytdlpUpdate(): Promise<string>;
@@ -123,6 +128,9 @@ export interface AuralisApi {
       lines: string[],
       targetLanguage?: string,
     ): Promise<TranslationResult>;
+  };
+  speech: {
+    transcribe(audio: ArrayBuffer, mimeType: string): Promise<string>;
   };
   lastfm: {
     state(): Promise<LastFmState>;

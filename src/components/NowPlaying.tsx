@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Download,
@@ -27,6 +27,7 @@ function NowPlayingAbout() {
   const current = usePlayerStore((state) => state.current);
   const duration = usePlayerStore((state) => state.duration);
   const settings = useAppStore((state) => state.settings);
+  const streamFormat = usePlayerStore((state) => state.streamFormat);
   const radio = usePlayerStore((state) => state.radio);
   const navigate = useNavStore((state) => state.navigate);
   if (!current) return null;
@@ -62,7 +63,10 @@ function NowPlayingAbout() {
         </div>
         <div>
           <span className="np-about-label">Audio quality</span>
-          <span className="np-about-value">{settings.audioQuality === 'auto' ? 'Automatic' : settings.audioQuality}</span>
+          <span className="np-about-value">
+            {settings.audioQuality === 'auto' ? 'Automatic' : settings.audioQuality}
+            {streamFormat ? ` · ${streamFormat}` : ''}
+          </span>
         </div>
         <div>
           <span className="np-about-label">Source</span>
@@ -102,6 +106,7 @@ export function NowPlaying() {
   const setTab = useUiStore((state) => state.setNowPlayingTab);
   const current = usePlayerStore((state) => state.current);
   const duration = usePlayerStore((state) => state.duration);
+  const streamFormat = usePlayerStore((state) => state.streamFormat);
   const queue = usePlayerStore((state) => state.queue);
   const index = usePlayerStore((state) => state.index);
   const liked = useAppStore((state) => state.library.liked.some((item) => item?.id === current?.id));
@@ -109,6 +114,7 @@ export function NowPlaying() {
   const navigate = useNavStore((state) => state.navigate);
   const openDialog = useUiStore((state) => state.openDialog);
   const [artLoaded, setArtLoaded] = useState(false);
+  const swipeStart = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -133,7 +139,17 @@ export function NowPlaying() {
         style={current.thumbnail ? { backgroundImage: `url(${current.thumbnail})` } : undefined}
       />
       <div className="np-overlay" />
-      <header className="np-header">
+      <header
+        className="np-header"
+        onPointerDown={(event) => {
+          if (event.pointerType === 'touch' || event.pointerType === 'pen') swipeStart.current = event.clientY;
+        }}
+        onPointerUp={(event) => {
+          const start = swipeStart.current;
+          swipeStart.current = null;
+          if (start !== null && event.clientY - start > 80) setOpen(false);
+        }}
+      >
         <IconButton label="Close now playing" size="md" onClick={() => setOpen(false)}>
           <ChevronDown size={22} />
         </IconButton>
@@ -226,7 +242,7 @@ export function NowPlaying() {
             <VolumeControl />
           </div>
           <div className="np-quality-line">
-            <span>{current.localPath ? 'Playing from your library' : 'Streaming'}</span>
+            <span>{current.localPath ? 'Playing from your library' : 'Streaming'}{streamFormat ? ` · ${streamFormat}` : ''}</span>
             <span>·</span>
             <span>{formatDuration(duration || current.duration)}</span>
             {current.isVideo ? (

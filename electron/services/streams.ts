@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
-import { ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
+import { downloadsDir, ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
 
@@ -15,7 +15,9 @@ interface CachedStream {
 }
 
 const streamCache = new Map<string, CachedStream>();
+const pendingResolve = new Map<string, Promise<StreamInfo>>();
 const active = new Map<string, ReturnType<typeof spawn>>();
+const pausedDownloads = new Set<string>();
 
 export function resourcesBinDir(): string {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'bin');
@@ -77,13 +79,20 @@ function cookieFile(): string | null {
     if (!name || /[\r\n]/.test(name) || /[\r\n]/.test(value)) continue;
     lines.push(`.youtube.com\tTRUE\t/\tTRUE\t${Math.floor(Date.now() / 1000) + 86400}\t${name}\t${value}`);
   }
-  const file = path.join(os.tmpdir(), `auralis-cookies-${crypto.randomUUID()}.txt`);
+  let dir = os.tmpdir();
+  try {
+    dir = path.join(app.getPath('userData'), 'tmp');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch {
+    // fall back to the OS temp directory when userData is unavailable
+  }
+  const file = path.join(dir, `auralis-cookies-${crypto.randomUUID()}.txt`);
   fs.writeFileSync(file, lines.join('\n'), { encoding: 'utf8', mode: 0o600 });
   return file;
 }
 
 function commonArgs(): string[] {
-  const args: string[] = ['--no-warnings', '--no-playlist', '--no-check-certificates'];
+  const args: string[] = ['--no-warnings', '--no-playlist'];
   const settings = settingsStore.get();
   const cookies = cookieFile();
   if (cookies) args.push('--cookies', cookies);
@@ -94,15 +103,18 @@ function commonArgs(): string[] {
 function qualityFormat(quality: string): string {
   switch (quality) {
     case 'high':
-      return 'bestaudio[abr<=256]/bestaudio[ext=m4a]/bestaudio';
+      // Caps are real: do not silently fall back to a higher-bitrate stream.
+      return 'bestaudio[abr<=256]';
     case 'medium':
-      return 'bestaudio[abr<=192]/bestaudio[ext=m4a]/bestaudio';
+      return 'bestaudio[abr<=192]';
     case 'low':
-      return 'bestaudio[abr<=128]/bestaudio[ext=m4a]/bestaudio';
+      return 'bestaudio[abr<=128]';
     case 'best':
     case 'auto':
     default:
-      return 'bestaudio[ext=m4a]/bestaudio';
+      // Let yt-dlp choose the highest available audio stream instead of
+      // preferring a lower-bitrate m4a fallback.
+      return 'bestaudio/best';
   }
 }
 
@@ -126,6 +138,22 @@ function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string;
   });
 }
 
+function safeFileBase(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120) || 'track';
+}
+
+function removePartialFiles(trackId: string) {
+  try {
+    const dir = downloadsDir();
+    const base = safeFileBase(trackId);
+    for (const name of fs.readdirSync(dir)) {
+      if (name.startsWith(`${base}.`) && name.endsWith('.part')) fs.rmSync(path.join(dir, name), { force: true });
+    }
+  } catch {
+    // The folder may not exist yet.
+  }
+}
+
 function proxyStreamUrl(url: string): string {
   return `auralis-media://stream/${Buffer.from(url, 'utf8').toString('base64url')}`;
 }
@@ -145,6 +173,22 @@ export class StreamService {
     const key = `${track.id}:${quality}`;
     const cached = streamCache.get(key);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
+    const pending = pendingResolve.get(key);
+    if (pending) return pending;
+
+    const task = this.resolveRemote(track, quality)
+      .then((info) => {
+        streamCache.set(key, { info, at: Date.now() });
+        return info;
+      })
+      .finally(() => {
+        pendingResolve.delete(key);
+      });
+    pendingResolve.set(key, task);
+    return task;
+  }
+
+  private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
     const args = [
       ...commonArgs(),
       '-f',
@@ -152,19 +196,24 @@ export class StreamService {
       '-g',
       `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
     ];
-    const { stdout } = await runYtdlp(args);
+    const { stdout } = await runYtdlp(args, 45_000);
     const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
     if (!url) throw new Error('yt-dlp did not return a playable audio URL.');
-    const info: StreamInfo = {
+    let format = 'audio';
+    try {
+      const mime = new URL(url).searchParams.get('mime');
+      if (mime?.includes('/')) format = mime.split('/')[1].split(';')[0];
+    } catch {
+      // keep generic format
+    }
+    return {
       url: proxyStreamUrl(url),
-      format: 'audio',
+      format,
       quality,
       title: track.title,
       duration: track.duration,
       expiresAt: Date.now() + CACHE_TTL_MS,
     };
-    streamCache.set(key, { info, at: Date.now() });
-    return info;
   }
 
   async prefetch(track: Track): Promise<void> {
@@ -236,13 +285,16 @@ export class StreamService {
     const lib = libraryStore.get();
     const existing = lib.downloads.find((d) => d.track.id === track.id && d.status === 'done');
     if (existing && fs.existsSync(existing.path)) return existing;
+    const inFlight = lib.downloads.find((d) => d.track.id === track.id && d.status === 'downloading');
+    if (inFlight) throw new Error('This song is already downloading.');
 
     const dir = await ensureDownloadsDir();
-    const output = path.join(dir, `${track.id}.%(ext)s`);
+    const base = safeFileBase(track.id);
+    const output = path.join(dir, `${base}.%(ext)s`);
     const args = [
       ...commonArgs(),
       '--newline',
-      '--no-part',
+      '--continue',
       ...(process.platform === 'win32' ? ['--windows-filenames'] : []),
       '-f',
       qualityFormat(settingsStore.get().downloadQuality === 'high' ? 'high' : settingsStore.get().downloadQuality),
@@ -281,11 +333,12 @@ export class StreamService {
         if (cookie) fs.rm(cookie, { force: true }, () => {});
         let file = '';
         try {
-          file = fs.readdirSync(dir).find((name) => name.startsWith(`${track.id}.`)) || '';
+          file = fs.readdirSync(dir).find((name) => name.startsWith(`${base}.`) && !name.endsWith('.part')) || '';
           if (file) file = path.join(dir, file);
         } catch {
           file = '';
         }
+        if (status === 'cancelled') removePartialFiles(track.id);
         const size = file && fs.existsSync(file) ? fs.statSync(file).size : undefined;
         const completed: DownloadItem = {
           ...item,
@@ -301,7 +354,14 @@ export class StreamService {
           downloads: value.downloads.map((d) => (d.id === id ? completed : d)),
         }));
         onProgress?.({ id, progress: completed.progress || 0, status, error, path: file });
-        if (status === 'done') resolve(completed);
+        if (status === 'done') {
+          try {
+            if (file && process.platform !== 'win32') fs.chmodSync(file, 0o600);
+          } catch {
+            // best-effort privacy hardening
+          }
+          resolve(completed);
+        } else if (status === 'paused') resolve(completed);
         else reject(new Error(error || 'Download failed.'));
       };
 
@@ -326,6 +386,7 @@ export class StreamService {
       child.on('close', (code) => {
         if (debug) console.log('[download] close', code, stderr.slice(-500));
         if (code === 0) finish('done');
+        else if (pausedDownloads.has(id)) finish('paused');
         else if (child.killed) finish('cancelled', 'Download cancelled.');
         else finish('error', stderr.trim().split(/\r?\n/).slice(-3).join(' ') || `yt-dlp exited with code ${code}.`);
       });
@@ -333,9 +394,46 @@ export class StreamService {
   }
 
   cancelDownload(id: string) {
+    pausedDownloads.delete(id);
     const child = active.get(id);
     if (child) child.kill();
     active.delete(id);
+    const item = libraryStore.get().downloads.find((entry) => entry.id === id);
+    if (item) removePartialFiles(item.track.id);
+    if (item && (item.status === 'paused' || item.status === 'queued')) {
+      libraryStore.update((value) => ({
+        ...value,
+        downloads: value.downloads.map((entry) =>
+          entry.id === id ? { ...entry, status: 'cancelled', error: 'Download cancelled.' } : entry,
+        ),
+      }));
+    }
+  }
+
+  pauseDownload(id: string) {
+    const child = active.get(id);
+    if (!child) {
+      const item = libraryStore.get().downloads.find((entry) => entry.id === id);
+      if (item?.status === 'queued') {
+        libraryStore.update((value) => ({
+          ...value,
+          downloads: value.downloads.map((entry) =>
+            entry.id === id ? { ...entry, status: 'paused' as const } : entry,
+          ),
+        }));
+      }
+      return;
+    }
+    pausedDownloads.add(id);
+    child.kill();
+    active.delete(id);
+  }
+
+  async resumeDownload(id: string, onProgress?: (progress: DownloadProgress) => void): Promise<DownloadItem> {
+    const item = libraryStore.get().downloads.find((entry) => entry.id === id);
+    if (!item) throw new Error('Download entry not found.');
+    pausedDownloads.delete(id);
+    return this.download(item.track, onProgress);
   }
 }
 

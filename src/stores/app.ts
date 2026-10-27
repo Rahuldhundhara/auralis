@@ -6,6 +6,7 @@ import type {
   DownloadProgress,
   LibraryData,
   LocalPlaylist,
+  PlaylistImportResult,
   SessionState,
   Settings,
   Track,
@@ -30,12 +31,14 @@ interface AppState {
   addRecent: (track: Track) => Promise<void>;
   recordEvent: (track: Track, completed: boolean) => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<LocalPlaylist>;
+  importPlaylist: (url: string) => Promise<PlaylistImportResult>;
   renamePlaylist: (id: string, name: string, description?: string) => Promise<LocalPlaylist>;
   deletePlaylist: (id: string) => Promise<void>;
   addToPlaylist: (id: string, track: Track) => Promise<LocalPlaylist>;
   removeFromPlaylist: (id: string, trackId: string) => Promise<void>;
   reorderPlaylist: (id: string, from: number, to: number) => Promise<void>;
   addSearchHistory: (query: string) => Promise<void>;
+  removeSearchHistory: (query: string) => Promise<void>;
   clearSearchHistory: () => Promise<void>;
   clearRecent: () => Promise<void>;
   toggleSaveAlbum: (album: Card) => Promise<void>;
@@ -62,7 +65,7 @@ const EMPTY_SETTINGS: Settings = {
   normalize: false,
   crossfadeSec: 0,
   gapless: true,
-  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 },
+  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
@@ -292,6 +295,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     return playlist;
   },
 
+  importPlaylist: async (url) => {
+    const result = await window.auralis.library.importPlaylist(url);
+    await get().refreshLibrary();
+    return result;
+  },
+
   renamePlaylist: async (id, name, description) => {
     const playlist = await window.auralis.library.renamePlaylist(id, name, description);
     set((state) => ({
@@ -345,6 +354,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ library });
   },
 
+  removeSearchHistory: async (query) => {
+    const library = await window.auralis.library.removeSearchHistory(query);
+    set({ library });
+  },
+
   clearSearchHistory: async () => {
     const library = await window.auralis.library.clearSearchHistory();
     set({ library });
@@ -379,11 +393,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   downloadTrack: async (track) => {
-    const existing = get().library.downloads.find((item) => item.track.id === track.id && item.status === 'done');
-    if (existing?.path) {
-      toast('This track is already downloaded.', 'info');
-      return;
-    }
     toast(`Downloading “${track.title}”…`, 'info');
     try {
       const item = await window.auralis.player.download(track);

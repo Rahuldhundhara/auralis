@@ -126,6 +126,7 @@ interface RangeProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'onChan
   step?: number;
   onValueChange: (value: number) => void;
   showFill?: boolean;
+  buffer?: number;
 }
 
 export function Range({
@@ -136,9 +137,12 @@ export function Range({
   onValueChange,
   className = '',
   style,
+  buffer,
   ...props
 }: RangeProps) {
   const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  const bufferPercent =
+    typeof buffer === 'number' && max > min ? ((buffer - min) / (max - min)) * 100 : percent;
   return (
     <input
       type="range"
@@ -148,7 +152,11 @@ export function Range({
       step={step}
       value={Number.isFinite(value) ? value : 0}
       onChange={(event) => onValueChange(Number(event.target.value))}
-      style={{ ['--range-fill' as any]: `${Math.min(100, Math.max(0, percent))}%`, ...style }}
+      style={{
+        ['--range-fill' as any]: `${Math.min(100, Math.max(0, percent))}%`,
+        ['--range-buffer' as any]: `${Math.min(100, Math.max(0, bufferPercent))}%`,
+        ...style,
+      }}
       {...props}
     />
   );

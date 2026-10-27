@@ -182,6 +182,8 @@ export interface EqSettings {
   /** 10 bands, dB gain -12..12. */
   bands: number[];
   preamp: number;
+  /** Low-shelf bass boost in dB, -12..12. */
+  bassBoost: number;
 }
 
 export interface LastFmSettings {
@@ -253,6 +255,13 @@ export interface LocalPlaylist {
   remoteId?: string;
 }
 
+export interface PlaylistImportResult {
+  playlist: LocalPlaylist;
+  imported: number;
+  skipped: number;
+  total: number;
+}
+
 export interface DownloadItem {
   id: string;
   track: Track;
@@ -261,7 +270,7 @@ export interface DownloadItem {
   quality: string;
   size?: number;
   createdAt: number;
-  status: 'queued' | 'downloading' | 'done' | 'error' | 'cancelled';
+  status: 'queued' | 'downloading' | 'paused' | 'done' | 'error' | 'cancelled';
   progress?: number;
   error?: string;
 }

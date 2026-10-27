@@ -455,6 +455,10 @@
     display: none;
   }
 
+  .player-mini-progress {
+    display: block;
+  }
+
   .np-layout {
     display: flex;
     width: calc(100vw - 30px);

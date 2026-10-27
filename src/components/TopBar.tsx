@@ -1,7 +1,6 @@
-import { AudioLines, ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
+import { ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
 import { Artwork, IconButton } from './primitives';
 import { SearchField } from './SearchField';
@@ -12,8 +11,8 @@ export function TopBar() {
   const back = useNavStore((state) => state.back);
   const forward = useNavStore((state) => state.forward);
   const navigate = useNavStore((state) => state.navigate);
+  const route = useNavStore((state) => state.entries[state.index]);
   const session = useAppStore((state) => state.session);
-  const openDialog = useUiStore((state) => state.openDialog);
 
   return (
     <header className="top-bar">
@@ -26,13 +25,12 @@ export function TopBar() {
         </IconButton>
       </div>
       <div className="top-search">
-        <SearchField />
+        <SearchField
+          activateOnFocus={route.page !== 'search'}
+          onActivate={() => navigate({ page: 'search' })}
+        />
       </div>
       <div className="top-actions">
-        <button type="button" className="recognize-pill" onClick={() => openDialog({ type: 'recognition' })} title="Identify a song">
-          <AudioLines size={17} />
-          <span>Identify</span>
-        </button>
         <button
           type="button"
           className="account-chip"

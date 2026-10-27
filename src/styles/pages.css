@@ -147,13 +147,65 @@
 }
 
 .quick-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 8px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+
+.quick-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-carousel-wrap {
+  position: relative;
+}
+
+.quick-carousel-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--fast), background var(--fast);
+  backdrop-filter: blur(10px);
+}
+
+.quick-carousel-wrap:hover .quick-carousel-arrow,
+.quick-carousel-arrow:focus-visible {
+  opacity: 1;
+}
+
+.quick-carousel-arrow:hover {
+  background: var(--surface-2);
+}
+
+.quick-carousel-arrow.is-left {
+  left: -10px;
+}
+
+.quick-carousel-arrow.is-right {
+  right: -10px;
 }
 
 .quick-card {
   display: flex;
+  flex: 0 0 clamp(230px, 29vw, 320px);
   align-items: center;
   gap: 11px;
   min-width: 0;
@@ -163,6 +215,7 @@
   border-radius: 12px;
   background: var(--surface);
   text-align: left;
+  scroll-snap-align: start;
   transition: background var(--fast), border-color var(--fast), transform var(--fast);
 }
 
@@ -340,6 +393,14 @@
   text-align: left;
 }
 
+.search-landing-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .search-history-section {
   max-width: 900px;
   margin: 0 auto;
@@ -354,9 +415,9 @@
 .search-history-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 2px;
   height: 36px;
-  padding: 0 14px;
+  padding: 0 5px 0 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
@@ -373,6 +434,36 @@
 
 .search-history-chip svg {
   color: var(--faint);
+}
+
+.search-history-query,
+.search-history-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.search-history-query {
+  height: 100%;
+  padding: 0;
+}
+
+.search-history-remove {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--faint);
+}
+
+.search-history-remove:hover {
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .search-suggestions-grid {
@@ -1292,6 +1383,10 @@
   transition: width 220ms linear;
 }
 
+.download-progress.is-paused span {
+  background: var(--muted);
+}
+
 .download-error {
   overflow: hidden;
   margin-top: 2px;
@@ -1327,6 +1422,11 @@
 .download-status.status-queued {
   background: rgba(var(--accent-rgb), 0.08);
   color: var(--accent);
+}
+
+.download-status.status-paused {
+  background: var(--surface-3);
+  color: var(--text-secondary);
 }
 
 .download-status.status-error,

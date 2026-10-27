@@ -12,7 +12,7 @@ export function formatLongDuration(seconds: number | undefined): string {
   if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '';
   const total = Math.round(seconds);
   const hours = Math.floor(total / 3600);
-  const minutes = Math.round((total % 3600) / 60);
+  const minutes = Math.floor((total % 3600) / 60);
   if (hours && minutes) return `${hours} hr ${minutes} min`;
   if (hours) return `${hours} hr`;
   return `${minutes} min`;

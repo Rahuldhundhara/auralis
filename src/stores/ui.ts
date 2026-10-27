@@ -15,6 +15,7 @@ export interface MenuItem {
 
 export type DialogState =
   | { type: 'create-playlist'; track?: Track }
+  | { type: 'import-playlist' }
   | { type: 'rename-playlist'; playlist: LocalPlaylist }
   | { type: 'add-to-playlist'; track: Track }
   | {
@@ -44,7 +45,7 @@ interface UiState {
   queueOpen: boolean;
   setQueueOpen: (value: boolean) => void;
   nowPlayingOpen: boolean;
-  setNowPlayingOpen: (value: boolean) => void;
+  setNowPlayingOpen: (value: boolean, tab?: 'lyrics' | 'queue' | 'about') => void;
   nowPlayingTab: 'lyrics' | 'queue' | 'about';
   setNowPlayingTab: (tab: 'lyrics' | 'queue' | 'about') => void;
 
@@ -70,8 +71,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   queueOpen: false,
   setQueueOpen: (value) => set({ queueOpen: value }),
   nowPlayingOpen: false,
-  setNowPlayingOpen: (value) => set({ nowPlayingOpen: value }),
-  nowPlayingTab: 'lyrics',
+  setNowPlayingOpen: (value, tab) => set(tab ? { nowPlayingOpen: value, nowPlayingTab: tab } : { nowPlayingOpen: value }),
+  nowPlayingTab: 'queue',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
 
   toasts: [],

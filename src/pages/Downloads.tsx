@@ -38,6 +38,7 @@ function statusLabel(item: DownloadItem): string {
   if (item.status === 'done') return 'Downloaded';
   if (item.status === 'downloading') return `Downloading ${Math.round(item.progress || 0)}%`;
   if (item.status === 'queued') return 'Queued';
+  if (item.status === 'paused') return `Paused ${Math.round(item.progress || 0)}%`;
   if (item.status === 'cancelled') return 'Cancelled';
   return 'Failed';
 }
@@ -45,7 +46,6 @@ function statusLabel(item: DownloadItem): string {
 export function DownloadsPage() {
   const downloads = useAppStore((state) => state.library.downloads);
   const appInfo = useAppStore((state) => state.appInfo);
-  const settings = useAppStore((state) => state.settings);
   const removeDownload = useAppStore((state) => state.removeDownload);
   const clearDownloads = useAppStore((state) => state.clearDownloads);
   const refreshLibrary = useAppStore((state) => state.refreshLibrary);
@@ -54,10 +54,10 @@ export function DownloadsPage() {
   const [filter, setFilter] = useState<Filter>('all');
 
   const done = useMemo(() => downloads.filter((item) => item.status === 'done'), [downloads]);
-  const active = useMemo(() => downloads.filter((item) => item.status === 'downloading' || item.status === 'queued'), [downloads]);
+  const active = useMemo(() => downloads.filter((item) => item.status === 'downloading' || item.status === 'queued' || item.status === 'paused'), [downloads]);
   const failed = useMemo(() => downloads.filter((item) => item.status === 'error' || item.status === 'cancelled'), [downloads]);
   const totalBytes = done.reduce((sum, item) => sum + (item.size || 0), 0);
-  const folder = settings.downloadDir || appInfo?.downloadsDir || '';
+  const folder = appInfo?.downloadsDir || '';
   const filtering: Record<Filter, DownloadItem[]> = {
     all: downloads,
     done,
@@ -122,6 +122,31 @@ export function DownloadsPage() {
       items.push({ label: 'Open file', icon: Play, onClick: () => void window.auralis.shell.openPath(item.path) });
     }
     if (item.status === 'downloading' || item.status === 'queued') {
+      items.push({
+        label: 'Pause download',
+        icon: Pause,
+        onClick: () => {
+          void window.auralis.player.pauseDownload(item.id);
+          toast('Download paused. Resume it from this page.', 'info');
+        },
+      });
+      items.push({
+        label: 'Cancel download',
+        icon: X,
+        onClick: () => {
+          void window.auralis.player.cancelDownload(item.id);
+          toast('Download cancelled.', 'info');
+        },
+      });
+    }
+    if (item.status === 'paused') {
+      items.push({
+        label: 'Resume download',
+        icon: Play,
+        onClick: () => {
+          void window.auralis.player.resumeDownload(item.id).then(() => refreshLibrary()).catch((error: any) => toast(`Could not resume: ${error?.message || error}`, 'error'));
+        },
+      });
       items.push({
         label: 'Cancel download',
         icon: X,
@@ -256,8 +281,9 @@ export function DownloadsPage() {
         <div className="download-list">
           {visible.map((item) => {
             const pending = item.status === 'downloading' || item.status === 'queued';
+            const paused = item.status === 'paused';
             return (
-              <div className={`download-row ${pending ? 'is-active' : ''} ${item.status === 'error' ? 'is-error' : ''}`} key={item.id}>
+              <div className={`download-row ${pending || paused ? 'is-active' : ''} ${item.status === 'error' ? 'is-error' : ''}`} key={item.id}>
                 <button
                   type="button"
                   className="download-main"
@@ -291,8 +317,8 @@ export function DownloadsPage() {
                       {item.size ? ` · ${formatBytes(item.size)}` : ''}
                       {item.track.duration ? ` · ${formatDuration(item.track.duration)}` : ''}
                     </span>
-                    {pending ? (
-                      <span className="download-progress">
+                    {pending || paused ? (
+                      <span className={`download-progress ${paused ? 'is-paused' : ''}`}>
                         <span style={{ width: `${Math.round(item.progress || 0)}%` }} />
                       </span>
                     ) : null}
@@ -314,15 +340,37 @@ export function DownloadsPage() {
                       </IconButton>
                     </>
                   ) : pending ? (
+                    <>
+                      <IconButton
+                        label="Pause download"
+                        size="sm"
+                        onClick={() => {
+                          void window.auralis.player.pauseDownload(item.id);
+                          toast('Download paused. Resume it from this page.', 'info');
+                        }}
+                      >
+                        <Pause size={16} />
+                      </IconButton>
+                      <IconButton
+                        label="Cancel download"
+                        size="sm"
+                        onClick={() => {
+                          void window.auralis.player.cancelDownload(item.id);
+                          toast('Download cancelled.', 'info');
+                        }}
+                      >
+                        <X size={16} />
+                      </IconButton>
+                    </>
+                  ) : paused ? (
                     <IconButton
-                      label="Cancel download"
+                      label="Resume download"
                       size="sm"
                       onClick={() => {
-                        void window.auralis.player.cancelDownload(item.id);
-                        toast('Download cancelled.', 'info');
+                        void window.auralis.player.resumeDownload(item.id).then(() => refreshLibrary()).catch((error: any) => toast(`Could not resume: ${error?.message || error}`, 'error'));
                       }}
                     >
-                      <X size={16} />
+                      <Play size={16} />
                     </IconButton>
                   ) : (
                     <IconButton

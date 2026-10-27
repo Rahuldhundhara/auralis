@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, Play, Search, Sparkles, X } from 'lucide-react';
-import type { Card, SearchResults, Shelf as ShelfType } from '@shared/types';
+import { AudioLines, Clock3, Loader2, Mic, Play, Search, Sparkles, Square, X } from 'lucide-react';
+import type { Card, SearchResults } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { usePlayerStore } from '../stores/player';
+import { useUiStore } from '../stores/ui';
+import { toast } from '../stores/ui';
 import { useAsync } from '../lib/useAsync';
+import { useVoiceSearch } from '../lib/useVoiceSearch';
 import { openCard, playCard } from '../lib/actions';
 import { formatDuration } from '../lib/format';
 import { Artwork, Button, Chips, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
-import { Shelf, MediaCard } from '../components/MediaCard';
+import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 import { SearchField } from '../components/SearchField';
 
@@ -55,7 +57,17 @@ function TopResult({ card }: { card: Card }) {
 function SearchLanding() {
   const history = useAppStore((state) => state.library.searchHistory);
   const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
+  const removeSearchHistory = useAppStore((state) => state.removeSearchHistory);
   const navigate = useNavStore((state) => state.navigate);
+  const openDialog = useUiStore((state) => state.openDialog);
+  const voice = useVoiceSearch((text) => navigate({ page: 'search', q: text }));
+
+  useEffect(() => {
+    if (!voice.error) return;
+    toast(voice.error, 'error');
+    voice.clearError();
+  }, [voice.error, voice.clearError]);
+
   return (
     <div className="search-landing">
       <div className="search-landing-hero">
@@ -64,7 +76,34 @@ function SearchLanding() {
         </span>
         <h1>What do you want to hear?</h1>
         <p>Songs, albums, artists, playlists and podcasts from YouTube Music.</p>
-        <SearchField autoFocus large />
+        <SearchField large />
+        <div className="search-landing-actions">
+          <Button
+            variant={voice.recording ? 'primary' : 'outline'}
+            size="sm"
+            icon={
+              voice.transcribing ? (
+                <Loader2 size={15} className="spin" />
+              ) : voice.recording ? (
+                <Square size={13} fill="currentColor" />
+              ) : (
+                <Mic size={15} />
+              )
+            }
+            disabled={voice.transcribing}
+            onClick={() => (voice.recording ? voice.stop() : void voice.start())}
+          >
+            {voice.transcribing ? 'Transcribing…' : voice.recording ? 'Stop listening' : 'Voice search'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<AudioLines size={15} />}
+            onClick={() => openDialog({ type: 'recognition' })}
+          >
+            Identify a song
+          </Button>
+        </div>
       </div>
       {history.length ? (
         <section className="search-history-section">
@@ -76,10 +115,24 @@ function SearchLanding() {
           </div>
           <div className="search-history-chips">
             {history.map((query) => (
-              <button type="button" key={query} className="search-history-chip" onClick={() => navigate({ page: 'search', q: query })}>
-                <Clock3 size={15} />
-                {query}
-              </button>
+              <span className="search-history-chip" key={query}>
+                <button
+                  type="button"
+                  className="search-history-query"
+                  onClick={() => navigate({ page: 'search', q: query })}
+                >
+                  <Clock3 size={15} />
+                  {query}
+                </button>
+                <button
+                  type="button"
+                  className="search-history-remove"
+                  aria-label={`Remove ${query} from recent searches`}
+                  onClick={() => void removeSearchHistory(query)}
+                >
+                  <X size={13} />
+                </button>
+              </span>
             ))}
           </div>
         </section>
@@ -104,23 +157,18 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
   const addHistory = useAppStore((state) => state.addSearchHistory);
-  const player = usePlayerStore();
   const key = FILTER_KEYS[filter];
-  const { data, loading, error, reload } = useAsync<SearchResults>(
+  const { data, loading, error, reload, setData } = useAsync<SearchResults>(
     () => (query ? window.auralis.yt.search(query, key) : Promise.resolve({ songs: [], videos: [], albums: [], artists: [], playlists: [], podcasts: [], episodes: [], profiles: [] })),
     [query, key],
   );
 
   useEffect(() => {
     if (query) void addHistory(query);
+    setData(undefined);
     setExtra(null);
     setContinuation(undefined);
-  }, [query]);
-
-  useEffect(() => {
-    setExtra(null);
-    setContinuation(undefined);
-  }, [filter]);
+  }, [query, key, addHistory, setData]);
 
   const results = useMemo(() => {
     if (!data) return undefined;
@@ -141,7 +189,7 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
 
   const loadMore = async () => {
     const next = continuation || data?.continuation;
-    if (!next) return;
+    if (!next || loadingMore || loading || !data) return;
     setLoadingMore(true);
     try {
       const page = await window.auralis.yt.search(query, key, next);
@@ -159,6 +207,8 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
         };
       });
       setContinuation(page.continuation);
+    } catch (error: any) {
+      toast(`Could not load more results: ${error?.message || error}`, 'error');
     } finally {
       setLoadingMore(false);
     }
