@@ -34,8 +34,10 @@ export function LikedPage() {
       for (let index = 0; index < pending.length; index++) {
         setDownloading(`${index + 1}/${pending.length}`);
         try {
-          await window.auralis.player.download(pending[index]);
-          completed++;
+          const item = await window.auralis.player.download(pending[index]);
+          if (item.status === 'done') completed++;
+          else if (item.status === 'paused') break;
+          else failed++;
         } catch {
           failed++;
         }

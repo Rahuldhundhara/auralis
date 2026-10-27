@@ -397,13 +397,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const item = await window.auralis.player.download(track);
       await get().refreshLibrary();
+      if (item.status === 'paused') {
+        toast(`Download paused: “${item.track.title}”.`, 'info');
+        return;
+      }
+      if (item.status !== 'done') return;
       toast(`Downloaded “${item.track.title}”.`, 'success', {
         label: 'Show file',
         onClick: () => window.auralis.app.showItemInFolder(item.path),
       });
     } catch (error: any) {
       await get().refreshLibrary();
-      toast(`Download failed: ${error?.message || error}`, 'error');
+      const message = String(error?.message || error);
+      if (/cancelled/i.test(message)) toast('Download cancelled.', 'info');
+      else toast(`Download failed: ${message}`, 'error');
     }
   },
 
