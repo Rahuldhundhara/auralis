@@ -622,6 +622,10 @@ function registerIpc() {
       pages++;
     }
     if (!tracks.length) throw new Error('That playlist did not contain any playable songs.');
+    const existing = libraryService
+      .get()
+      .playlists.find((playlist) => playlist.remoteId === remoteId);
+    const before = existing?.tracks.length || 0;
     const playlist = libraryService.importPlaylist(
       page.header?.title || 'Imported playlist',
       tracks,
@@ -630,8 +634,8 @@ function registerIpc() {
     );
     return {
       playlist,
-      imported: playlist.tracks.length,
-      skipped: Math.max(0, tracks.length - playlist.tracks.length),
+      imported: Math.max(0, playlist.tracks.length - before),
+      skipped: Math.max(0, tracks.length - (playlist.tracks.length - before)),
       total: tracks.length,
     };
   });

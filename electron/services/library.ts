@@ -141,6 +141,24 @@ export const libraryService = {
       seen.add(track.id);
       return true;
     });
+    const existing = data.playlists.find((playlist) => playlist.remoteId === remoteId);
+    if (existing) {
+      const existingIds = new Set(existing.tracks.map((track) => track.id));
+      const additions = unique.filter((track) => !existingIds.has(track.id));
+      const updated: LocalPlaylist = {
+        ...existing,
+        name: existing.name || clip(name, 100) || 'Imported playlist',
+        description: existing.description || clip(description, 500),
+        tracks: [...existing.tracks, ...additions],
+        cover: existing.cover || unique[0]?.thumbnail,
+        updatedAt: now,
+      };
+      commit({
+        ...data,
+        playlists: data.playlists.map((playlist) => (playlist.id === existing.id ? updated : playlist)),
+      });
+      return updated;
+    }
     const playlist: LocalPlaylist = {
       id: newId('pl'),
       name: clip(name, 100) || 'Imported playlist',
