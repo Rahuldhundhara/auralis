@@ -248,7 +248,7 @@ export function NowPlaying() {
             {current.isVideo ? (
               <>
                 <span>·</span>
-                <span>Video source</span>
+                <span>Audio from video</span>
               </>
             ) : null}
           </div>
