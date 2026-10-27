@@ -237,7 +237,7 @@ export class StreamService {
     const existing = lib.downloads.find((d) => d.track.id === track.id && d.status === 'done');
     if (existing && fs.existsSync(existing.path)) return existing;
 
-    const dir = ensureDownloadsDir();
+    const dir = await ensureDownloadsDir();
     const output = path.join(dir, `${track.id}.%(ext)s`);
     const args = [
       ...commonArgs(),

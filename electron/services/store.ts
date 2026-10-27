@@ -126,6 +126,16 @@ function deepMerge<T extends Record<string, any>>(base: T, patch: any): T {
   return out;
 }
 
+/** Keep local stores readable only by the current user on Unix. */
+function restrictFile(file: string): void {
+  if (process.platform === 'win32') return;
+  try {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o600);
+  } catch {
+    // Best-effort; a read-only or unusual filesystem may reject chmod.
+  }
+}
+
 class JsonFile<T> {
   private current: T;
   private writeTimer: NodeJS.Timeout | null = null;
@@ -136,6 +146,7 @@ class JsonFile<T> {
     private validate?: (value: any) => T,
   ) {
     this.current = this.load();
+    restrictFile(this.file);
   }
 
   private load(): T {
@@ -180,8 +191,10 @@ class JsonFile<T> {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(this.current, null, 2), 'utf8');
+      fs.writeFileSync(tmp, JSON.stringify(this.current, null, 2), { encoding: 'utf8', mode: 0o600 });
+      restrictFile(tmp);
       fs.renameSync(tmp, this.file);
+      restrictFile(this.file);
     } catch (error) {
       console.error(`[store] failed to write ${this.file}`, error);
     }
@@ -270,6 +283,7 @@ export class SessionStore {
     } catch {
       this.data = {};
     }
+    restrictFile(this.file);
   }
 
   get cookie(): string | null {
@@ -357,8 +371,10 @@ export class SessionStore {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8');
+      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 });
+      restrictFile(tmp);
       fs.renameSync(tmp, this.file);
+      restrictFile(this.file);
     } catch (error) {
       console.error('[store] failed to write session', error);
     }
@@ -373,10 +389,10 @@ export function flushStores() {
   libraryStore.flush();
 }
 
-export function ensureDownloadsDir(): string {
+export async function ensureDownloadsDir(): Promise<string> {
   const settings = settingsStore.get();
   const dir = settings.downloadDir || downloadsDir();
-  fs.mkdirSync(dir, { recursive: true });
+  await fs.promises.mkdir(dir, { recursive: true });
   return dir;
 }
 

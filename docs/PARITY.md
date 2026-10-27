@@ -15,12 +15,15 @@ The Linux x64 build uses the same renderer, catalogue client, playback pipeline 
 | NSIS / portable EXE | AppImage and `.deb` |
 
 The live Linux results are recorded in [`QA-LINUX.md`](QA-LINUX.md). In short,
-21/21 end-to-end checks passed on the unpackaged build; packaged playback,
-downloads, the AppImage and the extracted `.deb` passed; AppImage relaunch,
+the final post-fix packaged `linux-unpacked` suite passed 21/21 with no console
+issues; the unpackaged suite also passed 21/21. Packaged playback, downloads,
+the AppImage and the extracted `.deb` passed; AppImage and `.deb` relaunch,
 tray integration, metadata fonts and MPRIS play/pause were verified; and native
-Wayland passed a home/catalogue smoke test. Login, Last.fm, Discord, translation,
-Shazam, a real `.deb` installation and a Windows runtime regression remain
-unverified or blocked.
+Wayland passed focused controls/player/page audits. Post-QA regression checks
+covered tray availability when the tray setting is off, close-to-tray with no
+host, invalid download paths, local-store permissions and settings flushing
+before restart. Login, Last.fm, Discord, translation, Shazam, a real `.deb`
+installation and a Windows runtime regression remain unverified or blocked.
 
 
 
@@ -194,22 +197,26 @@ Separate from the Windows snapshot above; see [`QA-LINUX.md`](QA-LINUX.md) for t
 | Check | Result |
 | --- | --- |
 | Linux build and packaging | Pass (AppImage and `.deb` built) |
-| Full `qa-full` end-to-end pass | 21/21 checks; no JS/page errors or console issues |
+| Full `qa-full` end-to-end pass | 21/21 packaged checks; 21/21 unpackaged checks; no JS/page errors or console issues |
 | Focused desktop controls, settings, windows and keyboard | Pass (16/16) |
 | Focused player, queue, Now Playing and context menus | Pass (7/7) |
 | Focused page workflows | Pass (8/8) |
 | Artist detail More menu | Pass after fixing React error #130 |
 | Native-framed sign-in window opens/closes | Pass (no credentials entered) |
-| Packaged `linux-unpacked` playback/download | Pass |
-| AppImage launch, streaming and download | Pass |
-| Rebuilt AppImage/.deb smoke | Pass (launch, playback, artist menu) |
-| AppImage relaunch | Pass (new process and window) |
-| `.deb` extracted launch | Pass; install blocked (requires `sudo`) |
+| Packaged `linux-unpacked` playback/download | Pass (Tera Yaar Hoon Main; 3,048,719-byte M4A) |
+| AppImage launch and streaming | Pass; download verified on the earlier AppImage and the final packaged `linux-unpacked` run |
+| Rebuilt AppImage/.deb smoke | Pass (launch, Tera Yaar Hoon Main playback, artist menu) |
+| AppImage relaunch | Pass (new process; theme persisted) |
+| `.deb` extracted launch/relaunch | Pass (new process; theme persisted); install blocked (requires `sudo`) |
 | `.deb` dependency resolution | Pass (simulated with `apt-get -s install`) |
 | MPRIS metadata and play/pause | Pass |
 | Keyring backend | Pass (`gnome_libsecret`) |
 | Tray item and close-to-tray | Pass |
-| Tray no-host fallback | Pass (forced probe failure) |
+| Tray no-host fallback | Pass (forced probe failure; close-to-tray disabled) |
+| Tray disabled but host present | Pass (`trayAvailable: true`; no false warning) |
+| Invalid downloads path isolation | Pass (startup and `app.info()` unaffected) |
+| Local store permissions | Pass (`settings.json`/`session.json` mode `0600`) |
+| Relaunch settings flush | Pass (source, AppImage and `.deb`) |
 | Native Wayland focused audits | Pass (controls 16/16, player 7/7, pages 8/8) |
 | Metadata fonts | Pass (Selawik, Cascadia Code) |
 | Windows runtime regression | Blocked (requires a Windows host) |

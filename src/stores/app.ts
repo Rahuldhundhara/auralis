@@ -214,6 +214,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const settings = await window.auralis.settings.set(patch);
       set({ settings });
       applyAppearance(settings);
+      if ('trayEnabled' in patch || 'closeToTray' in patch) {
+        void window.auralis.app
+          .info()
+          .then((appInfo) => set({ appInfo }))
+          .catch(() => {});
+      }
     } catch (error: any) {
       toast(`Could not save settings: ${error?.message || error}`, 'error');
     }
@@ -223,6 +229,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const settings = await window.auralis.settings.reset();
     set({ settings });
     applyAppearance(settings);
+    void window.auralis.app
+      .info()
+      .then((appInfo) => set({ appInfo }))
+      .catch(() => {});
     toast('Settings reset to defaults.', 'success');
   },
 

@@ -91,6 +91,16 @@ user-namespace policy.
 | Writable yt-dlp copy | `~/.config/Auralis/bin/yt-dlp` |
 | Playback/cache | Electron's per-user cache directory |
 
+On Linux the JSON stores are created with owner-only permissions (`0600`).
+Existing `settings.json`, `library.json` and `session.json` files are restricted
+when loaded. This matters because `settings.json` can contain Last.fm/API
+secrets and `session.json` can contain a plaintext cookie when no keyring is
+available. Windows file permissions are unchanged.
+
+The downloads folder is prepared asynchronously in the background. An
+unavailable network/FUSE path no longer blocks startup or the first window; a
+download that cannot create the folder reports an error instead.
+
 ### Windows profile migration
 
 A settings or library directory copied from Windows can be used, but:
@@ -128,8 +138,10 @@ ELECTRON_OZONE_PLATFORM_HINT=auto ./Auralis-1.0.2-x86_64.AppImage
 Native Wayland support depends on the compositor, GPU driver and Electron's
 Ozone backend. The packaged build passed the focused controls (16/16), player
 (7/7) and page (8/8) audits under explicit native Wayland, including the
-native-framed Google sign-in window. The full 21-check suite used the default
-XWayland path. Screen sharing/portals are not part of Auralis's feature set.
+native-framed Google sign-in window. Those audits ran before the post-QA
+tray/settings/download fixes; the changed paths were rechecked with targeted
+runs. The full 21-check suite used the default XWayland path. Screen
+sharing/portals are not part of Auralis's feature set.
 
 ### System tray
 
@@ -141,7 +153,18 @@ Auralis uses Electron `Tray`, which needs a StatusNotifier/AppIndicator host:
 
 Without a tray host, Auralis detects this at startup, does not create an
 invisible icon, and quits when the last window closes unless the tray is
-available. **Settings → General** shows a note when no host was found.
+available. **Settings → General** shows a note when the tray setting is enabled
+but no host was found, and disables **Close to tray** in that case. Disabling the
+tray icon does not make the app claim that the desktop has no tray host.
+
+### Restart
+
+**Settings → General → Restart now** flushes pending settings writes before
+exiting. The AppImage uses a detached helper that waits for the old process and
+then launches the outer AppImage; `setsid` is resolved from `/usr/bin`, `/bin`,
+or `PATH`. The `.deb` and development builds use Electron's standard
+`app.relaunch()`. Both packaged variants were verified to start a new process
+with the just-changed theme preserved.
 
 ### Media keys and MPRIS
 
@@ -180,7 +203,12 @@ The bundled FFmpeg is used read-only and does not need updating at runtime.
 - Windows DPAPI cookies cannot be migrated; sign in again.
 - The sign-in window opens and closes, but login/session restore, Last.fm,
   Discord, translation and Shazam require accounts, keys or an audio sample and
-  are not verified end-to-end by the automated suite.
+  are not verified end-to-end by the automated suite. Shazam's system-FFmpeg
+  lookup and temporary-cookie permissions were hardened from code review but
+  were not exercised with a live sample.
+- Anonymous YouTube requests can occasionally receive anti-bot or 429
+  responses. A packaged QA run hit this; a later packaged run passed 21/21
+  cleanly. If playback fails this way, update yt-dlp and retry later.
 - Copy link shows the app toast and updates Electron's clipboard; pasting into
   a separate native-Wayland application was not verified.
 - The application has no auto-updater. Download a newer package to update.

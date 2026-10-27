@@ -379,7 +379,7 @@ export class RecognitionService {
       '-o',
       path.join(dir, 'sample.%(ext)s'),
     ];
-    if (ffmpeg) args.push('--ffmpeg-location', path.dirname(ffmpeg));
+    if (ffmpeg && path.isAbsolute(ffmpeg)) args.push('--ffmpeg-location', path.dirname(ffmpeg));
     const cookie = sessionStore.cookie;
     if (cookie) {
       const cookiePath = path.join(dir, 'cookies.txt');
@@ -389,7 +389,7 @@ export class RecognitionService {
         if (idx <= 0) continue;
         lines.push(`.youtube.com\tTRUE\t/\tTRUE\t${Math.floor(Date.now() / 1000) + 86400}\t${part.slice(0, idx).trim()}\t${part.slice(idx + 1).trim()}`);
       }
-      fs.writeFileSync(cookiePath, lines.join('\n'), 'utf8');
+      fs.writeFileSync(cookiePath, lines.join('\n'), { encoding: 'utf8', mode: 0o600 });
       args.push('--cookies', cookiePath);
     }
     args.push(`https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`);

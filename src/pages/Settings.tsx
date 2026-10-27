@@ -279,7 +279,7 @@ function GeneralTab() {
         <SettingRow label="Close to tray" description="Closing the window keeps the music playing in the background.">
           <Toggle
             checked={settings.closeToTray}
-            disabled={!settings.trayEnabled}
+            disabled={!settings.trayEnabled || appInfo?.trayAvailable === false}
             onChange={(value) => void update({ closeToTray: value })}
           />
         </SettingRow>
@@ -294,7 +294,7 @@ function GeneralTab() {
             Restart now
           </Button>
         </SettingRow>
-        {appInfo?.trayAvailable === false ? (
+        {settings.trayEnabled && appInfo?.trayAvailable === false ? (
           <p className="settings-footnote">
             A desktop tray host was not found. On GNOME, install and enable the AppIndicator extension to use the tray icon; otherwise
             Auralis quits when its window closes.
@@ -712,7 +712,7 @@ function DownloadsTab() {
             <IconButton
               label="Open downloads folder"
               size="sm"
-              onClick={() => void window.auralis.shell.openPath(settings.downloadDir || '')}
+              onClick={() => void window.auralis.shell.openPath(settings.downloadDir || appInfo?.downloadsDir || '')}
             >
               <FolderOpen size={16} />
             </IconButton>

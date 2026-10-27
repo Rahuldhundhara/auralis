@@ -44,7 +44,8 @@ const devUrl = 'http://localhost:5173';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let trayAvailable = process.platform !== 'linux';
+// On Linux this is set from the StatusNotifier host probe during startup.
+let trayAvailable = true;
 let quitting = false;
 let loginWindow: BrowserWindow | null = null;
 
@@ -174,7 +175,8 @@ function createTray() {
 function destroyTray() {
   tray?.destroy();
   tray = null;
-  if (process.platform === 'linux') trayAvailable = false;
+  // Keep trayAvailable as the host-capability flag. The setting can disable
+  // the icon without pretending that the desktop has no tray support.
 }
 
 function registerShortcuts() {
@@ -447,7 +449,9 @@ function registerIpc() {
     chrome: process.versions.chrome,
     platform: process.platform,
     userData: userDataDir(),
-    downloadsDir: ensureDownloadsDir() || downloadsDir(),
+    // Do not create or probe the folder here. A stale network/FUSE path can
+    // block the main process and prevent the window from becoming usable.
+    downloadsDir: settingsStore.get().downloadDir || downloadsDir(),
     ytDlpVersion: await streams.ytdlpVersion(),
     ffmpegAvailable: await streams.ffmpegAvailable(),
     trayAvailable,
@@ -494,14 +498,18 @@ function registerIpc() {
   });
   ipcMain.handle('app:relaunch', () => {
     quitting = true;
+    // Settings writes are debounced; app.exit() skips before-quit, so flush
+    // before restarting or the change that prompted the restart may be lost.
+    flushStores();
     if (process.platform === 'linux' && process.env.APPIMAGE) {
       // An AppImage is mounted at a temporary path, so the inner executable
       // cannot be relaunched after teardown. Start the outer AppImage from a
       // detached helper and wait for this process to exit before launching it,
       // so the new instance does not race the single-instance lock.
       console.info('[auralis] restarting AppImage');
+      const setsid = ['/usr/bin/setsid', '/bin/setsid'].find((candidate) => fs.existsSync(candidate)) || 'setsid';
       const helper = spawn(
-        '/usr/bin/setsid',
+        setsid,
         [
           '/bin/sh',
           '-c',
@@ -674,6 +682,12 @@ async function bootstrap() {
   app.on('second-instance', () => showWindow());
   if (!settingsStore.get().hardwareAcceleration) app.disableHardwareAcceleration();
   await app.whenReady();
+  // The host probe normally runs when the tray is created. When the tray is
+  // disabled, still record whether the desktop supports it so Settings does
+  // not claim that no host exists.
+  if (process.platform === 'linux' && !settingsStore.get().trayEnabled) {
+    trayAvailable = linuxTrayHostAvailable();
+  }
   if (process.platform === 'linux') {
     try {
       console.info('[auralis] secret storage backend:', safeStorage.getSelectedStorageBackend());
@@ -691,6 +705,12 @@ async function bootstrap() {
   setLibraryChangeHandler((data) => broadcast('library-change', data));
   createWindow();
   createTray();
+  // Prepare the default downloads folder in the background. This used to run
+  // synchronously in app:info, where an unavailable network/FUSE mount could
+  // block startup.
+  void ensureDownloadsDir().catch((error) => {
+    console.warn('[auralis] could not prepare the downloads folder', error);
+  });
   // On Linux the renderer's Media Session integration exposes MPRIS and
   // receives media keys. Registering global shortcuts too would double-fire.
   if (process.platform !== 'linux') registerShortcuts();
