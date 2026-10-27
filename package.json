@@ -19,6 +19,7 @@
     "dev": "concurrently -k \"vite --port 5173 --strictPort\" \"wait-on tcp:5173 && npm run build:main && cross-env AURALIS_DEV=1 electron .\"",
     "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build",
+    "build:android": "npm run build:renderer && node scripts/build-android.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dist": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-builder --win portable",

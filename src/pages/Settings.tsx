@@ -36,6 +36,7 @@ import { useAppStore } from '../stores/app';
 import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Button, IconButton, Range } from '../components/primitives';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
@@ -270,23 +271,31 @@ function GeneralTab() {
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="Window & system" description="How Auralis behaves with the rest of Windows." icon={<Monitor size={19} />}>
-        <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
-          <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
-        </SettingRow>
-        <SettingRow label="Close to tray" description="Closing the window keeps the music playing in the background.">
-          <Toggle
-            checked={settings.closeToTray}
-            disabled={!settings.trayEnabled}
-            onChange={(value) => void update({ closeToTray: value })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Hardware acceleration"
-          description="Use the GPU for smooth artwork and animations. Requires a restart to take effect."
-        >
-          <Toggle checked={settings.hardwareAcceleration} onChange={(value) => void update({ hardwareAcceleration: value })} />
-        </SettingRow>
+      <SettingsCard
+        title={isAndroidShell ? 'App & system' : 'Window & system'}
+        description={isAndroidShell ? 'How Auralis fits into Android.' : 'How Auralis behaves with the rest of Windows.'}
+        icon={<Monitor size={19} />}
+      >
+        {!isAndroidShell ? (
+          <>
+            <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
+              <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
+            </SettingRow>
+            <SettingRow label="Close to tray" description="Closing the window keeps the music playing in the background.">
+              <Toggle
+                checked={settings.closeToTray}
+                disabled={!settings.trayEnabled}
+                onChange={(value) => void update({ closeToTray: value })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Hardware acceleration"
+              description="Use the GPU for smooth artwork and animations. Requires a restart to take effect."
+            >
+              <Toggle checked={settings.hardwareAcceleration} onChange={(value) => void update({ hardwareAcceleration: value })} />
+            </SettingRow>
+          </>
+        ) : null}
         <SettingRow label="Restart Auralis" description="Apply graphics changes and reload the interface.">
           <Button variant="outline" size="sm" icon={<RotateCcw size={15} />} onClick={() => void window.auralis.app.relaunch()}>
             Restart now
@@ -330,12 +339,12 @@ function AppearanceTab() {
     { id: 'dark', label: 'Dark', description: 'Soft charcoal surfaces', icon: <Moon size={18} /> },
     { id: 'black', label: 'Black', description: 'True black for OLED', icon: <Moon size={18} /> },
     { id: 'light', label: 'Light', description: 'Bright and airy', icon: <Sun size={18} /> },
-    { id: 'system', label: 'System', description: 'Follow Windows', icon: <Monitor size={18} /> },
+    { id: 'system', label: 'System', description: isAndroidShell ? 'Follow Android' : 'Follow Windows', icon: <Monitor size={18} /> },
   ];
 
   return (
     <>
-      <SettingsCard title="Theme" description="Auralis switches instantly. System follows your Windows appearance." icon={<Palette size={19} />}>
+      <SettingsCard title="Theme" description={`Auralis switches instantly. System follows your ${isAndroidShell ? 'Android' : 'Windows'} appearance.`} icon={<Palette size={19} />}>
         <div className="theme-grid">
           {themes.map((theme) => (
             <button
@@ -397,17 +406,19 @@ function AppearanceTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Sidebar" description="Choose how much room your collection gets." icon={<LayoutPanelLeft size={19} />}>
-        <SettingRow label="Collapse sidebar" description="Show icons only and give the music more space.">
-          <Toggle
-            checked={collapsed}
-            onChange={(value) => {
-              setCollapsed(value);
-              void update({ sidebarCollapsed: value });
-            }}
-          />
-        </SettingRow>
-      </SettingsCard>
+      {!isAndroidShell ? (
+        <SettingsCard title="Sidebar" description="Choose how much room your collection gets." icon={<LayoutPanelLeft size={19} />}>
+          <SettingRow label="Collapse sidebar" description="Show icons only and give the music more space.">
+            <Toggle
+              checked={collapsed}
+              onChange={(value) => {
+                setCollapsed(value);
+                void update({ sidebarCollapsed: value });
+              }}
+            />
+          </SettingRow>
+        </SettingsCard>
+      ) : null}
     </>
   );
 }
@@ -591,7 +602,7 @@ function LyricsTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Translation" description="Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this PC." icon={<Languages size={19} />}>
+      <SettingsCard title="Translation" description={`Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this ${isAndroidShell ? 'device' : 'PC'}.`} icon={<Languages size={19} />}>
         <SettingRow label="Auto-translate lyrics" description="Translate automatically when synced lyrics open, if a key is configured.">
           <Toggle checked={settings.translation.enabled} onChange={(value) => void update({ translation: { ...settings.translation, enabled: value } })} />
         </SettingRow>
@@ -881,31 +892,33 @@ function IntegrationsTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title="Discord Rich Presence"
-        description="Show the song you are listening to on your Discord profile. Create your own Discord application first."
-        icon={<Disc3 size={19} />}
-      >
-        <SettingRow label="Enable Rich Presence" description="Updates when a new song starts or playback pauses.">
-          <Toggle checked={settings.discord.enabled} onChange={(value) => void update({ discord: { ...settings.discord, enabled: value } })} />
-        </SettingRow>
-        <SettingRow label="Discord application ID" stacked>
-          <TextSetting
-            value={settings.discord.appId}
-            placeholder="123456789012345678"
-            onSave={(value) => void update({ discord: { ...settings.discord, appId: value } })}
-          />
-        </SettingRow>
-        <SettingRow label="Show buttons" description="Add an “Open in Auralis” button when Discord supports it.">
-          <Toggle checked={settings.discord.showButtons} onChange={(value) => void update({ discord: { ...settings.discord, showButtons: value } })} />
-        </SettingRow>
-        <div className="settings-inline-actions">
-          <Button variant="ghost" size="sm" icon={<ExternalLink size={14} />} onClick={() => void window.auralis.app.openExternal('https://discord.com/developers/applications')}>
-            Discord Developer Portal
-          </Button>
-        </div>
-        <p className="settings-footnote">Discord must be running on this PC. Rich Presence connects locally and never sends your listening data to Auralis.</p>
-      </SettingsCard>
+      {!isAndroidShell ? (
+        <SettingsCard
+          title="Discord Rich Presence"
+          description="Show the song you are listening to on your Discord profile. Create your own Discord application first."
+          icon={<Disc3 size={19} />}
+        >
+          <SettingRow label="Enable Rich Presence" description="Updates when a new song starts or playback pauses.">
+            <Toggle checked={settings.discord.enabled} onChange={(value) => void update({ discord: { ...settings.discord, enabled: value } })} />
+          </SettingRow>
+          <SettingRow label="Discord application ID" stacked>
+            <TextSetting
+              value={settings.discord.appId}
+              placeholder="123456789012345678"
+              onSave={(value) => void update({ discord: { ...settings.discord, appId: value } })}
+            />
+          </SettingRow>
+          <SettingRow label="Show buttons" description="Add an “Open in Auralis” button when Discord supports it.">
+            <Toggle checked={settings.discord.showButtons} onChange={(value) => void update({ discord: { ...settings.discord, showButtons: value } })} />
+          </SettingRow>
+          <div className="settings-inline-actions">
+            <Button variant="ghost" size="sm" icon={<ExternalLink size={14} />} onClick={() => void window.auralis.app.openExternal('https://discord.com/developers/applications')}>
+              Discord Developer Portal
+            </Button>
+          </div>
+          <p className="settings-footnote">Discord must be running on this PC. Rich Presence connects locally and never sends your listening data to Auralis.</p>
+        </SettingsCard>
+      ) : null}
 
       <SettingsCard title="YouTube Music account" description="Your Google session unlocks likes, playlists and history sync." icon={<CirclePlay size={19} />}>
         <div className="integration-status">
@@ -952,7 +965,7 @@ function AccountTab() {
   const signOut = () => {
     confirmDialog({
       title: 'Sign out of YouTube Music?',
-      message: 'Your local library, playlists and downloads stay on this PC. Synced likes will stop updating.',
+      message: `Your local library, playlists and downloads stay on this ${isAndroidShell ? 'device' : 'PC'}. Synced likes will stop updating.`,
       confirmLabel: 'Sign out',
       danger: true,
       onConfirm: async () => {
@@ -1014,7 +1027,7 @@ function AccountTab() {
         )}
       </SettingsCard>
 
-      <SettingsCard title="Local library" description="Auralis keeps this data on your PC, even without an account." icon={<HardDrive size={19} />}>
+      <SettingsCard title="Local library" description={`Auralis keeps this data on your ${isAndroidShell ? 'device' : 'PC'}, even without an account.`} icon={<HardDrive size={19} />}>
         <div className="account-stats">
           <div>
             <strong>{library.liked.length}</strong>
@@ -1092,9 +1105,9 @@ function AboutTab() {
           <img src="./icon.png" alt="Auralis" />
         </div>
         <div>
-          <span className="eyebrow">Auralis for Windows</span>
+          <span className="eyebrow">{isAndroidShell ? 'Auralis for Android' : 'Auralis for Windows'}</span>
           <h1>Auralis</h1>
-          <p>A calm, local-first desktop client for YouTube Music. Built with an independent brand and GPL-licensed code.</p>
+          <p>A calm, local-first {isAndroidShell ? 'Android' : 'desktop'} client for YouTube Music. Built with an independent brand and GPL-licensed code.</p>
           <span className="about-version">Version {appInfo?.version || '1.0.0'} · GPL-3.0-or-later</span>
         </div>
       </section>
@@ -1102,7 +1115,7 @@ function AboutTab() {
       <SettingsCard title="Build details" description="Runtime versions and local storage locations." icon={<Terminal size={19} />}>
         <div className="about-grid">
           <div>
-            <span>Electron</span>
+            <span>{isAndroidShell ? 'Runtime' : 'Electron'}</span>
             <code>{appInfo?.electron || '—'}</code>
           </div>
           <div>
@@ -1111,7 +1124,7 @@ function AboutTab() {
           </div>
           <div>
             <span>Platform</span>
-            <code>{appInfo?.platform || 'win32'}</code>
+            <code>{appInfo?.platform || (isAndroidShell ? 'android' : 'win32')}</code>
           </div>
           <div>
             <span>yt-dlp</span>
@@ -1147,8 +1160,8 @@ function AboutTab() {
       <SettingsCard title="Credits" description="Auralis stands on the shoulders of open tools." icon={<Music2 size={19} />}>
         <div className="credits-list">
           <div>
-            <strong>Electron, React & Vite</strong>
-            <span>The desktop shell and interface runtime.</span>
+            <strong>{isAndroidShell ? 'Android WebView, React & Vite' : 'Electron, React & Vite'}</strong>
+            <span>The {isAndroidShell ? 'Android shell' : 'desktop shell'} and interface runtime.</span>
           </div>
           <div>
             <strong>yt-dlp & ffmpeg</strong>
@@ -1174,7 +1187,7 @@ function AboutTab() {
       </SettingsCard>
 
       <div className="about-footer">
-        <span>Made for Windows · {formatDate(Date.now())}</span>
+        <span>Made for {isAndroidShell ? 'Android' : 'Windows'} · {formatDate(Date.now())}</span>
         <span>Support the artists you love by listening on official platforms.</span>
       </div>
     </>
@@ -1218,7 +1231,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
             <span className="settings-panel-icon">{current.icon}</span>
             <div>
               <h2>{current.label}</h2>
-              <p>{TAB_DESCRIPTIONS[tab]}</p>
+              <p>{tabDescription(tab)}</p>
             </div>
           </div>
           {tab === 'general' ? <GeneralTab /> : null}
@@ -1245,3 +1258,12 @@ const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
   account: 'Your connected account and local library.',
   about: 'Versions, bundled tools and open-source credits.',
 };
+
+function tabDescription(tab: SettingsTab): string {
+  if (isAndroidShell) {
+    if (tab === 'general') return 'Language, region, startup and app behaviour.';
+    if (tab === 'appearance') return 'Theme and accent colour.';
+    if (tab === 'integrations') return 'Last.fm and your YouTube Music session.';
+  }
+  return TAB_DESCRIPTIONS[tab];
+}

@@ -24,6 +24,7 @@ import { usePlayerStore } from '../stores/player';
 import { useUiStore, type DialogState } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { useUiStore as useUi } from '../stores/ui';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, IconButton, Modal, Spinner } from './primitives';
 import { SearchField } from './SearchField';
 
@@ -522,7 +523,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
     } catch (err: any) {
       setError(
         err?.name === 'NotAllowedError'
-          ? 'Microphone access was denied. Allow microphone access in Windows settings and try again.'
+          ? `Microphone access was denied. Allow microphone access in ${isAndroidShell ? 'Android' : 'Windows'} settings and try again.`
           : err?.message || 'Could not start the microphone.',
       );
       setStage('error');
@@ -602,7 +603,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
         onClose();
       }}
       title="Identify music"
-      subtitle="Auralis fingerprints a short clip right on this PC, then asks Shazam what it is."
+      subtitle={`Auralis fingerprints a short clip right on ${isAndroidShell ? 'this device' : 'this PC'}, then asks Shazam what it is.`}
       width={620}
       className="recognition-modal"
     >

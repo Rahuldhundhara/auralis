@@ -12,10 +12,12 @@ import { useNavStore } from './stores/nav';
 import { useAppStore } from './stores/app';
 import { usePlayerStore } from './stores/player';
 import { useUiStore } from './stores/ui';
+import { isAndroidShell } from './lib/platform';
 import { Button, ContextMenu, Toasts, useScrollStore } from './components/primitives';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { MobileNav } from './components/MobileNav';
 import { PlayerBar } from './components/PlayerBar';
 import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
@@ -140,7 +142,7 @@ function Splash() {
         <img src="./icon.png" alt="" className="splash-logo" draggable={false} />
         <div className="splash-word">
           <span>Auralis</span>
-          <small>Music for Windows</small>
+          <small>{isAndroidShell ? 'Music for Android' : 'Music for Windows'}</small>
         </div>
       </div>
       <div className="splash-eq" aria-hidden="true">
@@ -217,10 +219,22 @@ export default function App() {
 
     const onKeyDown = (event: KeyboardEvent) => keyboard(event);
     window.addEventListener('keydown', onKeyDown);
+
+    // Android's system back button asks the renderer first. If there is no
+    // in-app history left, the native shell moves the task to the background.
+    const androidWindow = window as unknown as { __auralisAndroidBack?: () => boolean };
+    androidWindow.__auralisAndroidBack = () => {
+      const nav = useNavStore.getState();
+      if (!nav.canBack()) return false;
+      nav.back();
+      return true;
+    };
+
     return () => {
       cancelled = true;
       unsubscribeNav();
       window.removeEventListener('keydown', onKeyDown);
+      delete androidWindow.__auralisAndroidBack;
     };
   }, []);
 
@@ -287,6 +301,7 @@ export default function App() {
       {ready ? (
         <>
           <PlayerBar />
+          <MobileNav />
           <QueuePanel />
           <NowPlaying />
         </>

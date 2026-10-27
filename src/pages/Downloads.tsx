@@ -19,6 +19,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate, formatDuration, shuffleArray } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, IconButton } from '../components/primitives';
 
 type Filter = 'all' | 'done' | 'active' | 'failed';
@@ -154,7 +155,7 @@ export function DownloadsPage() {
             <Download size={14} /> Offline listening
           </span>
           <h1>Downloads</h1>
-          <p>Every file is stored on this PC, so your music keeps playing when the internet does not.</p>
+          <p>Every file is stored on {isAndroidShell ? 'this device' : 'this PC'}, so your music keeps playing when the internet does not.</p>
           <div className="downloads-stats">
             <div className="download-stat">
               <span className="download-stat-icon">

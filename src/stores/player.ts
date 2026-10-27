@@ -62,6 +62,20 @@ interface PlayerState {
 
 const STORAGE_KEY = 'auralis.player.v1';
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const MAX_QUEUE_TRACKS = 400;
+const QUEUE_HISTORY = 50;
+
+function boundedQueue(queue: Track[], index: number) {
+  if (queue.length <= MAX_QUEUE_TRACKS) return { queue, index };
+  const start = Math.max(
+    0,
+    Math.min(index - QUEUE_HISTORY, queue.length - MAX_QUEUE_TRACKS),
+  );
+  return {
+    queue: queue.slice(start, start + MAX_QUEUE_TRACKS),
+    index: index - start,
+  };
+}
 
 let audio: HTMLAudioElement | null = null;
 let audioContext: AudioContext | null = null;
@@ -81,6 +95,7 @@ let lastPersist = 0;
 let persistTimer: number | undefined;
 let volumeTimer: number | undefined;
 let discordTimer: number | undefined;
+let prefetchTimer: number | undefined;
 let shuffleBackup: { queue: Track[]; index: number } | null = null;
 let errorRetries = 0;
 let mediaHandlersBound = false;
@@ -95,6 +110,11 @@ function mediaArtwork(track: Track | undefined) {
 }
 
 function updateMediaSession(track: Track | undefined, playing: boolean) {
+  try {
+    window.__auralisAndroidMediaState?.(track || null, playing);
+  } catch {
+    // The native bridge is Android-only.
+  }
   if (!('mediaSession' in navigator)) return;
   try {
     navigator.mediaSession.metadata = track
@@ -230,6 +250,23 @@ function schedulePersist() {
   persistTimer = window.setTimeout(persistNow, 700);
 }
 
+function cancelPrefetch() {
+  window.clearTimeout(prefetchTimer);
+  prefetchTimer = undefined;
+}
+
+function schedulePrefetch(track: Track | undefined, token: number) {
+  cancelPrefetch();
+  if (!track) return;
+  prefetchTimer = window.setTimeout(() => {
+    prefetchTimer = undefined;
+    if (token !== loadToken) return;
+    const state = usePlayerStore.getState();
+    if (state.queue[state.index + 1]?.id !== track.id) return;
+    window.auralis.player.prefetch(playableTrack(track)).catch(() => {});
+  }, 1200);
+}
+
 function finalizePlayback(completed = false) {
   const state = usePlayerStore.getState();
   if (!state.current || recorded) return;
@@ -282,7 +319,7 @@ function attachAudioListeners() {
       lastPositionUpdate = Date.now();
       updatePositionState();
     }
-    if (Date.now() - lastPersist > 5000) schedulePersist();
+    if (Date.now() - lastPersist > 15000) schedulePersist();
   });
   audio.addEventListener('play', () => {
     usePlayerStore.setState({ playing: true, buffering: false, error: undefined });
@@ -408,11 +445,13 @@ function restoreSession() {
     shuffle: boolean;
   } | null>(localStorage.getItem(STORAGE_KEY), null);
   if (!saved || !Array.isArray(saved.queue) || !saved.queue.length) return;
-  const index = Math.min(Math.max(0, saved.index || 0), saved.queue.length - 1);
-  const track = saved.queue[index];
+  const savedIndex = Math.min(Math.max(0, saved.index || 0), saved.queue.length - 1);
+  const restored = boundedQueue(saved.queue, savedIndex);
+  const index = restored.index;
+  const track = restored.queue[index];
   pendingSeek = Math.max(0, saved.position || 0);
   usePlayerStore.setState({
-    queue: saved.queue,
+    queue: restored.queue,
     index,
     current: track,
     duration: track.duration || 0,
@@ -439,6 +478,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     const el = ensureAudio();
     buildGraph();
+    cancelPrefetch();
     loadToken++;
     const token = loadToken;
     recorded = false;
@@ -483,7 +523,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         set({ loading: false });
       }
       const nextTrack = get().queue[get().index + 1];
-      if (nextTrack) window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 2200);
+      schedulePrefetch(nextTrack, token);
     } catch (error: any) {
       if (token !== loadToken) return;
       set({
@@ -498,7 +538,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   const radioTracksForQueue = (tracks: Track[]) => {
     // Keep the shuffle backup in sync so turning shuffle off does not drop
     // the radio tracks that were appended while shuffle was on.
-    if (shuffleBackup) shuffleBackup.queue = [...shuffleBackup.queue, ...tracks];
+    if (shuffleBackup) {
+      shuffleBackup.queue = [...shuffleBackup.queue, ...tracks].slice(-MAX_QUEUE_TRACKS);
+    }
     return get().shuffle ? shuffleArray(tracks) : tracks;
   };
 
@@ -529,15 +571,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         }
         const queue = [...get().queue, ...radioTracksForQueue(extra)];
         const nextIndex = get().index + 1;
+        const bounded = boundedQueue(queue, nextIndex);
         set({
-          queue,
-          index: nextIndex,
+          queue: bounded.queue,
+          index: bounded.index,
           radio: true,
           radioSeed: seed,
           radioContinuation: nextToken,
           radioLoading: false,
         });
-        void load(queue[nextIndex], true, 0);
+        void load(bounded.queue[bounded.index], true, 0);
         persistNow();
         return 'added';
       }
@@ -616,9 +659,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     playQueue: (tracks, startIndex = 0, options = {}) => {
       const list = tracks.filter((track) => track && track.id);
       if (!list.length) return;
-      let queue = list;
       let index = Math.min(Math.max(0, startIndex), list.length - 1);
-      if (get().shuffle) {
+      const state = get();
+      const sameQueue =
+        state.queue.length === list.length &&
+        state.index === index &&
+        list.every((track, itemIndex) => state.queue[itemIndex]?.id === track.id);
+      if (sameQueue && !options.radio && !options.startAt) {
+        // Tapping the already loaded song should not restart it or resolve it
+        // again. This keeps repeated taps cheap and prevents native workers
+        // from piling up when the same card is tapped over and over.
+        if (!state.playing && !state.loading) get().play();
+        return;
+      }
+      let queue = list;
+      if (state.shuffle) {
         const current = list[index];
         queue = [current, ...shuffleArray(list.filter((_, itemIndex) => itemIndex !== index))];
         index = 0;
@@ -661,16 +716,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           existing.add(item.id);
           return true;
         });
+        const merged = [...get().queue, ...radioTracksForQueue(extra)];
+        const bounded = boundedQueue(merged, get().index);
         set({
-          queue: [...get().queue, ...radioTracksForQueue(extra)],
+          queue: bounded.queue,
+          index: bounded.index,
           radioContinuation: result.continuation,
           radioLoading: false,
         });
         schedulePersist();
-        const nextTrack = get().queue[get().index + 1];
-        if (nextTrack) {
-          window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 1200);
-        }
       } catch (error: any) {
         set({ radioLoading: false });
         useUiStore.getState().toast(`Radio is starting from this song only: ${error?.message || error}`, 'error');
@@ -872,7 +926,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         get().playQueue([...state.queue, track], state.queue.length, { radio: state.radio, seed: state.radioSeed });
         return;
       }
-      set({ queue: [...state.queue, track] });
+      const bounded = boundedQueue([...state.queue, track], state.index);
+      set({ queue: bounded.queue, index: bounded.index });
       if (!quiet) useUiStore.getState().toast(`Added “${track.title}” to the queue.`, 'success');
       schedulePersist();
     },
@@ -881,8 +936,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const state = get();
       const queue = [...state.queue];
       queue.splice(state.index + 1, 0, track);
-      if (shuffleBackup) shuffleBackup.queue = [...shuffleBackup.queue, track];
-      set({ queue });
+      const bounded = boundedQueue(queue, state.index);
+      if (shuffleBackup) {
+        shuffleBackup.queue = [...shuffleBackup.queue, track].slice(-MAX_QUEUE_TRACKS);
+      }
+      set({ queue: bounded.queue, index: bounded.index });
       if (!quiet) useUiStore.getState().toast(`“${track.title}” will play next.`, 'success');
       schedulePersist();
     },
@@ -893,6 +951,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const removingCurrent = index === state.index;
       const queue = state.queue.filter((_, itemIndex) => itemIndex !== index);
       if (!queue.length) {
+        cancelPrefetch();
         audio?.pause();
         if (audio) audio.removeAttribute('src');
         set({
@@ -967,6 +1026,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     clearSleepTimer: () => set({ sleepTimerEnd: undefined, sleepTimerEndOfTrack: false }),
 
     stop: () => {
+      cancelPrefetch();
       finalizePlayback(false);
       if (audio) {
         audio.pause();

@@ -12,11 +12,24 @@ export function TopBar() {
   const back = useNavStore((state) => state.back);
   const forward = useNavStore((state) => state.forward);
   const navigate = useNavStore((state) => state.navigate);
+  const route = useNavStore((state) => state.entries[state.index] || { page: 'home' as const });
+  const showMobileBack =
+    canBack &&
+    !['home', 'explore', 'search', 'library', 'liked', 'recent', 'downloads', 'history', 'settings'].includes(route.page);
   const session = useAppStore((state) => state.session);
   const openDialog = useUiStore((state) => state.openDialog);
 
   return (
     <header className="top-bar">
+      <div className="top-mobile-leading">
+        {showMobileBack ? (
+          <IconButton label="Go back" size="sm" onClick={back}>
+            <ChevronLeft size={21} />
+          </IconButton>
+        ) : (
+          <img src="./icon.png" alt="" className="top-mobile-logo" draggable={false} />
+        )}
+      </div>
       <div className="top-nav-buttons">
         <IconButton label="Go back" size="sm" onClick={back} disabled={!canBack}>
           <ChevronLeft size={20} />

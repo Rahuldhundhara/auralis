@@ -24,6 +24,7 @@ import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { MediaCard, ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -431,7 +432,7 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
             />
           )}
           <p className="library-footnote">
-            Last refreshed {timeAgo(Date.now())}. Downloads are stored in your chosen folder and never leave your PC.
+            Last refreshed {timeAgo(Date.now())}. Downloads are stored in your chosen folder and never leave your {isAndroidShell ? 'device' : 'PC'}.
           </p>
           <button type="button" className="text-button" onClick={() => void refreshLibrary()}>
             <Clock3 size={14} /> Refresh library

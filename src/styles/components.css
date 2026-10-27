@@ -573,6 +573,10 @@
   padding-inline: 24px;
 }
 
+.player-mobile-actions {
+  display: none;
+}
+
 .player-empty {
   display: flex;
   align-items: center;
@@ -1114,6 +1118,7 @@
 .np-art-frame {
   position: relative;
   width: min(395px, 33vw, 47vh);
+  flex: 0 0 auto;
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 17px;
@@ -1280,6 +1285,14 @@
   border-radius: 18px;
   background: rgba(var(--surface-rgb), 0.42);
   backdrop-filter: blur(16px);
+}
+
+/* The queue can be much taller than the Now Playing panel. Give it its own
+   scroller so rows stay reachable instead of being clipped by the panel. */
+.np-panel .queue-list {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .np-about {

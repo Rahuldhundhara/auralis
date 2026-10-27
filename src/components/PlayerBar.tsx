@@ -225,6 +225,55 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
   );
 }
 
+function MobilePlayerControls() {
+  const playing = usePlayerStore((state) => state.playing);
+  const loading = usePlayerStore((state) => state.loading);
+  const buffering = usePlayerStore((state) => state.buffering);
+  const hasQueue = usePlayerStore((state) => state.queue.length > 0);
+
+  return (
+    <div className="player-mobile-actions">
+      <IconButton
+        label="Previous"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().previous()}
+        disabled={!hasQueue}
+      >
+        <SkipBack size={19} fill="currentColor" />
+      </IconButton>
+      <button
+        type="button"
+        className="player-mobile-play"
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={() => usePlayerStore.getState().toggle()}
+      >
+        {loading || buffering ? (
+          <Loader2 size={20} className="spin" />
+        ) : playing ? (
+          <Pause size={20} fill="currentColor" />
+        ) : (
+          <Play size={20} fill="currentColor" className="play-icon-offset" />
+        )}
+      </button>
+      <IconButton
+        label="Next"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().next()}
+        disabled={!hasQueue}
+      >
+        <SkipForward size={19} fill="currentColor" />
+      </IconButton>
+      <IconButton
+        label="Open now playing"
+        className="player-mobile-expand"
+        onClick={() => useUiStore.getState().setNowPlayingOpen(true)}
+      >
+        <ChevronUp size={20} />
+      </IconButton>
+    </div>
+  );
+}
+
 export function PlayerBar() {
   const current = usePlayerStore((state) => state.current);
   const queueOpen = useUiStore((state) => state.queueOpen);
@@ -233,6 +282,14 @@ export function PlayerBar() {
   const setQueueOpen = useUiStore((state) => state.setQueueOpen);
   const setNowPlayingOpen = useUiStore((state) => state.setNowPlayingOpen);
   const setNowPlayingTab = useUiStore((state) => state.setNowPlayingTab);
+
+  const openFromBar = (event: React.MouseEvent<HTMLElement>) => {
+    // Let artwork, transport buttons, sliders and links keep their own actions.
+    // A tap/click on the song title, artist row or any empty part of the bar
+    // should still open Now Playing, exactly like tapping the artwork does.
+    if ((event.target as HTMLElement).closest('button, a, input, select, textarea, [role="slider"]')) return;
+    setNowPlayingOpen(true);
+  };
 
   if (!current) {
     return (
@@ -254,7 +311,7 @@ export function PlayerBar() {
   }
 
   return (
-    <footer className="player-bar">
+    <footer className="player-bar" onClick={openFromBar}>
       <div className="player-left">
         <PlayerTrackInfo track={current} />
       </div>
@@ -290,6 +347,7 @@ export function PlayerBar() {
           <ChevronUp size={19} />
         </IconButton>
       </div>
+      <MobilePlayerControls />
     </footer>
   );
 }

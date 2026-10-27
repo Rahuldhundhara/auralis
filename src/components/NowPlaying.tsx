@@ -23,6 +23,16 @@ import { SeekBar, TransportControls, VolumeControl } from './PlayerBar';
 import { LyricsPanel } from './LyricsPanel';
 import { QueueList } from './QueuePanel';
 
+function largerAndroidArtwork(src?: string): string | undefined {
+  if (!src || !document.documentElement.classList.contains('is-android')) return src;
+  if (!/googleusercontent\.com|ggpht\.com/.test(src)) return src;
+  if (/=w\d+-h\d+/.test(src)) {
+    return src.replace(/=w\d+-h\d+/, '=w960-h960');
+  }
+  if (/=s\d+/.test(src)) return src.replace(/=s\d+/, '=s960');
+  return src;
+}
+
 function NowPlayingAbout() {
   const current = usePlayerStore((state) => state.current);
   const duration = usePlayerStore((state) => state.duration);
@@ -125,12 +135,13 @@ export function NowPlaying() {
 
   if (!open || !current) return null;
   const downloaded = downloads.some((item) => item.track.id === current.id && item.status === 'done');
+  const artworkSrc = largerAndroidArtwork(current.thumbnail);
 
   return (
     <div className="now-playing" role="dialog" aria-label="Now playing">
       <div
         className="np-backdrop"
-        style={current.thumbnail ? { backgroundImage: `url(${current.thumbnail})` } : undefined}
+        style={artworkSrc ? { backgroundImage: `url(${artworkSrc})` } : undefined}
       />
       <div className="np-overlay" />
       <header className="np-header">
@@ -154,8 +165,8 @@ export function NowPlaying() {
       <div className="np-layout">
         <section className={`np-left ${artLoaded ? 'is-loaded' : ''}`}>
           <div className="np-art-frame">
-            <Artwork src={current.thumbnail} alt={current.title} className="np-art" />
-            {!artLoaded ? <img src={current.thumbnail} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} /> : null}
+            <Artwork src={artworkSrc} alt={current.title} className="np-art" />
+            {!artLoaded ? <img src={artworkSrc} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} /> : null}
           </div>
           <div className="np-track-meta">
             <div className="np-title-line">
