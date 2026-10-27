@@ -2,15 +2,23 @@
   <img src="resources/logo.png" width="280" alt="Auralis logo" />
 </p>
 
-<h1 align="center">Auralis</h1>
+<h1 align="center">Auralis for Linux</h1>
 
 <p align="center">
-  A native-feeling YouTube Music client for Windows 10/11 and Linux x64.<br />
+  Auralis 1.0.2 for Linux x64 — a native-feeling YouTube Music desktop client.<br />
   Browse, stream, queue, sing along and listen offline — in one focused desktop app.
 </p>
 
 <p align="center">
-  <strong>Version 1.0.2</strong> · Windows x64 · Linux x64 · GPL-3.0-or-later
+  <strong>Linux release 1.0.2</strong> · AppImage · Debian package · GPL-3.0-or-later
+</p>
+
+<p align="center">
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage"><strong>Download AppImage</strong></a>
+  ·
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb"><strong>Download .deb</strong></a>
+  ·
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt">SHA-256 checksums</a>
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -30,7 +38,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **Now Playing** | Full-screen artwork, queue, synced lyrics and word-by-word highlighting |
 | **Lyrics** | Eight providers, including LRCLIB, BetterLyrics, Paxsenix, LyricsPlus, KuGou and YouTube |
 | **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history |
-| **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
+| **Downloads** | Offline audio downloads in app-private storage with progress, pause/resume, cancel, retry, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
 | **Desktop** | Frameless window, tray icon, close-to-tray, keyboard shortcuts and platform media controls (MPRIS on Linux) |
 | **Look and feel** | Material-inspired design, dark/black/light/system themes and eight accent colours |
@@ -49,25 +57,15 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | --- | --- |
 | ![Moods and genres](docs/screenshots/moods.png) | ![Offline downloads](docs/screenshots/downloads.png) |
 
-## Install
+## Install Auralis for Linux 1.0.2
 
-Download the latest build from the [GitHub Releases page](https://github.com/Rahuldhundhara/auralis/releases/latest). Windows x64 builds:
-
-| Build | File | Use it when |
-| --- | --- | --- |
-| Installer | [`Auralis-Setup-1.0.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.0.2.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.0.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.0.2.exe) | You want a single executable that does not need installation |
-
-The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
-
-These community builds are not code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info → Run anyway** after checking the SHA-256 against [`SHA256SUMS.txt`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/SHA256SUMS.txt). Code signing is the only reason for that prompt; the app does not need elevation.
-
-### Linux
+Download the Linux 1.0.2 packages from the
+[Linux release page](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux):
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| AppImage | `Auralis-1.0.2-x86_64.AppImage` | You want a single portable file with no installation |
-| Debian package | `Auralis-1.0.2-amd64.deb` | You want a desktop entry, system integration and a package-managed install |
+| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
+| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
 
 ```bash
 chmod +x Auralis-1.0.2-x86_64.AppImage
@@ -78,6 +76,13 @@ sudo apt install ./Auralis-1.0.2-amd64.deb
 auralis
 ```
 
+Verify the download against
+[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt):
+
+```bash
+sha256sum -c SHA256SUMS-linux.txt
+```
+
 The AppImage needs FUSE 2 (`libfuse2t64` on Ubuntu 24.04/26.04). Both Linux
 builds include yt-dlp and FFmpeg and do not need a separate browser runtime.
 GNOME needs the AppIndicator extension for the tray icon; without it Auralis
@@ -85,10 +90,13 @@ quits when the last window closes and explains why in Settings. See
 [`docs/LINUX.md`](docs/LINUX.md) for Wayland, keyring, sandbox and troubleshooting
 details.
 
+Windows builds remain available on the
+[GitHub Releases page](https://github.com/Rahuldhundhara/auralis/releases).
+
 ### First run
 
 1. Open **Settings → Appearance** and choose a theme and accent.
-2. Open **Settings → Downloads** and pick a music folder. The default is `%USERPROFILE%\Music\Auralis` on Windows and `~/Music/Auralis` on Linux.
+2. Open **Settings → Downloads** to manage offline audio. Downloads are stored in app-private storage (`%APPDATA%\Auralis\offline` on Windows, `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` on Linux).
 3. Optionally connect an account under **Settings → Account**, or configure Last.fm and Discord under **Settings → Integrations**.
 4. Start typing in the search bar, or pick something from Home.
 
@@ -102,6 +110,7 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 - Supplied Auralis logo: green "A" play mark with soundwave arcs, used by the installer, window, title bar, splash, tray and README.
 - Hardened live QA: 21 end-to-end checks covering search filters, playback, related autoplay, queue editing, playlists, downloads, lyrics, settings and restart persistence.
 - Rebuilt NSIS installer and portable EXE with the 1.0.2 binaries and refreshed SHA-256 checksums.
+- Published the Linux 1.0.2 AppImage and Debian package with SHA-256 checksums.
 
 ## Where your data lives
 
@@ -109,7 +118,7 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 | --- | --- | --- |
 | Settings and local library | `%APPDATA%\Auralis\settings.json`, `library.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/settings.json`, `library.json` |
 | YouTube Music session | `%APPDATA%\Auralis\session.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/session.json` |
-| Downloads | `%USERPROFILE%\Music\Auralis` by default | `~/Music/Auralis` by default |
+| Downloads | `%APPDATA%\Auralis\offline` (app-private) | `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` (app-private) |
 | Writable yt-dlp copy | bundled `resources\bin\yt-dlp.exe` | `~/.config/Auralis/bin/yt-dlp` |
 | Playback cache | Electron's per-user cache folder | Electron's per-user cache folder |
 

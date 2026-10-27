@@ -87,7 +87,7 @@ user-namespace policy.
 | --- | --- |
 | Settings and library | `${XDG_CONFIG_HOME:-~/.config}/Auralis/settings.json`, `library.json` |
 | YouTube Music session | `${XDG_CONFIG_HOME:-~/.config}/Auralis/session.json` |
-| Downloads | `~/Music/Auralis` by default (configurable) |
+| Downloads | `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` (app-private) |
 | Writable yt-dlp copy | `~/.config/Auralis/bin/yt-dlp` |
 | Playback/cache | Electron's per-user cache directory |
 
@@ -97,16 +97,17 @@ when loaded. This matters because `settings.json` can contain Last.fm/API
 secrets and `session.json` can contain a plaintext cookie when no keyring is
 available. Windows file permissions are unchanged.
 
-The downloads folder is prepared asynchronously in the background. An
-unavailable network/FUSE path no longer blocks startup or the first window; a
-download that cannot create the folder reports an error instead.
+The app-private downloads folder is prepared asynchronously in the background.
+An unavailable path no longer blocks startup or the first window; a download
+that cannot create the folder reports an error instead.
 
 ### Windows profile migration
 
 A settings or library directory copied from Windows can be used, but:
 
-- Windows `C:\...` download paths are ignored on Linux and replaced at runtime
-  with `~/Music/Auralis`. Existing library entries are not deleted or rewritten.
+- Windows `C:\...` download paths are ignored on Linux. New downloads go to
+  the app-private Linux downloads folder. Existing library entries are not
+  deleted or rewritten.
 - YouTube cookies encrypted with Windows DPAPI cannot be decrypted on Linux.
   Sign in again in **Settings → Account**.
 - No files are moved or deleted during migration.
