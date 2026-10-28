@@ -212,7 +212,11 @@ public final class YtDlpManager {
     }
 
     public String resolve(String videoId, String quality, String cookie, String proxy) throws Exception {
-        String cacheKey = resolveCacheKey(videoId, quality, cookie, proxy);
+        return resolve(videoId, quality, cookie, proxy, false);
+    }
+
+    public String resolve(String videoId, String quality, String cookie, String proxy, boolean video) throws Exception {
+        String cacheKey = resolveCacheKey(videoId, quality + (video ? "|video" : ""), cookie, proxy);
         CachedStream cached = resolvedStreams.get(cacheKey);
         if (cached != null) {
             if (System.currentTimeMillis() - cached.at < RESOLVE_CACHE_TTL_MS) {
@@ -228,7 +232,7 @@ public final class YtDlpManager {
         String processId = beginResolve();
         try {
             YoutubeDLRequest request = baseRequest(videoId, cookieFile, proxy);
-            request.addOption("-f", qualityFormat(quality));
+            request.addOption("-f", video ? videoFormat() : qualityFormat(quality));
             request.addOption("-g");
             ScheduledFuture<?> timeout = scheduler.schedule(
                     () -> YoutubeDL.getInstance().destroyProcessById(processId),
@@ -533,9 +537,21 @@ public final class YtDlpManager {
 
     public static String qualityFormat(String quality) {
         if ("high".equals(quality)) return "bestaudio[abr<=256]/bestaudio[ext=m4a]/bestaudio";
-        if ("medium".equals(quality)) return "bestaudio[abr<=192]/bestaudio[ext=m4a]/bestaudio";
-        if ("low".equals(quality)) return "bestaudio[abr<=128]/bestaudio[ext=m4a]/bestaudio";
+        if ("medium".equals(quality)) return "bestaudio[abr<=192]/bestaudio[ext=m4a]";
+        if ("low".equals(quality)) return "worstaudio[ext=m4a]/worstaudio";
+        if ("best".equals(quality)) return "bestaudio/best";
         return "bestaudio[ext=m4a]/bestaudio";
+    }
+
+    /**
+     * Progressive formats only: yt-dlp returns a single URL for `-g`, so
+     * separate video/audio DASH streams cannot be muxed here. 480p keeps the
+     * optional preview light on mobile data while remaining legible.
+     */
+    public static String videoFormat() {
+        return "best[height<=720][ext=mp4][acodec!=none][vcodec!=none]"
+                + "/best[height<=720][acodec!=none][vcodec!=none]"
+                + "/best[acodec!=none][vcodec!=none]";
     }
 
     private void cleanupTemp() {

@@ -131,13 +131,60 @@ html.is-android .page {
 
 /* Android always uses the compact header/player arrangement, including
    tablets and landscape. The desktop transport stays hidden. */
+html.is-android * {
+  scrollbar-width: none;
+}
+
+html.is-android *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 html.is-android .player-bar {
+  position: relative;
   height: auto;
   min-height: var(--player-h);
   flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   padding: 8px 10px;
+}
+
+html.is-android .player-mini-progress {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
+  height: 15px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+html.is-android .player-mini-progress:focus-visible .player-mini-track {
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.55);
+}
+
+html.is-android .player-mini-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.is-android .player-mini-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: var(--accent);
+  will-change: transform;
 }
 
 html.is-android .player-center,
@@ -1431,6 +1478,177 @@ html.is-android .np-panel {
     min-height: 0;
     flex: 0 0 auto;
   }
+}
+
+/* Android search: the dedicated page owns its search field, so keep the
+   results header compact and leave room for the actual results. */
+html.is-android .search-landing {
+  padding-top: 10px;
+}
+
+html.is-android .search-landing-hero {
+  margin: 10px auto 32px;
+}
+
+html.is-android .search-landing-hero h1 {
+  margin: 8px 0;
+  font-size: 31px;
+}
+
+html.is-android .search-landing-hero > p {
+  margin-bottom: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+html.is-android .search-hero {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border-radius: 15px;
+}
+
+html.is-android .search-hero h1 {
+  margin-top: 2px;
+  font-size: 25px;
+}
+
+html.is-android .search-hero > p {
+  margin-top: 3px;
+  font-size: 11.5px;
+}
+
+html.is-android .search-hero-field {
+  margin-top: 13px;
+}
+
+html.is-android .search-hero-field .search-field {
+  min-height: 40px;
+}
+
+html.is-android .search-page .chips {
+  margin-bottom: 14px;
+}
+
+html.is-android .search-page .chips .chip {
+  flex: 1 1 calc(25% - 6px);
+  padding-inline: 8px;
+  text-align: center;
+}
+
+html.is-android .settings-hero {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border-radius: 15px;
+}
+
+html.is-android .settings-hero .eyebrow {
+  font-size: 9.5px;
+}
+
+html.is-android .settings-hero h1 {
+  margin-top: 2px;
+  font-size: 26px;
+}
+
+html.is-android .settings-hero > p {
+  margin-top: 3px;
+  font-size: 11.5px;
+}
+
+/* Android Library: compact the hero and keep every tab discoverable instead
+   of hiding Downloads and YouTube Music in a scroll container. */
+html.is-android .library-hero {
+  min-height: 0;
+  margin-bottom: 14px;
+  padding: 18px;
+}
+
+html.is-android .library-hero h1 {
+  margin-top: 2px;
+  font-size: 30px;
+}
+
+html.is-android .library-hero-copy > p {
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+
+html.is-android .library-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 13px;
+}
+
+html.is-android .library-stat {
+  min-width: 0;
+  padding: 8px 11px;
+}
+
+html.is-android .library-stat strong {
+  font-size: 19px;
+}
+
+html.is-android .library-stat span {
+  font-size: 9px;
+}
+
+html.is-android .library-hero-actions {
+  gap: 7px;
+  margin-top: 13px;
+}
+
+html.is-android .library-page .library-tabs {
+  flex-wrap: wrap;
+  width: 100%;
+  overflow: visible;
+  margin-bottom: 18px;
+}
+
+html.is-android .library-page .library-tab {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+html.is-android .explore-page .explore-tabs {
+  flex-wrap: wrap;
+  width: 100%;
+  overflow: visible;
+}
+
+html.is-android .explore-page .explore-tab {
+  flex: 1 1 calc(50% - 4px);
+  justify-content: center;
+  padding-inline: 9px;
+}
+
+html.is-android .downloads-toolbar .library-tabs {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+html.is-android .downloads-toolbar .library-tab {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/* Ten EQ bands must fit a phone without a hidden horizontal scroller. */
+html.is-android .eq-panel {
+  overflow-x: visible;
+}
+
+html.is-android .eq-bands {
+  min-width: 0;
+  gap: 3px;
+}
+
+html.is-android .eq-range {
+  width: 26px;
+}
+
+html.is-android .eq-frequency,
+html.is-android .eq-band .eq-value {
+  font-size: 7.5px;
 }
 
 @media (prefers-reduced-motion: reduce) {

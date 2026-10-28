@@ -23,16 +23,36 @@ export interface AndroidNativeBridge {
   relaunch(): void;
   login(): void;
   setTheme(dark: boolean): void;
-  setPlayback(playing: boolean, title: string, artist: string, artwork: string): void;
+  setPlayback(
+    playing: boolean,
+    title: string,
+    artist: string,
+    artwork: string,
+    positionMs: number,
+    durationMs: number,
+    liked: boolean,
+    trackId: string,
+    buffering: boolean,
+  ): void;
   stopPlayback?(): void;
+  startVoiceSearch?(): void;
+  cancelVoiceSearch?(): void;
   openAppSettings(): void;
+}
+
+export interface AndroidMediaSnapshot {
+  position: number;
+  duration: number;
+  buffering: boolean;
+  liked: boolean;
 }
 
 declare global {
   interface Window {
     AuralisNative?: AndroidNativeBridge;
     __auralisNativeEvent?: (type: string, payload: unknown) => void;
-    __auralisAndroidMediaState?: (track: Track | null, playing: boolean) => void;
+    __auralisAndroidMediaState?: (track: Track | null, playing: boolean, snapshot?: AndroidMediaSnapshot) => void;
+    __auralisVoiceResult?: (payload: string) => void;
   }
 }
 
@@ -72,6 +92,31 @@ export function userDataDir(): string {
   return typeof info.userData === 'string' && info.userData ? info.userData : '/data/user/0/com.auralis.music/files';
 }
 
+const LEGACY_LYRICS_PROVIDERS = [
+  'BetterLyrics',
+  'Paxsenix',
+  'LyricsPlus',
+  'LrcLib',
+  'KuGou',
+  'YouTube',
+  'YouTubeSubtitle',
+  'Zemer',
+];
+
+// Accurate, metadata-searched providers come first. BetterLyrics can return a
+// different song by the same artist when its catalogue match is fuzzy, so it is
+// a fallback rather than the default source.
+const DEFAULT_LYRICS_PROVIDERS = [
+  'LrcLib',
+  'LyricsPlus',
+  'YouTube',
+  'BetterLyrics',
+  'KuGou',
+  'YouTubeSubtitle',
+  'Zemer',
+  'Paxsenix',
+];
+
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
   accent: '#8ab4f8',
@@ -88,23 +133,18 @@ export const DEFAULT_SETTINGS: Settings = {
     enabled: false,
     bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     preamp: 0,
+    bassBoost: 0,
+    bassFrequency: 80,
+    limiter: true,
   },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
-  lyricsProviders: [
-    'BetterLyrics',
-    'Paxsenix',
-    'LyricsPlus',
-    'LrcLib',
-    'KuGou',
-    'YouTube',
-    'YouTubeSubtitle',
-    'Zemer',
-  ],
+  videoClips: false,
+  lyricsProviders: [...DEFAULT_LYRICS_PROVIDERS],
   translation: {
     enabled: false,
-    provider: 'deepl',
+    provider: 'auto',
     targetLanguage: 'en',
     deeplApiKey: '',
     openaiBaseUrl: 'https://api.openai.com/v1',
@@ -222,6 +262,13 @@ export const settingsStore = new LocalJsonStore<Settings>('auralis.settings.v1',
   }
   merged.volume = Math.min(1, Math.max(0, Number(merged.volume) || 0));
   merged.playbackRate = Math.min(2, Math.max(0.5, Number(merged.playbackRate) || 1));
+  if (
+    Array.isArray(merged.lyricsProviders) &&
+    merged.lyricsProviders.length === LEGACY_LYRICS_PROVIDERS.length &&
+    LEGACY_LYRICS_PROVIDERS.every((provider, index) => merged.lyricsProviders[index] === provider)
+  ) {
+    merged.lyricsProviders = [...DEFAULT_LYRICS_PROVIDERS];
+  }
   // The WebView can only stream files it is allowed to serve. Keep the folder
   // inside the app's own external music directory on Android.
   merged.downloadDir = downloadsDir();

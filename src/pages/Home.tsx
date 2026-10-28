@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Compass, Play, Radio, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Compass, Play, Radio, Sparkles } from 'lucide-react';
 import type { Shelf as ShelfType } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
-import { useUiStore } from '../stores/ui';
+import { useUiStore, toast } from '../stores/ui';
 import { greeting, shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
@@ -12,35 +12,106 @@ import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../compon
 import { Shelf } from '../components/MediaCard';
 
 function QuickAccess() {
-  const recent = useAppStore((state) => state.library.recent).slice(0, 6);
+  const recent = useAppStore((state) => state.library.recent).slice(0, 14);
+  const liked = useAppStore((state) => state.library.liked);
   const navigate = useNavStore((state) => state.navigate);
+  const railRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  const updateEdges = useCallback(() => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const max = rail.scrollWidth - rail.clientWidth;
+    setEdges({ left: rail.scrollLeft > 4, right: rail.scrollLeft < max - 4 });
+  }, []);
+
+  useEffect(() => {
+    updateEdges();
+    const rail = railRef.current;
+    if (!rail) return;
+    rail.addEventListener('scroll', updateEdges, { passive: true });
+    window.addEventListener('resize', updateEdges);
+    return () => {
+      rail.removeEventListener('scroll', updateEdges);
+      window.removeEventListener('resize', updateEdges);
+    };
+  }, [updateEdges, recent.length]);
+
   if (!recent.length) return null;
+
+  const createMix = () => {
+    const seen = new Set<string>();
+    const pool = shuffleArray([...liked, ...recent]).filter((track) => {
+      if (seen.has(track.id)) return false;
+      seen.add(track.id);
+      return true;
+    });
+    if (!pool.length) {
+      toast('Like a few songs or play something first, then create a mix.', 'info');
+      navigate({ page: 'explore' });
+      return;
+    }
+    const mix = pool.slice(0, 30);
+    usePlayerStore.getState().playQueue(mix, 0);
+    toast(`Your mix is ready — ${mix.length} ${mix.length === 1 ? 'song' : 'songs'}.`, 'success');
+  };
+
+  const scrollRail = (direction: -1 | 1) => {
+    railRef.current?.scrollBy({ left: direction * Math.max(260, railRef.current.clientWidth * 0.8), behavior: 'smooth' });
+  };
+
   return (
     <section className="quick-access">
       <div className="section-heading">
         <h2>Jump back in</h2>
-        <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
-          See all
-        </button>
+        <div className="quick-heading-actions">
+          <button type="button" className="text-button" onClick={createMix}>
+            <Sparkles size={14} /> Create a Mix
+          </button>
+          <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
+            See all
+          </button>
+        </div>
       </div>
-      <div className="quick-grid">
-        {recent.map((track, index) => (
-          <button
-            type="button"
-            key={track.id}
-            className="quick-card"
-            onClick={() => usePlayerStore.getState().playQueue(recent, index)}
-          >
-            <Artwork src={track.thumbnail} alt={track.title} className="quick-art" />
-            <span className="quick-text">
-              <span className="quick-title">{track.title}</span>
-              <span className="quick-artist">{track.artists.map((artist) => artist.name).join(', ')}</span>
+      <div className="quick-rail-wrap">
+        {edges.left ? (
+          <button type="button" className="rail-arrow is-left" aria-label="Scroll back" onClick={() => scrollRail(-1)}>
+            <ChevronLeft size={17} />
+          </button>
+        ) : null}
+        <div className="quick-rail" ref={railRef}>
+          <button type="button" className="quick-card quick-mix-card" onClick={createMix}>
+            <span className="quick-mix-art">
+              <Sparkles size={22} />
             </span>
-            <span className="quick-play">
-              <Play size={15} fill="currentColor" />
+            <span className="quick-text">
+              <span className="quick-title">Create a Mix</span>
+              <span className="quick-artist">Liked songs and recent plays</span>
             </span>
           </button>
-        ))}
+          {recent.map((track, index) => (
+            <button
+              type="button"
+              key={track.id}
+              className="quick-card"
+              onClick={() => usePlayerStore.getState().playQueue(recent, index)}
+            >
+              <Artwork src={track.thumbnail} alt={track.title} className="quick-art" />
+              <span className="quick-text">
+                <span className="quick-title">{track.title}</span>
+                <span className="quick-artist">{track.artists.map((artist) => artist.name).join(', ')}</span>
+              </span>
+              <span className="quick-play">
+                <Play size={15} fill="currentColor" />
+              </span>
+            </button>
+          ))}
+        </div>
+        {edges.right ? (
+          <button type="button" className="rail-arrow is-right" aria-label="Scroll forward" onClick={() => scrollRail(1)}>
+            <ChevronRight size={17} />
+          </button>
+        ) : null}
       </div>
     </section>
   );

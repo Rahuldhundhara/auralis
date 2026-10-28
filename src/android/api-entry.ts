@@ -17,13 +17,13 @@ function installTimeoutPolyfill() {
 }
 
 function installMediaBridge() {
-  window.__auralisAndroidMediaState = (track, playing) => {
+  window.__auralisAndroidMediaState = (track, playing, snapshot) => {
     const bridge = nativeBridge();
     if (!bridge) return;
     if (!track) {
       try {
         if (typeof bridge.stopPlayback === 'function') bridge.stopPlayback();
-        else bridge.setPlayback(false, '', '', '');
+        else bridge.setPlayback(false, '', '', '', 0, 0, false, '', false);
       } catch {
         // The playback service may not be running.
       }
@@ -34,7 +34,17 @@ function installMediaBridge() {
       .filter(Boolean)
       .join(', ');
     try {
-      bridge.setPlayback(playing, track.title || 'Auralis', artist || 'Music', track.thumbnail || '');
+      bridge.setPlayback(
+        playing,
+        track.title || 'Auralis',
+        artist || 'Music',
+        track.thumbnail || '',
+        Math.max(0, Math.round((snapshot?.position || 0) * 1000)),
+        Math.max(0, Math.round((snapshot?.duration || 0) * 1000)),
+        Boolean(snapshot?.liked),
+        track.id,
+        Boolean(snapshot?.buffering),
+      );
     } catch {
       // Notification updates are best-effort.
     }

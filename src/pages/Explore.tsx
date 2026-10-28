@@ -62,11 +62,13 @@ export function ExplorePage({ tab: initialTab }: { tab?: ExploreTab }) {
         </div>
       </header>
 
-      <div className="explore-tabs">
+      <div className="explore-tabs" role="tablist" aria-label="Explore sections">
         {TABS.map((entry) => (
           <button
             type="button"
             key={entry.id}
+            role="tab"
+            aria-selected={tab === entry.id}
             className={`explore-tab ${tab === entry.id ? 'is-active' : ''}`}
             onClick={() => navigate({ page: 'explore', tab: entry.id }, true)}
           >

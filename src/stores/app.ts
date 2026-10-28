@@ -30,12 +30,19 @@ interface AppState {
   addRecent: (track: Track) => Promise<void>;
   recordEvent: (track: Track, completed: boolean) => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<LocalPlaylist>;
+  importPlaylist: (
+    name: string,
+    tracks: Track[],
+    description?: string,
+    remoteId?: string,
+  ) => Promise<LocalPlaylist>;
   renamePlaylist: (id: string, name: string, description?: string) => Promise<LocalPlaylist>;
   deletePlaylist: (id: string) => Promise<void>;
   addToPlaylist: (id: string, track: Track) => Promise<LocalPlaylist>;
   removeFromPlaylist: (id: string, trackId: string) => Promise<void>;
   reorderPlaylist: (id: string, from: number, to: number) => Promise<void>;
   addSearchHistory: (query: string) => Promise<void>;
+  removeSearchHistory: (query: string) => Promise<void>;
   clearSearchHistory: () => Promise<void>;
   clearRecent: () => Promise<void>;
   toggleSaveAlbum: (album: Card) => Promise<void>;
@@ -282,6 +289,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     return playlist;
   },
 
+  importPlaylist: async (name, tracks, description, remoteId) => {
+    const libraryApi = window.auralis.library;
+    let playlist: LocalPlaylist;
+    if (libraryApi.importPlaylist) {
+      playlist = await libraryApi.importPlaylist(name, tracks, description, remoteId);
+    } else {
+      // Older desktop builds only expose create/add; import one track at a time.
+      playlist = await libraryApi.createPlaylist(name, description);
+      for (const track of tracks) {
+        playlist = await libraryApi.addToPlaylist(playlist.id, track);
+      }
+    }
+    set((state) => ({
+      library: {
+        ...state.library,
+        playlists: [playlist, ...state.library.playlists.filter((item) => item.id !== playlist.id)],
+      },
+    }));
+    return playlist;
+  },
+
   renamePlaylist: async (id, name, description) => {
     const playlist = await window.auralis.library.renamePlaylist(id, name, description);
     set((state) => ({
@@ -333,6 +361,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!query.trim()) return;
     const library = await window.auralis.library.addSearchHistory(query);
     set({ library });
+  },
+
+  removeSearchHistory: async (query) => {
+    const value = query.trim();
+    if (!value) return;
+    const libraryApi = window.auralis.library;
+    if (libraryApi.removeSearchHistory) {
+      const library = await libraryApi.removeSearchHistory(value);
+      set({ library });
+      return;
+    }
+    // Older desktop builds only expose clear/add; rebuild the list in order.
+    const remaining = get().library.searchHistory.filter(
+      (item) => item.toLowerCase() !== value.toLowerCase(),
+    );
+    await libraryApi.clearSearchHistory();
+    for (let index = remaining.length - 1; index >= 0; index -= 1) {
+      await libraryApi.addSearchHistory(remaining[index]);
+    }
+    set({ library: await libraryApi.get() });
   },
 
   clearSearchHistory: async () => {

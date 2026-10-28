@@ -180,6 +180,12 @@ export interface EqSettings {
   /** 10 bands, dB gain -12..12. */
   bands: number[];
   preamp: number;
+  /** Low-shelf bass boost in dB, 0..12. */
+  bassBoost?: number;
+  /** Bass shelf corner frequency in Hz. */
+  bassFrequency?: number;
+  /** Peak limiter after the EQ to prevent clipping. */
+  limiter?: boolean;
 }
 
 export interface LastFmSettings {
@@ -200,7 +206,7 @@ export interface DiscordSettings {
 
 export interface TranslationSettings {
   enabled: boolean;
-  provider: 'deepl' | 'openai';
+  provider: 'auto' | 'deepl' | 'openai';
   targetLanguage: string;
   deeplApiKey: string;
   openaiBaseUrl: string;
@@ -224,6 +230,8 @@ export interface Settings {
   playbackRate: number;
   skipSilence: boolean;
   showLyricsInPlayer: boolean;
+  /** Android-only: show muted music-video previews in Now Playing. */
+  videoClips?: boolean;
   lyricsProviders: string[];
   translation: TranslationSettings;
   downloadDir: string;
@@ -301,6 +309,8 @@ export interface StreamInfo {
   title?: string;
   duration?: number;
   localPath?: string;
+  /** True when the resolved URL carries a video track. */
+  video?: boolean;
 }
 
 export interface LyricsLine {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Download,
@@ -14,9 +14,10 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { usePlayerStore } from '../stores/player';
+import { usePlayerStore, currentPlaybackPosition } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { artistsLine, formatDuration, formatLongDuration } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, Button, IconButton } from './primitives';
 import { SeekBar, TransportControls, VolumeControl } from './PlayerBar';
@@ -118,7 +119,10 @@ export function NowPlaying() {
   const downloads = useAppStore((state) => state.library.downloads);
   const navigate = useNavStore((state) => state.navigate);
   const openDialog = useUiStore((state) => state.openDialog);
+  const videoClips = useAppStore((state) => Boolean(state.settings.videoClips));
   const [artLoaded, setArtLoaded] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | undefined>();
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -131,14 +135,66 @@ export function NowPlaying() {
 
   useEffect(() => {
     setArtLoaded(false);
+    setVideoUrl(undefined);
   }, [current?.id]);
+
+  useEffect(() => {
+    setVideoUrl(undefined);
+    if (!open || !videoClips || !current || current.localPath || !isAndroidShell) return;
+    const resolveVideo = window.auralis.player.resolveVideo;
+    if (!resolveVideo) return;
+    let cancelled = false;
+    const trackId = current.id;
+    resolveVideo(current)
+      .then((stream) => {
+        if (cancelled || !stream.url) return;
+        if (usePlayerStore.getState().current?.id !== trackId) return;
+        setVideoUrl(stream.url);
+      })
+      .catch(() => {
+        // Artwork remains the fallback when no progressive video exists.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, videoClips, current]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+    const sync = () => {
+      const state = usePlayerStore.getState();
+      const target = currentPlaybackPosition();
+      if (Number.isFinite(target) && Math.abs(video.currentTime - target) > 0.8) {
+        try {
+          video.currentTime = target;
+        } catch {
+          // Seeking before metadata is ready is ignored.
+        }
+      }
+      video.playbackRate = state.rate || 1;
+      if (state.playing && video.paused) void video.play().catch(() => {});
+      if (!state.playing && !video.paused) video.pause();
+    };
+    sync();
+    video.addEventListener('loadedmetadata', sync);
+    const unsubscribe = usePlayerStore.subscribe((state, previous) => {
+      if (state.playing !== previous.playing || state.rate !== previous.rate) sync();
+    });
+    const timer = window.setInterval(sync, 5000);
+    return () => {
+      window.clearInterval(timer);
+      unsubscribe();
+      video.removeEventListener('loadedmetadata', sync);
+    };
+  }, [videoUrl]);
 
   if (!open || !current) return null;
   const downloaded = downloads.some((item) => item.track.id === current.id && item.status === 'done');
   const artworkSrc = largerAndroidArtwork(current.thumbnail);
 
   return (
-    <div className="now-playing" role="dialog" aria-label="Now playing">
+    <div className="now-playing" role="dialog" aria-modal="true" aria-label="Now playing">
       <div
         className="np-backdrop"
         style={artworkSrc ? { backgroundImage: `url(${artworkSrc})` } : undefined}
@@ -164,9 +220,25 @@ export function NowPlaying() {
       </header>
       <div className="np-layout">
         <section className={`np-left ${artLoaded ? 'is-loaded' : ''}`}>
-          <div className="np-art-frame">
+          <div className={`np-art-frame ${videoUrl ? 'has-video' : ''}`}>
             <Artwork src={artworkSrc} alt={current.title} className="np-art" />
-            {!artLoaded ? <img src={artworkSrc} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} /> : null}
+            {videoUrl ? (
+              <>
+                <video
+                  ref={videoRef}
+                  className="np-video"
+                  src={videoUrl}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  disablePictureInPicture
+                  aria-label={`Video clip for ${current.title}`}
+                  onError={() => setVideoUrl(undefined)}
+                />
+                <span className="np-video-badge">Video</span>
+              </>
+            ) : null}
+            {!artLoaded && !videoUrl ? <img src={artworkSrc} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} /> : null}
           </div>
           <div className="np-track-meta">
             <div className="np-title-line">
@@ -250,14 +322,32 @@ export function NowPlaying() {
         </section>
 
         <section className="np-right">
-          <div className="np-tabs" role="tablist">
-            <button type="button" className={tab === 'lyrics' ? 'is-active' : ''} onClick={() => setTab('lyrics')}>
+          <div className="np-tabs" role="tablist" aria-label="Now playing sections">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'lyrics'}
+              className={tab === 'lyrics' ? 'is-active' : ''}
+              onClick={() => setTab('lyrics')}
+            >
               <MicVocal size={16} /> Lyrics
             </button>
-            <button type="button" className={tab === 'queue' ? 'is-active' : ''} onClick={() => setTab('queue')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'queue'}
+              className={tab === 'queue' ? 'is-active' : ''}
+              onClick={() => setTab('queue')}
+            >
               <ListMusic size={16} /> Queue <span className="np-tab-count">{Math.max(0, queue.length - index - 1)}</span>
             </button>
-            <button type="button" className={tab === 'about' ? 'is-active' : ''} onClick={() => setTab('about')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'about'}
+              className={tab === 'about' ? 'is-active' : ''}
+              onClick={() => setTab('about')}
+            >
               <Info size={16} /> Details
             </button>
           </div>

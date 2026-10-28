@@ -36,6 +36,7 @@ import { useAppStore } from '../stores/app';
 import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
+import { TRANSLATION_LANGUAGES } from '../lib/languages';
 import { isAndroidShell } from '../lib/platform';
 import { Button, IconButton, Range } from '../components/primitives';
 
@@ -82,21 +83,6 @@ const REGIONS = [
   ['SG', 'Singapore'],
 ];
 
-const TRANSLATION_LANGUAGES = [
-  ['EN', 'English'],
-  ['HI', 'Hindi'],
-  ['ES', 'Spanish'],
-  ['FR', 'French'],
-  ['DE', 'German'],
-  ['JA', 'Japanese'],
-  ['KO', 'Korean'],
-  ['PT', 'Portuguese'],
-  ['AR', 'Arabic'],
-  ['ZH', 'Chinese'],
-  ['RU', 'Russian'],
-  ['TR', 'Turkish'],
-];
-
 const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
   { id: 'BetterLyrics', label: 'BetterLyrics', description: 'Community lyrics with word-by-word timing and translations.' },
   { id: 'Paxsenix', label: 'Paxsenix', description: 'Synced lyrics with romanisation and translation support.' },
@@ -117,6 +103,15 @@ const ACCENTS = [
   { value: '#ffb27d', label: 'Amber' },
   { value: '#ff8f8f', label: 'Coral' },
   { value: '#b8e986', label: 'Lime' },
+];
+
+const EQ_PRESETS: Array<{ label: string; bands: number[]; bass: number; preamp: number }> = [
+  { label: 'Flat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preamp: 0 },
+  { label: 'Bass', bands: [6, 5, 4, 2, 0, -1, -1, 0, 1, 2], bass: 5, preamp: -2 },
+  { label: 'Vocal', bands: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1], bass: 0, preamp: 0 },
+  { label: 'Rock', bands: [4, 3, 2, 0, -1, 0, 1, 2, 3, 2], bass: 2, preamp: -1 },
+  { label: 'Pop', bands: [2, 2, 1, 0, 1, 2, 2, 1, 0, 1], bass: 1, preamp: 0 },
+  { label: 'Warm', bands: [3, 4, 4, 2, 0, 0, -1, -1, -1, -2], bass: 3, preamp: -1 },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -441,14 +436,25 @@ function PlaybackTab() {
           <Select value={settings.audioQuality} onChange={(value) => void update({ audioQuality: value as Settings['audioQuality'] })}>
             <option value="auto">Automatic</option>
             <option value="best">Best available</option>
-            <option value="high">High (256 kbps)</option>
-            <option value="medium">Medium (128 kbps)</option>
-            <option value="low">Data saver</option>
+            <option value="high">High (up to 256 kbps)</option>
+            <option value="medium">Medium (up to 192 kbps)</option>
+            <option value="low">Data saver (lowest bitrate)</option>
           </Select>
         </SettingRow>
         <SettingRow label="Normalise volume" description="Evens out loud and quiet tracks with a gentle compressor.">
           <Toggle checked={settings.normalize} onChange={(value) => void update({ normalize: value })} />
         </SettingRow>
+        {isAndroidShell ? (
+          <SettingRow
+            label="Video clips"
+            description="Show a muted music-video preview in Now Playing. Uses extra data and falls back to artwork when a clip is unavailable."
+          >
+            <Toggle
+              checked={Boolean(settings.videoClips)}
+              onChange={(value) => void update({ videoClips: value })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow label="Playback speed" description={`Currently ${settings.playbackRate.toFixed(2)}×. Applies to the current and next songs.`}>
           <div className="setting-range">
             <Range min={0.5} max={2} step={0.05} value={settings.playbackRate} onValueChange={(value) => void update({ playbackRate: value })} />
@@ -464,13 +470,34 @@ function PlaybackTab() {
 
       <SettingsCard
         title="Equalizer"
-        description="Ten peaking filters and a preamp, applied in real time through the Web Audio API."
+        description="Ten peaking filters, a low-shelf bass boost and a peak limiter, applied in real time through the Web Audio API."
         icon={<AudioLines size={19} />}
       >
         <SettingRow label="Enable equalizer" description="Bypass leaves the audio untouched.">
           <Toggle checked={settings.eq.enabled} onChange={(value) => void update({ eq: { ...settings.eq, enabled: value } })} />
         </SettingRow>
         <div className={`eq-panel ${settings.eq.enabled ? '' : 'is-disabled'}`}>
+          <div className="eq-presets" role="group" aria-label="Equalizer presets">
+            {EQ_PRESETS.map((preset) => (
+              <button
+                type="button"
+                className="eq-preset"
+                key={preset.label}
+                onClick={() =>
+                  void update({
+                    eq: {
+                      ...settings.eq,
+                      bands: [...preset.bands],
+                      bassBoost: preset.bass,
+                      preamp: preset.preamp,
+                    },
+                  })
+                }
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <div className="eq-head">
             <span>Preamp</span>
             <span className="eq-value">{settings.eq.preamp > 0 ? '+' : ''}{settings.eq.preamp.toFixed(1)} dB</span>
@@ -482,6 +509,41 @@ function PlaybackTab() {
             value={settings.eq.preamp}
             onValueChange={(value) => void update({ eq: { ...settings.eq, preamp: value } })}
           />
+          <div className="eq-bass">
+            <div className="eq-head">
+              <span>Bass boost</span>
+              <span className="eq-value">+{(settings.eq.bassBoost ?? 0).toFixed(1)} dB</span>
+            </div>
+            <Range
+              min={0}
+              max={12}
+              step={0.5}
+              value={settings.eq.bassBoost ?? 0}
+              onValueChange={(value) => void update({ eq: { ...settings.eq, bassBoost: value } })}
+              aria-label="Bass boost"
+            />
+            <div className="eq-bass-options">
+              <label>
+                <span>Corner</span>
+                <Select
+                  value={String(settings.eq.bassFrequency ?? 80)}
+                  onChange={(value) => void update({ eq: { ...settings.eq, bassFrequency: Number(value) } })}
+                >
+                  <option value="60">60 Hz</option>
+                  <option value="80">80 Hz</option>
+                  <option value="100">100 Hz</option>
+                  <option value="120">120 Hz</option>
+                </Select>
+              </label>
+              <label className="eq-limiter">
+                <span>Peak limiter</span>
+                <Toggle
+                  checked={settings.eq.limiter !== false}
+                  onChange={(value) => void update({ eq: { ...settings.eq, limiter: value } })}
+                />
+              </label>
+            </div>
+          </div>
           <div className="eq-bands">
             {[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency, index) => (
               <div className="eq-band" key={frequency}>
@@ -508,7 +570,7 @@ function PlaybackTab() {
               variant="ghost"
               size="sm"
               icon={<RotateCcw size={14} />}
-              onClick={() => void update({ eq: { ...settings.eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 } })}
+              onClick={() => void update({ eq: { ...settings.eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 } })}
             >
               Flatten
             </Button>
@@ -602,15 +664,26 @@ function LyricsTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Translation" description={`Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this ${isAndroidShell ? 'device' : 'PC'}.`} icon={<Languages size={19} />}>
-        <SettingRow label="Auto-translate lyrics" description="Translate automatically when synced lyrics open, if a key is configured.">
+      <SettingsCard
+        title="Translation"
+        description={
+          isAndroidShell
+            ? 'Translate lyric lines automatically for free, or use your own DeepL or OpenAI key. Keys stay on this device.'
+            : 'Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this PC.'
+        }
+        icon={<Languages size={19} />}
+      >
+        <SettingRow label="Auto-translate lyrics" description="Translate automatically when lyrics open.">
           <Toggle checked={settings.translation.enabled} onChange={(value) => void update({ translation: { ...settings.translation, enabled: value } })} />
         </SettingRow>
         <SettingRow label="Provider">
           <Select
             value={settings.translation.provider}
-            onChange={(value) => void update({ translation: { ...settings.translation, provider: value as 'deepl' | 'openai' } })}
+            onChange={(value) =>
+              void update({ translation: { ...settings.translation, provider: value as 'auto' | 'deepl' | 'openai' } })
+            }
           >
+            {isAndroidShell ? <option value="auto">Automatic (no key)</option> : null}
             <option value="deepl">DeepL</option>
             <option value="openai">OpenAI-compatible</option>
           </Select>
@@ -636,7 +709,7 @@ function LyricsTab() {
               onSave={(value) => void update({ translation: { ...settings.translation, deeplApiKey: value } })}
             />
           </SettingRow>
-        ) : (
+        ) : settings.translation.provider === 'openai' ? (
           <>
             <SettingRow label="Base URL" description="Any OpenAI-compatible endpoint works." stacked>
               <TextSetting
@@ -663,6 +736,11 @@ function LyricsTab() {
               />
             </SettingRow>
           </>
+        ) : (
+          <p className="settings-footnote">
+            Automatic translation uses Google Translate and needs no account or API key. Choose DeepL or an
+            OpenAI-compatible endpoint above to use your own credentials instead.
+          </p>
         )}
         <div className="settings-inline-actions">
           <Button variant="outline" size="sm" icon={<Languages size={15} />} onClick={() => void testTranslation()} disabled={testing}>
@@ -1218,6 +1296,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
               type="button"
               key={entry.id}
               className={`settings-nav-item ${tab === entry.id ? 'is-active' : ''}`}
+              aria-current={tab === entry.id ? 'page' : undefined}
               onClick={() => navigate({ page: 'settings', tab: entry.id }, true)}
             >
               <span className="settings-nav-icon">{entry.icon}</span>

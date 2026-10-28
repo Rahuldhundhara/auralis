@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  ShieldCheck,
   Shuffle,
   Trash2,
   X,
@@ -89,7 +90,9 @@ export function DownloadsPage() {
     if (deleteFile) {
       confirmDialog({
         title: 'Delete download?',
-        message: `The file will be deleted from “${folder}”. The song stays in your library and can be downloaded again.`,
+        message: isAndroidShell
+          ? `“${item.track.title}” will be deleted from Auralis private storage. The song stays in your library and can be downloaded again.`
+          : `The file will be deleted from “${folder}”. The song stays in your library and can be downloaded again.`,
         confirmLabel: 'Delete file',
         danger: true,
         onConfirm: run,
@@ -102,7 +105,9 @@ export function DownloadsPage() {
   const clearAll = () => {
     confirmDialog({
       title: 'Clear all downloads?',
-      message: `${downloads.length} entries will be removed and ${done.length} files will be deleted from disk. This cannot be undone.`,
+      message: isAndroidShell
+        ? `${downloads.length} entries will be removed and ${done.length} files will be deleted from Auralis private storage. This cannot be undone.`
+        : `${downloads.length} entries will be removed and ${done.length} files will be deleted from disk. This cannot be undone.`,
       confirmLabel: 'Delete everything',
       danger: true,
       onConfirm: async () => {
@@ -213,14 +218,20 @@ export function DownloadsPage() {
             >
               Shuffle
             </Button>
-            <Button variant="outline" icon={<FolderOpen size={17} />} onClick={openFolder} disabled={!folder}>
-              Open folder
-            </Button>
+            {!isAndroidShell ? (
+              <Button variant="outline" icon={<FolderOpen size={17} />} onClick={openFolder} disabled={!folder}>
+                Open folder
+              </Button>
+            ) : null}
             <Button variant="ghost" icon={<Trash2 size={16} />} onClick={clearAll} disabled={!downloads.length}>
               Clear all
             </Button>
           </div>
-          {folder ? (
+          {isAndroidShell ? (
+            <div className="download-path is-private" title="Downloads stay inside Auralis app storage">
+              <ShieldCheck size={14} /> Private app storage · {formatBytes(totalBytes)} used · removed when you uninstall Auralis
+            </div>
+          ) : folder ? (
             <button type="button" className="download-path" onClick={openFolder} title="Open downloads folder">
               <FolderOpen size={14} /> {folder}
             </button>

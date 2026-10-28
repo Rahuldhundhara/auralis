@@ -29,10 +29,11 @@ function qualityFormat(quality: string): string {
     case 'high':
       return 'bestaudio[abr<=256]/bestaudio[ext=m4a]/bestaudio';
     case 'medium':
-      return 'bestaudio[abr<=192]/bestaudio[ext=m4a]/bestaudio';
+      return 'bestaudio[abr<=192]/bestaudio[ext=m4a]';
     case 'low':
-      return 'bestaudio[abr<=128]/bestaudio[ext=m4a]/bestaudio';
+      return 'worstaudio[ext=m4a]/worstaudio';
     case 'best':
+      return 'bestaudio/best';
     case 'auto':
     default:
       return 'bestaudio[ext=m4a]/bestaudio';
@@ -50,37 +51,72 @@ function extOf(path: string): string {
 
 export class StreamService {
   async resolve(track: Track): Promise<StreamInfo> {
+    return this.resolveStream(track, false);
+  }
+
+  /**
+   * Resolves a progressive MP4 for the optional music-video preview. The
+   * preview is rendered muted while the normal audio element keeps playing,
+   * so the EQ and gapless playback are unaffected. Callers must fall back to
+   * artwork when this rejects.
+   */
+  async resolveVideo(track: Track): Promise<StreamInfo> {
+    return this.resolveStream(track, true);
+  }
+
+  private async resolveStream(track: Track, video: boolean): Promise<StreamInfo> {
     if (track.localPath) {
       return {
         url: localMediaUrl(track.localPath),
-        format: extOf(track.localPath),
+        format: video ? 'video' : extOf(track.localPath),
         title: track.title,
         duration: track.duration,
         localPath: track.localPath,
+        video,
       };
     }
     const quality = settingsStore.get().audioQuality;
-    const key = `${track.id}:${quality}`;
+    const key = `${track.id}:${quality}${video ? ':video' : ''}`;
     const cached = streamCache.get(key);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
     const pending = pendingStreams.get(key);
     if (pending) return pending;
 
     const task = (async () => {
-      const result = await nativeJson<{ url: string }>('/__ytdlp/resolve', {
-        videoId: track.id,
-        quality,
-        cookie: cookie(),
-        proxy: settingsStore.get().proxy || '',
-      });
-      if (!result.url) throw new Error('yt-dlp did not return a playable audio URL.');
+      let result: { url: string } | undefined;
+      let lastError: any;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          result = await nativeJson<{ url: string }>('/__ytdlp/resolve', {
+            videoId: track.id,
+            quality,
+            video,
+            cookie: cookie(),
+            proxy: settingsStore.get().proxy || '',
+          });
+          if (result.url) break;
+          lastError = new Error(
+            video
+              ? 'yt-dlp did not return a playable video URL.'
+              : 'yt-dlp did not return a playable audio URL.',
+          );
+        } catch (error) {
+          lastError = error;
+        }
+        // One short retry covers transient network and extractor hiccups
+        // without doubling the wait for a permanent failure such as a
+        // YouTube bot check.
+        if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 650));
+      }
+      if (!result?.url) throw lastError || new Error('Could not resolve this track.');
       const info: StreamInfo = {
         url: mediaUrl(result.url),
-        format: 'audio',
+        format: video ? 'video' : 'audio',
         quality,
         title: track.title,
         duration: track.duration,
         expiresAt: Date.now() + CACHE_TTL_MS,
+        video,
       };
       rememberStream(key, info);
       return info;

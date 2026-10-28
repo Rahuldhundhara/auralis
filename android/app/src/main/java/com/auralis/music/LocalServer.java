@@ -359,10 +359,12 @@ public final class LocalServer extends NanoHTTPD {
         if (endpoint.equals("resolve")) {
             JSONObject body = new JSONObject(rawBody);
             String videoId = body.getString("videoId");
+            boolean video = body.optBoolean("video", false);
             String url = ytDlp.resolve(videoId, body.optString("quality", "auto"),
-                    body.optString("cookie", ""), body.optString("proxy", ""));
+                    body.optString("cookie", ""), body.optString("proxy", ""), video);
             JSONObject json = new JSONObject();
             json.put("url", url);
+            json.put("video", video);
             return json(Status.OK, json.toString());
         }
         if (endpoint.equals("invalidate")) {

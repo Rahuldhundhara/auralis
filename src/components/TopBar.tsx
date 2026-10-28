@@ -3,8 +3,9 @@ import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, IconButton } from './primitives';
-import { SearchField } from './SearchField';
+import { AndroidSearchLauncher, SearchField } from './SearchField';
 
 export function TopBar() {
   const canBack = useNavStore((state) => state.index > 0);
@@ -16,6 +17,9 @@ export function TopBar() {
   const showMobileBack =
     canBack &&
     !['home', 'explore', 'search', 'library', 'liked', 'recent', 'downloads', 'history', 'settings'].includes(route.page);
+  // The dedicated Search page owns its search field (hero on the landing view,
+  // inline field on results). Showing the launcher there would duplicate it.
+  const hideMobileSearch = isAndroidShell && route.page === 'search';
   const session = useAppStore((state) => state.session);
   const openDialog = useUiStore((state) => state.openDialog);
 
@@ -39,7 +43,7 @@ export function TopBar() {
         </IconButton>
       </div>
       <div className="top-search">
-        <SearchField />
+        {hideMobileSearch ? null : isAndroidShell ? <AndroidSearchLauncher /> : <SearchField />}
       </div>
       <div className="top-actions">
         <button type="button" className="recognize-pill" onClick={() => openDialog({ type: 'recognition' })} title="Identify a song">

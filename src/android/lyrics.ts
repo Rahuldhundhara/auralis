@@ -8,6 +8,7 @@ import { innertube } from './innertube';
 import { parseLyrics, parseNext } from './ytm-parse';
 import { settingsStore } from './store';
 import { streams } from './streams';
+import { translationLanguageTag } from '../lib/languages';
 
 export type ProviderName =
   | 'YouTube'
@@ -349,6 +350,106 @@ const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>
   Paxsenix: async () => null,
 };
 
+const TRANSLATION_CACHE_TTL = 6 * 60 * 60_000;
+const TRANSLATION_CACHE_LIMIT = 60;
+const translationCache = new Map<string, { at: number; result: TranslationResult }>();
+const pendingTranslations = new Map<string, Promise<TranslationResult>>();
+
+function translationCacheKey(provider: string, language: string, texts: string[]): string {
+  return `${provider}|${language}|${texts.join('\u0001')}`;
+}
+
+function rememberTranslation(key: string, result: TranslationResult) {
+  translationCache.delete(key);
+  translationCache.set(key, { at: Date.now(), result });
+  while (translationCache.size > TRANSLATION_CACHE_LIMIT) {
+    const oldest = translationCache.keys().next().value;
+    if (oldest === undefined) break;
+    translationCache.delete(oldest);
+  }
+}
+
+function chunkTexts(texts: string[], maxLines = 12, maxChars = 1600): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const text of texts) {
+    const nextSize = size + text.length + 1;
+    if (current.length && (current.length >= maxLines || nextSize > maxChars)) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(text);
+    size += text.length + 1;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Translates a group of lines with Google's public translate endpoint. The
+ * endpoint needs no API key and preserves the newlines between lyrics, which
+ * keeps translated lines aligned with their timestamps.
+ */
+async function automaticChunk(texts: string[], language: string): Promise<string[] | null> {
+  const response = await fetch('https://translate.googleapis.com/translate_a/single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: new URLSearchParams({
+      client: 'gtx',
+      sl: 'auto',
+      tl: language,
+      dt: 't',
+      q: texts.join('\n'),
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!response.ok) throw new Error(`Automatic translation returned HTTP ${response.status}.`);
+  const json: any = await response.json().catch(() => null);
+  const segments = Array.isArray(json?.[0]) ? json[0] : [];
+  let output = segments
+    .map((segment: any) => String(segment?.[0] ?? ''))
+    .join('')
+    .replace(/\r/g, '');
+  if (output.endsWith('\n') && texts.length > 1) output = output.slice(0, -1);
+  const lines = output.split('\n');
+  if (lines.length !== texts.length) return null;
+  return lines;
+}
+
+async function automaticTranslate(texts: string[], language: string): Promise<string[]> {
+  const translated: string[] = [];
+  for (const chunk of chunkTexts(texts)) {
+    let lines = await automaticChunk(chunk, language);
+    if (!lines) {
+      // Some providers merge short lines; fall back to one request per line so
+      // every timestamp still receives its own translation.
+      lines = [];
+      for (const text of chunk) {
+        const single = await automaticChunk([text], language);
+        lines.push(single?.[0] ?? text);
+      }
+    }
+    translated.push(...lines);
+  }
+  return translated;
+}
+
+function splitTranslatedText(content: string, expected: number): string[] {
+  const cleaned = content
+    .replace(/^```[a-z0-9-]*\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .replace(/\r/g, '')
+    .split('\n');
+  while (cleaned.length > expected && !cleaned[0].trim()) cleaned.shift();
+  while (cleaned.length > expected && !cleaned[cleaned.length - 1].trim()) cleaned.pop();
+  if (cleaned.length !== expected) {
+    throw new Error('The translation provider returned an unexpected number of lines.');
+  }
+  return cleaned;
+}
+
 export class LyricsService {
   private cache = new Map<string, { at: number; result: LyricsResult | null }>();
 
@@ -381,55 +482,98 @@ export class LyricsService {
 
   async translate(lines: string[], targetLanguage?: string): Promise<TranslationResult> {
     const settings = settingsStore.get().translation;
-    const language = targetLanguage || settings.targetLanguage;
-    const text = lines.join('\n');
-    if (!text.trim()) return { lines: [], provider: settings.provider };
-    if (settings.provider === 'deepl' && settings.deeplApiKey) {
-      const endpoint = settings.deeplApiKey.endsWith(':fx')
-        ? 'https://api-free.deepl.com/v2/translate'
-        : 'https://api.deepl.com/v2/translate';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `DeepL-Auth-Key ${settings.deeplApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: lines, target_lang: language.toUpperCase() }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) throw new Error(`DeepL returned HTTP ${response.status}.`);
-      const json: any = await response.json();
-      return {
-        lines: (json.translations || []).map((t: any) => t.text),
-        provider: 'deepl',
-      };
+    const language = translationLanguageTag(targetLanguage || settings.targetLanguage);
+    const indexed = lines
+      .map((text, index) => ({ text, index }))
+      .filter((entry) => entry.text.trim().length > 0);
+    if (!indexed.length) return { lines: [...lines], provider: 'Automatic' };
+    const texts = indexed.map((entry) => entry.text);
+
+    let provider: 'auto' | 'deepl' | 'openai' = settings.provider;
+    if (provider === 'deepl' && !settings.deeplApiKey.trim()) provider = 'auto';
+    if (provider === 'openai' && !settings.openaiApiKey.trim()) provider = 'auto';
+
+    const key = translationCacheKey(provider, language, texts);
+    const cached = translationCache.get(key);
+    if (cached && Date.now() - cached.at < TRANSLATION_CACHE_TTL) {
+      return cached.result;
     }
-    if (settings.provider === 'openai' && settings.openaiApiKey) {
-      const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${settings.openaiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: settings.openaiModel || 'gpt-4o-mini',
-          temperature: 0.2,
-          messages: [
-            {
-              role: 'system',
-              content: `Translate each line to ${language}. Return only the translated lines, one per line, in the same order.`,
-            },
-            { role: 'user', content: text },
-          ],
-        }),
-        signal: AbortSignal.timeout(60000),
+    const pending = pendingTranslations.get(key);
+    if (pending) return pending;
+
+    const task = (async (): Promise<TranslationResult> => {
+      let translated: string[];
+      let label: string;
+      if (provider === 'deepl') {
+        const endpoint = settings.deeplApiKey.endsWith(':fx')
+          ? 'https://api-free.deepl.com/v2/translate'
+          : 'https://api.deepl.com/v2/translate';
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `DeepL-Auth-Key ${settings.deeplApiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: texts,
+            target_lang: language === 'zh-CN' ? 'ZH' : language.toUpperCase(),
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (!response.ok) throw new Error(`DeepL returned HTTP ${response.status}.`);
+        const json: any = await response.json();
+        translated = (json.translations || []).map((entry: any) => String(entry?.text ?? ''));
+        label = 'DeepL';
+      } else if (provider === 'openai') {
+        const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${settings.openaiApiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: settings.openaiModel || 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  `Translate each line to ${language}. Return only the translated lines, one per line, ` +
+                  `in the same order. Do not add notes, numbering or blank lines.`,
+              },
+              { role: 'user', content: texts.join('\n') },
+            ],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!response.ok) throw new Error(`OpenAI returned HTTP ${response.status}.`);
+        const json: any = await response.json();
+        translated = splitTranslatedText(
+          String(json?.choices?.[0]?.message?.content || ''),
+          texts.length,
+        );
+        label = 'OpenAI';
+      } else {
+        translated = await automaticTranslate(texts, language);
+        label = 'Google Translate';
+      }
+
+      if (translated.length !== texts.length) {
+        throw new Error('The translation provider returned an unexpected number of lines.');
+      }
+      const resultLines = [...lines];
+      indexed.forEach((entry, index) => {
+        resultLines[entry.index] = translated[index] || entry.text;
       });
-      if (!response.ok) throw new Error(`OpenAI returned HTTP ${response.status}.`);
-      const json: any = await response.json();
-      const content = String(json?.choices?.[0]?.message?.content || '');
-      return { lines: content.split('\n'), provider: 'openai' };
-    }
-    throw new Error('Configure a DeepL API key or an OpenAI-compatible endpoint in Settings → Lyrics.');
+      const result: TranslationResult = { lines: resultLines, provider: label };
+      rememberTranslation(key, result);
+      return result;
+    })().finally(() => {
+      pendingTranslations.delete(key);
+    });
+
+    pendingTranslations.set(key, task);
+    return task;
   }
 }
 

@@ -79,6 +79,15 @@ export const libraryService = {
     return commit({ ...data, searchHistory });
   },
 
+  removeSearchHistory(query: string): LibraryData {
+    const value = clip(query, 120);
+    if (!value) return libraryStore.get();
+    const data = libraryStore.get();
+    const searchHistory = data.searchHistory.filter((item) => item.toLowerCase() !== value.toLowerCase());
+    if (searchHistory.length === data.searchHistory.length) return data;
+    return commit({ ...data, searchHistory });
+  },
+
   clearSearchHistory(): LibraryData {
     const data = libraryStore.get();
     return commit({ ...data, searchHistory: [] });
@@ -118,6 +127,51 @@ export const libraryService = {
       tracks: [],
     };
     commit({ ...data, playlists: [playlist, ...data.playlists] });
+    return playlist;
+  },
+
+  /**
+   * Copies a remote playlist into the local library. Re-importing the same
+   * remoteId refreshes the existing playlist instead of creating a duplicate,
+   * which makes repeated migrations idempotent.
+   */
+  importPlaylist(name: string, tracks: Track[], description = '', remoteId = ''): LocalPlaylist {
+    const data = libraryStore.get();
+    const now = Date.now();
+    const seen = new Set<string>();
+    const clean = tracks
+      .filter((track) => {
+        if (!track?.id || seen.has(track.id)) return false;
+        seen.add(track.id);
+        return true;
+      })
+      .map((track) => ({ ...track }));
+    const existing = remoteId
+      ? data.playlists.find((playlist) => playlist.remoteId === remoteId)
+      : undefined;
+    const playlist: LocalPlaylist = existing
+      ? {
+          ...existing,
+          name: clip(name, 100) || existing.name,
+          description: clip(description, 500),
+          tracks: clean,
+          cover: clean.find((track) => track.thumbnail)?.thumbnail || existing.cover,
+          updatedAt: now,
+        }
+      : {
+          id: newId('pl'),
+          name: clip(name, 100) || 'Imported playlist',
+          description: clip(description, 500),
+          createdAt: now,
+          updatedAt: now,
+          tracks: clean,
+          cover: clean.find((track) => track.thumbnail)?.thumbnail,
+          remoteId: remoteId || undefined,
+        };
+    const playlists = existing
+      ? data.playlists.map((item) => (item.id === existing.id ? playlist : item))
+      : [playlist, ...data.playlists];
+    commit({ ...data, playlists });
     return playlist;
   },
 

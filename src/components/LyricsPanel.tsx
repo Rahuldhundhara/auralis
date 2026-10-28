@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Languages, LocateFixed, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, Languages, LocateFixed, RefreshCw, Search } from 'lucide-react';
 import type { LyricsLine, LyricsResult, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
+import { isAndroidShell } from '../lib/platform';
+import { TRANSLATION_LANGUAGES, translationLanguageTag } from '../lib/languages';
 import { Button, EmptyState, IconButton, Spinner } from './primitives';
 
 function activeLineIndex(lines: LyricsLine[], position: number): number {
@@ -20,11 +22,13 @@ function activeLineIndex(lines: LyricsLine[], position: number): number {
 export function LyricsPanel({ track, active = true }: { track?: Track; active?: boolean }) {
   const position = usePlayerStore((state) => state.position);
   const settings = useAppStore((state) => state.settings);
+  const updateSettings = useAppStore((state) => state.updateSettings);
   const [result, setResult] = useState<LyricsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [translations, setTranslations] = useState<string[]>([]);
   const [translating, setTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState<string | undefined>();
   const [follow, setFollow] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
@@ -70,6 +74,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const translate = async () => {
     if (!result) return;
     setTranslating(true);
+    setTranslationError(undefined);
     try {
       const response = await window.auralis.lyrics.translate(
         result.lines.map((line) => line.text),
@@ -78,7 +83,9 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
       setTranslations(response.lines);
       toast(`Translated with ${response.provider}.`, 'success');
     } catch (err: any) {
-      toast(`Translation failed: ${err?.message || err}`, 'error');
+      const message = err?.message || String(err);
+      setTranslationError(message);
+      toast(`Translation failed: ${message}`, 'error');
     } finally {
       setTranslating(false);
     }
@@ -86,9 +93,16 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
 
   const translationReady =
     settings.translation.enabled &&
-    (settings.translation.provider === 'deepl'
-      ? Boolean(settings.translation.deeplApiKey.trim())
-      : Boolean(settings.translation.openaiApiKey.trim()));
+    (settings.translation.provider === 'auto' ||
+      (settings.translation.provider === 'deepl'
+        ? Boolean(settings.translation.deeplApiKey.trim())
+        : Boolean(settings.translation.openaiApiKey.trim())));
+
+  useEffect(() => {
+    setTranslations([]);
+    setTranslationError(undefined);
+    autoTranslatedRef.current = '';
+  }, [settings.translation.targetLanguage, settings.translation.provider]);
 
   useEffect(() => {
     if (!result?.lines.length || !translationReady) return;
@@ -127,6 +141,24 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
         <div className="lyrics-meta">
           {result?.provider ? <span className="lyrics-provider">{result.provider}</span> : null}
           {result && !synced ? <span className="lyrics-provider is-muted">Unsynced</span> : null}
+          <label className="lyrics-language" title="Translation language">
+            <Languages size={13} />
+            <select
+              value={settings.translation.targetLanguage}
+              aria-label="Translation language"
+              onChange={(event) =>
+                void updateSettings({
+                  translation: { ...settings.translation, targetLanguage: event.target.value },
+                })
+              }
+            >
+              {TRANSLATION_LANGUAGES.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="lyrics-actions">
           {synced && !follow ? (
@@ -145,7 +177,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
               icon={translating ? <Spinner size={15} /> : <Languages size={15} />}
               onClick={() => void translate()}
               disabled={translating || !result}
-              title={settings.translation.provider === 'deepl' ? 'Translate with DeepL' : 'Translate with OpenAI'}
+              title={`Translate to ${translationLanguageTag(settings.translation.targetLanguage).toUpperCase()}`}
             >
               Translate
             </Button>
@@ -155,6 +187,16 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
           </IconButton>
         </div>
       </div>
+
+      {translationError ? (
+        <div className="lyrics-translation-error" role="alert">
+          <AlertCircle size={15} />
+          <span>{translationError}</span>
+          <Button variant="ghost" size="sm" onClick={() => void translate()} disabled={translating}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="lyrics-loading">
@@ -232,7 +274,9 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
           <div className="lyrics-credit">
             Lyrics from {result.provider}
             {!settings.translation.enabled && translations.length === 0
-              ? ' · Add a translation provider in Settings → Lyrics'
+              ? isAndroidShell
+                ? ' · Pick a language above and tap Translate'
+                : ' · Add a translation provider in Settings → Lyrics'
               : ''}
           </div>
         </div>

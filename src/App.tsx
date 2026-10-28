@@ -239,6 +239,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
+    const dismiss = (window as unknown as { __auralisDismissSplash?: () => void }).__auralisDismissSplash;
+    dismiss?.();
+  }, [ready]);
+
+  useEffect(() => {
     if (!ready || startApplied.current) return;
     startApplied.current = true;
     const nav = useNavStore.getState();

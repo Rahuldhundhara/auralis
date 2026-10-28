@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, Play, Search, Sparkles, X } from 'lucide-react';
+import { AudioLines, Clock3, Mic, Play, Search, Sparkles, X } from 'lucide-react';
 import type { Card, SearchResults, Shelf as ShelfType } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
+import { useUiStore } from '../stores/ui';
 import { useAsync } from '../lib/useAsync';
 import { openCard, playCard } from '../lib/actions';
 import { formatDuration } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
+import { voiceSearchAvailable } from '../android/voice';
 import { Artwork, Button, Chips, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { Shelf, MediaCard } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -54,8 +57,11 @@ function TopResult({ card }: { card: Card }) {
 
 function SearchLanding() {
   const history = useAppStore((state) => state.library.searchHistory);
+  const removeSearchHistory = useAppStore((state) => state.removeSearchHistory);
   const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
   const navigate = useNavStore((state) => state.navigate);
+  const openDialog = useUiStore((state) => state.openDialog);
+  const canUseVoice = isAndroidShell && voiceSearchAvailable();
   return (
     <div className="search-landing">
       <div className="search-landing-hero">
@@ -65,6 +71,17 @@ function SearchLanding() {
         <h1>What do you want to hear?</h1>
         <p>Songs, albums, artists, playlists and podcasts from YouTube Music.</p>
         <SearchField autoFocus large />
+        <div className="search-landing-actions">
+          <button type="button" className="search-tool-pill" onClick={() => openDialog({ type: 'recognition' })}>
+            <AudioLines size={16} />
+            Identify a song
+          </button>
+          {canUseVoice ? (
+            <span className="search-tool-hint">
+              <Mic size={14} /> Tap the mic to search by voice
+            </span>
+          ) : null}
+        </div>
       </div>
       {history.length ? (
         <section className="search-history-section">
@@ -76,10 +93,25 @@ function SearchLanding() {
           </div>
           <div className="search-history-chips">
             {history.map((query) => (
-              <button type="button" key={query} className="search-history-chip" onClick={() => navigate({ page: 'search', q: query })}>
-                <Clock3 size={15} />
-                {query}
-              </button>
+              <div className="search-history-chip" key={query}>
+                <button
+                  type="button"
+                  className="search-history-open"
+                  onClick={() => navigate({ page: 'search', q: query })}
+                >
+                  <Clock3 size={15} />
+                  <span>{query}</span>
+                </button>
+                <button
+                  type="button"
+                  className="search-history-remove"
+                  aria-label={`Remove “${query}” from recent searches`}
+                  title="Remove from recent searches"
+                  onClick={() => void removeSearchHistory(query)}
+                >
+                  <X size={13} />
+                </button>
+              </div>
             ))}
           </div>
         </section>
@@ -174,6 +206,11 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
         <span className="eyebrow">Search results</span>
         <h1>{query}</h1>
         <p>{results ? `${results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length} results` : 'Searching YouTube Music…'}</p>
+        {isAndroidShell ? (
+          <div className="search-hero-field">
+            <SearchField />
+          </div>
+        ) : null}
       </header>
 
       <Chips items={[...FILTERS]} selected={filter} onSelect={setFilter} />

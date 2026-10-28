@@ -56,12 +56,19 @@ export interface AuralisApi {
       completed: boolean;
     }): Promise<LibraryData>;
     createPlaylist(name: string, description?: string): Promise<LocalPlaylist>;
+    importPlaylist?(
+      name: string,
+      tracks: Track[],
+      description?: string,
+      remoteId?: string,
+    ): Promise<LocalPlaylist>;
     renamePlaylist(id: string, name: string, description?: string): Promise<LocalPlaylist>;
     deletePlaylist(id: string): Promise<LibraryData>;
     addToPlaylist(id: string, track: Track): Promise<LocalPlaylist>;
     removeFromPlaylist(id: string, trackId: string): Promise<LocalPlaylist>;
     reorderPlaylist(id: string, from: number, to: number): Promise<LocalPlaylist>;
     addSearchHistory(query: string): Promise<LibraryData>;
+    removeSearchHistory?(query: string): Promise<LibraryData>;
     clearSearchHistory(): Promise<LibraryData>;
     clearRecent(): Promise<LibraryData>;
     saveAlbum(album: Card): Promise<LibraryData>;
@@ -110,6 +117,7 @@ export interface AuralisApi {
   };
   player: {
     resolve(track: Track): Promise<StreamInfo>;
+    resolveVideo?(track: Track): Promise<StreamInfo>;
     prefetch(track: Track): Promise<void>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;

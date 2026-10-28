@@ -15,6 +15,9 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -45,6 +48,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "AuralisMain";
@@ -59,6 +63,8 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> loginLauncher;
     private ActivityResultLauncher<String> microphonePermission;
     private BroadcastReceiver mediaReceiver;
+    private SpeechRecognizer speechRecognizer;
+    private boolean voiceSearchWanted;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -163,7 +169,159 @@ public class MainActivity extends AppCompatActivity {
                 else pendingPermissionRequest.deny();
                 pendingPermissionRequest = null;
             }
+            if (voiceSearchWanted) {
+                voiceSearchWanted = false;
+                if (granted) beginVoiceRecognition();
+                else dispatchVoicePayload("error", "Microphone permission is needed for voice search.");
+            }
         });
+    }
+
+    private void startVoiceSearch() {
+        runOnUiThread(() -> {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                beginVoiceRecognition();
+                return;
+            }
+            voiceSearchWanted = true;
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO);
+        });
+    }
+
+    private void cancelVoiceSearch() {
+        runOnUiThread(() -> {
+            voiceSearchWanted = false;
+            releaseVoiceRecognizer();
+            dispatchVoicePayload("cancelled", "");
+        });
+    }
+
+    private void beginVoiceRecognition() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            dispatchVoicePayload("error", "Voice search is not available on this device.");
+            return;
+        }
+        releaseVoiceRecognizer();
+        try {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override
+                public void onReadyForSpeech(Bundle params) {
+                    dispatchVoicePayload("ready", "");
+                }
+
+                @Override
+                public void onBeginningOfSpeech() {
+                }
+
+                @Override
+                public void onRmsChanged(float rmsdB) {
+                }
+
+                @Override
+                public void onBufferReceived(byte[] buffer) {
+                }
+
+                @Override
+                public void onEndOfSpeech() {
+                }
+
+                @Override
+                public void onError(int error) {
+                    dispatchVoicePayload("error", voiceErrorMessage(error));
+                    releaseVoiceRecognizer();
+                }
+
+                @Override
+                public void onResults(Bundle results) {
+                    ArrayList<String> matches = results == null ? null
+                            : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    String text = matches == null || matches.isEmpty() || matches.get(0) == null
+                            ? "" : matches.get(0).trim();
+                    if (text.isEmpty()) {
+                        dispatchVoicePayload("error", "I didn't catch that. Try again.");
+                    } else {
+                        dispatchVoicePayload("final", text);
+                    }
+                    releaseVoiceRecognizer();
+                }
+
+                @Override
+                public void onPartialResults(Bundle partialResults) {
+                    ArrayList<String> matches = partialResults == null ? null
+                            : partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (matches != null && !matches.isEmpty() && matches.get(0) != null) {
+                        String text = matches.get(0).trim();
+                        if (!text.isEmpty()) dispatchVoicePayload("partial", text);
+                    }
+                }
+
+                @Override
+                public void onEvent(int eventType, Bundle params) {
+                }
+            });
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+            speechRecognizer.startListening(intent);
+        } catch (Throwable error) {
+            Log.w(TAG, "voice search failed to start", error);
+            dispatchVoicePayload("error", "Voice search could not start. Try again.");
+            releaseVoiceRecognizer();
+        }
+    }
+
+    private void releaseVoiceRecognizer() {
+        SpeechRecognizer recognizer = speechRecognizer;
+        speechRecognizer = null;
+        if (recognizer == null) return;
+        try {
+            recognizer.cancel();
+        } catch (Throwable ignored) {
+        }
+        try {
+            recognizer.destroy();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void dispatchVoicePayload(String type, String text) {
+        if (webView == null) return;
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("type", type);
+            if (text != null && !text.isEmpty()) {
+                payload.put("text", text);
+                if ("error".equals(type)) payload.put("message", text);
+            }
+            String script = "window.__auralisVoiceResult && window.__auralisVoiceResult("
+                    + JSONObject.quote(payload.toString()) + ");";
+            webView.evaluateJavascript(script, null);
+        } catch (Throwable error) {
+            Log.w(TAG, "voice result dispatch failed", error);
+        }
+    }
+
+    private static String voiceErrorMessage(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO:
+                return "The microphone could not be opened.";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                return "Microphone permission is needed for voice search.";
+            case SpeechRecognizer.ERROR_NETWORK:
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                return "Voice search needs a network connection.";
+            case SpeechRecognizer.ERROR_NO_MATCH:
+                return "I didn't catch that. Try again.";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
+                return "Voice search is already listening.";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                return "No speech detected. Try again.";
+            default:
+                return "Voice search could not start. Try again.";
+        }
     }
 
     private void configureWebView() {
@@ -427,6 +585,7 @@ public class MainActivity extends AppCompatActivity {
         // The WebView (and therefore the audio element) is destroyed with this
         // activity, so no playback notification should outlive it.
         PlaybackService.stop(this);
+        releaseVoiceRecognizer();
         if (mediaReceiver != null) {
             try {
                 unregisterReceiver(mediaReceiver);
@@ -503,10 +662,29 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @android.webkit.JavascriptInterface
-        public void setPlayback(boolean playing, String title, String artist, String artwork) {
+        public void setPlayback(
+                boolean playing,
+                String title,
+                String artist,
+                String artwork,
+                double positionMs,
+                double durationMs,
+                boolean liked,
+                String trackId,
+                boolean buffering) {
             runOnUiThread(() -> {
                 if (playing) requestNotificationPermissionIfNeeded();
-                PlaybackService.update(MainActivity.this, playing, title, artist, artwork);
+                PlaybackService.update(
+                        MainActivity.this,
+                        playing,
+                        title,
+                        artist,
+                        artwork,
+                        Math.round(Math.max(0d, positionMs)),
+                        Math.round(Math.max(0d, durationMs)),
+                        liked,
+                        trackId,
+                        buffering);
             });
         }
 
@@ -515,6 +693,16 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 PlaybackService.stop(MainActivity.this);
             });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void startVoiceSearch() {
+            MainActivity.this.startVoiceSearch();
+        }
+
+        @android.webkit.JavascriptInterface
+        public void cancelVoiceSearch() {
+            MainActivity.this.cancelVoiceSearch();
         }
 
         @android.webkit.JavascriptInterface

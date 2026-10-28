@@ -9,9 +9,256 @@
     />
     <title>Auralis</title>
     <link rel="icon" type="image/png" href="./icon.png" />
+    <style>
+      /* Android boot animation. Desktop keeps its existing React splash. */
+      #auralis-boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: #030504;
+        transition: opacity 0.42s ease;
+      }
+      #auralis-boot-splash.is-leaving {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .auralis-splash-stage {
+        position: relative;
+        width: min(92vw, 900px, calc(92vh * 950 / 803));
+        aspect-ratio: 950 / 803;
+        isolation: isolate;
+      }
+      .auralis-splash-layer {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        opacity: 0;
+        pointer-events: none;
+        will-change: transform, opacity;
+      }
+      .auralis-splash-mark {
+        transform-origin: 42.2% 35.2%;
+        animation: auralis-a-settle 1s cubic-bezier(0.2, 0.8, 0.2, 1) 0.12s forwards;
+      }
+      .auralis-splash-arc1,
+      .auralis-splash-arc2,
+      .auralis-splash-arc3,
+      .auralis-splash-arc4 {
+        transform-origin: 42.2% 35.2%;
+        animation: auralis-arc-sweep 0.76s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+      }
+      .auralis-splash-arc1 {
+        animation-delay: 0.38s;
+      }
+      .auralis-splash-arc2 {
+        animation-delay: 0.51s;
+      }
+      .auralis-splash-arc3 {
+        animation-delay: 0.64s;
+      }
+      .auralis-splash-arc4 {
+        animation-delay: 0.77s;
+      }
+      .auralis-splash-play {
+        transform-origin: 50% 50%;
+        animation: auralis-play-drop 0.58s cubic-bezier(0.2, 0.85, 0.25, 1.25) 1.38s forwards;
+      }
+      .auralis-splash-letter {
+        transform-origin: center;
+        animation: auralis-letter-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+      }
+      .auralis-splash-letter0 {
+        animation-delay: 1.66s;
+      }
+      .auralis-splash-letter1 {
+        animation-delay: 1.75s;
+      }
+      .auralis-splash-letter2 {
+        animation-delay: 1.84s;
+      }
+      .auralis-splash-letter3 {
+        animation-delay: 1.93s;
+      }
+      .auralis-splash-letter4 {
+        animation-delay: 2.02s;
+      }
+      .auralis-splash-letter5 {
+        animation-delay: 2.11s;
+      }
+      .auralis-splash-letter6 {
+        animation-delay: 2.2s;
+      }
+      .auralis-splash-glow {
+        position: absolute;
+        inset: 7% 12% 23%;
+        z-index: -1;
+        border-radius: 50%;
+        background: radial-gradient(ellipse, rgba(32, 206, 104, 0.1), transparent 66%);
+        opacity: 0;
+        filter: blur(18px);
+        animation: auralis-glow-in 1.2s ease 1.2s forwards;
+      }
+      .auralis-splash-scan {
+        position: absolute;
+        top: 68%;
+        right: 12%;
+        left: 12%;
+        z-index: 2;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(32, 206, 104, 0.6), transparent);
+        opacity: 0;
+        animation: auralis-scan 0.92s ease 1.68s forwards;
+      }
+      @keyframes auralis-a-settle {
+        0% {
+          opacity: 0;
+          transform: rotate(-28deg) scale(0.82);
+        }
+        65% {
+          opacity: 1;
+          transform: rotate(5deg) scale(1.025);
+        }
+        82% {
+          transform: rotate(-2deg) scale(0.995);
+        }
+        100% {
+          opacity: 1;
+          transform: rotate(0) scale(1);
+        }
+      }
+      @keyframes auralis-arc-sweep {
+        0% {
+          opacity: 0;
+          transform: rotate(-38deg) scale(0.82);
+        }
+        65% {
+          opacity: 1;
+          transform: rotate(5deg) scale(1.025);
+        }
+        82% {
+          transform: rotate(-2deg) scale(0.995);
+        }
+        100% {
+          opacity: 1;
+          transform: rotate(0) scale(1);
+        }
+      }
+      @keyframes auralis-play-drop {
+        0% {
+          opacity: 0;
+          transform: translateY(-90px) scale(0.7) rotate(-18deg);
+        }
+        72% {
+          opacity: 1;
+          transform: translateY(7px) scale(1.04) rotate(3deg);
+        }
+        88% {
+          transform: translateY(-3px) scale(0.99) rotate(-1deg);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0) scale(1) rotate(0);
+        }
+      }
+      @keyframes auralis-letter-in {
+        0% {
+          opacity: 0;
+          filter: blur(3px);
+          transform: translateX(-18px) scale(0.96);
+        }
+        100% {
+          opacity: 1;
+          filter: blur(0);
+          transform: translateX(0) scale(1);
+        }
+      }
+      @keyframes auralis-glow-in {
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes auralis-scan {
+        0% {
+          opacity: 0;
+          transform: scaleX(0.15);
+        }
+        30% {
+          opacity: 0.8;
+        }
+        100% {
+          opacity: 0;
+          transform: scaleX(1);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .auralis-splash-layer,
+        .auralis-splash-glow,
+        .auralis-splash-scan {
+          opacity: 1 !important;
+          animation: none !important;
+          filter: none !important;
+          transform: none !important;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="auralis-boot-splash" aria-hidden="true">
+      <div class="auralis-splash-stage">
+        <div class="auralis-splash-glow"></div>
+        <img class="auralis-splash-layer auralis-splash-mark" src="./splash/mark.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-arc1" src="./splash/arc1.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-arc2" src="./splash/arc2.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-arc3" src="./splash/arc3.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-arc4" src="./splash/arc4.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter0" src="./splash/letter0.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter1" src="./splash/letter1.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter2" src="./splash/letter2.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter3" src="./splash/letter3.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter4" src="./splash/letter4.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter5" src="./splash/letter5.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-letter auralis-splash-letter6" src="./splash/letter6.png" alt="" draggable="false" />
+        <img class="auralis-splash-layer auralis-splash-play" src="./splash/play.png" alt="" draggable="false" />
+        <div class="auralis-splash-scan"></div>
+      </div>
+    </div>
     <div id="root"></div>
+    <script>
+      (function () {
+        var splash = document.getElementById('auralis-boot-splash');
+        if (!splash) return;
+        // The layered reveal is an Android boot detail; desktop keeps the
+        // React splash it has always used.
+        if (!/Android/i.test(navigator.userAgent)) {
+          splash.remove();
+          return;
+        }
+        var started = performance.now();
+        var dismissed = false;
+        function remove() {
+          if (!splash.isConnected) return;
+          splash.classList.add('is-leaving');
+          window.setTimeout(function () {
+            if (splash.isConnected) splash.remove();
+          }, 440);
+        }
+        window.__auralisDismissSplash = function () {
+          if (dismissed) return;
+          dismissed = true;
+          var wait = Math.max(0, 2550 - (performance.now() - started));
+          window.setTimeout(remove, wait);
+        };
+        // If the renderer never becomes ready, never trap the user on the logo.
+        window.setTimeout(function () {
+          if (!dismissed) window.__auralisDismissSplash();
+        }, 9000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

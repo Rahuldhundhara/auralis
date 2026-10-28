@@ -12,8 +12,8 @@ android {
         applicationId = "com.auralis.music"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10002
-        versionName = "1.0.2"
+        versionCode = 10003
+        versionName = "1.0.3"
 
         val abis = (providers.gradleProperty("auralis.abis").orNull
             ?: "arm64-v8a,armeabi-v7a")

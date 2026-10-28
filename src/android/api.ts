@@ -230,12 +230,15 @@ const api: AuralisApi = {
     addRecent: async (track) => libraryService.addRecent(track),
     recordEvent: async (event) => libraryService.recordEvent(event),
     createPlaylist: async (name, description) => libraryService.createPlaylist(name, description),
+    importPlaylist: async (name, tracks, description, remoteId) =>
+      libraryService.importPlaylist(name, tracks, description || '', remoteId || ''),
     renamePlaylist: async (id, name, description) => libraryService.renamePlaylist(id, name, description),
     deletePlaylist: async (id) => libraryService.deletePlaylist(id),
     addToPlaylist: async (id, track) => libraryService.addToPlaylist(id, track),
     removeFromPlaylist: async (id, trackId) => libraryService.removeFromPlaylist(id, trackId),
     reorderPlaylist: async (id, from, to) => libraryService.reorderPlaylist(id, from, to),
     addSearchHistory: async (query) => libraryService.addSearchHistory(query),
+    removeSearchHistory: async (query) => libraryService.removeSearchHistory(query),
     clearSearchHistory: async () => libraryService.clearSearchHistory(),
     clearRecent: async () => libraryService.clearRecent(),
     saveAlbum: async (album) => libraryService.saveAlbum(album),
@@ -306,6 +309,7 @@ const api: AuralisApi = {
 
   player: {
     resolve: async (track: Track): Promise<StreamInfo> => streams.resolve(track),
+    resolveVideo: async (track: Track): Promise<StreamInfo> => streams.resolveVideo(track),
     prefetch: async (track) => streams.prefetch(track),
     download: async (track) =>
       streams.download(track, (progress: DownloadProgress) => emitEvent('download-progress', progress)),

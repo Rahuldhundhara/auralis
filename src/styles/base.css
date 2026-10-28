@@ -859,6 +859,41 @@ a {
   flex: 0 0 auto;
 }
 
+.search-voice {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.search-voice.is-listening {
+  color: var(--accent);
+  animation: voice-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.18);
+  }
+}
+
+.android-search-launch {
+  width: 100%;
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.android-search-launch span {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .search-popover {
   position: absolute;
   top: calc(100% + 8px);
