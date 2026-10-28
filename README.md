@@ -5,12 +5,17 @@
 <h1 align="center">Auralis</h1>
 
 <p align="center">
-  A native-feeling YouTube Music client for Windows 10 and 11.<br />
+  A native-feeling YouTube Music client for Windows 10 and 11, Linux x64 and Android.<br />
   Browse, stream, queue, sing along and listen offline — in one focused desktop app.
 </p>
 
 <p align="center">
-  <strong>Version 1.0.3</strong> · Windows x64 · GPL-3.0-or-later
+  <strong>Windows/Android 1.0.3</strong> · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
+</p>
+
+<p align="center">
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux"><strong>Download Auralis for Linux 1.0.2</strong></a>
+  · AppImage · Debian package
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -32,7 +37,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history |
 | **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
-| **Desktop** | Frameless window, tray icon, close-to-tray, keyboard shortcuts and Windows media controls |
+| **Desktop** | Frameless window, tray icon, close-to-tray, keyboard shortcuts, Windows media controls and Linux MPRIS |
 | **Look and feel** | Material-inspired design, dark/black/light/system themes and eight accent colours |
 
 ### Screens
@@ -62,10 +67,42 @@ The installer is per-user by default, so it does not need administrator rights. 
 
 These community builds are not code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info → Run anyway** after checking the SHA-256 against [`SHA256SUMS.txt`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/SHA256SUMS.txt). Code signing is the only reason for that prompt; the app does not need elevation.
 
+### Linux 1.0.2
+
+Linux x64 packages are available from the
+[Linux 1.0.2 release](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux):
+
+| Build | File | Use it when |
+| --- | --- | --- |
+| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
+| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
+
+```bash
+chmod +x Auralis-1.0.2-x86_64.AppImage
+./Auralis-1.0.2-x86_64.AppImage
+
+# or
+sudo apt install ./Auralis-1.0.2-amd64.deb
+auralis
+```
+
+Verify the download against
+[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt):
+
+```bash
+sha256sum -c SHA256SUMS-linux.txt
+```
+
+The AppImage needs FUSE 2 (`libfuse2t64` on Ubuntu 24.04/26.04). Both Linux
+builds include yt-dlp and FFmpeg and do not need a separate browser runtime.
+GNOME needs the AppIndicator extension for the tray icon. See
+[`docs/LINUX.md`](https://github.com/Rahuldhundhara/auralis/blob/linux-port/docs/LINUX.md)
+for Wayland, keyring, sandbox and troubleshooting details.
+
 ### First run
 
 1. Open **Settings → Appearance** and choose a theme and accent.
-2. Open **Settings → Downloads** and pick a music folder. The default is `%USERPROFILE%\Music\Auralis`.
+2. Open **Settings → Downloads** to manage offline audio. The default is `%APPDATA%\Auralis\offline` on Windows and `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` on Linux.
 3. Optionally connect an account under **Settings → Account**, or configure Last.fm and Discord under **Settings → Integrations**.
 4. Start typing in the search bar, or pick something from Home.
 
@@ -77,16 +114,24 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 - The Now Playing header, queue and more-options controls now sit below the titlebar and remain visible at every supported window size.
 - Rebuilt NSIS installer and portable EXE with the 1.0.3 binaries and refreshed SHA-256 checksums.
 
+### Linux 1.0.2 release notes
+
+- Published AppImage and Debian packages built from the `linux-port` branch.
+- Added Linux playback, MPRIS media keys, tray/AppIndicator support, app-private downloads and Linux-safe storage paths.
+- Verified the packaged Linux build with live playback, radio, downloads and the full end-to-end QA pass.
+
 ## Where your data lives
 
-| Data | Location |
-| --- | --- |
-| Settings and local library | `%APPDATA%\Auralis\settings.json`, `library.json` |
-| YouTube Music session | `%APPDATA%\Auralis\session.json` |
-| Downloads | `%USERPROFILE%\Music\Auralis` by default (configurable) |
-| Playback cache | Electron's per-user cache folder |
+| Data | Windows | Linux |
+| --- | --- | --- |
+| Settings and local library | `%APPDATA%\Auralis\settings.json`, `library.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/settings.json`, `library.json` |
+| YouTube Music session | `%APPDATA%\Auralis\session.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/session.json` |
+| Downloads | `%APPDATA%\Auralis\offline` (app-private) | `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` (app-private) |
+| Playback cache | Electron's per-user cache folder | Electron's per-user cache folder |
 
-Cookies are encrypted at rest with Electron `safeStorage`, which uses Windows DPAPI (your Windows user account). The session is never encrypted with a hard-coded key and is not uploaded anywhere.
+Cookies are encrypted at rest with Electron `safeStorage`: DPAPI on Windows,
+libsecret/GNOME Keyring or KWallet on Linux. The session is never encrypted with
+a hard-coded key and is not uploaded anywhere.
 
 ## Build from source
 
@@ -96,6 +141,9 @@ Cookies are encrypted at rest with Electron `safeStorage`, which uses Windows DP
 - Node.js 22 or newer (Node 24 recommended)
 - npm
 - About 1 GB of free disk space for dependencies and packaged output
+
+Linux build prerequisites, packaging commands and troubleshooting are documented in
+[`docs/LINUX.md`](https://github.com/Rahuldhundhara/auralis/blob/linux-port/docs/LINUX.md).
 
 ### Development
 
