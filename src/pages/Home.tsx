@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Compass, Play, Radio, Sparkles } from 'lucide-react';
-import type { Shelf as ShelfType } from '@shared/types';
+import { useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Compass, Play, Radio, Sparkles } from 'lucide-react';
+import type { Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
-import { useUiStore } from '../stores/ui';
+import { toast, useUiStore } from '../stores/ui';
 import { greeting, shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
@@ -12,18 +12,61 @@ import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../compon
 import { Shelf } from '../components/MediaCard';
 
 function QuickAccess() {
-  const recent = useAppStore((state) => state.library.recent).slice(0, 6);
+  const recent = useAppStore((state) => state.library.recent).slice(0, 14);
+  const liked = useAppStore((state) => state.library.liked);
   const navigate = useNavStore((state) => state.navigate);
+  const carouselRef = useRef<HTMLDivElement>(null);
   if (!recent.length) return null;
+
+  const createMix = () => {
+    const seen = new Set<string>();
+    const pool: Track[] = [];
+    const rounds = Math.max(liked.length, recent.length);
+    // Alternate liked and recent tracks so the mix is not dominated by one list.
+    for (let index = 0; index < rounds; index += 1) {
+      for (const track of [liked[index], recent[index]]) {
+        if (!track?.id || seen.has(track.id)) continue;
+        seen.add(track.id);
+        pool.push(track);
+      }
+    }
+    if (!pool.length) {
+      toast('Like a few songs or play something first, then Create a mix can use them.', 'info');
+      navigate({ page: 'explore' });
+      return;
+    }
+    const mix = shuffleArray(pool).slice(0, 30);
+    usePlayerStore.getState().playQueue(mix, 0);
+    toast(
+      mix.length > 1
+        ? `Playing a ${mix.length}-song mix from your liked songs and recent listens.`
+        : 'Only one track is available, so the mix starts with it. Like more songs to grow it.',
+      'success',
+    );
+  };
+
   return (
     <section className="quick-access">
       <div className="section-heading">
         <h2>Jump back in</h2>
-        <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
-          See all
-        </button>
+        <div className="quick-access-actions">
+          <button type="button" className="text-button quick-mix-button" onClick={createMix}>
+            <Sparkles size={14} /> Create a mix
+          </button>
+          <div className="shelf-scroll-buttons">
+            <IconButton label="Scroll Jump back in left" size="sm" variant="surface" onClick={() => carouselRef.current?.scrollBy({ left: -520, behavior: 'smooth' })}>
+              <ChevronLeft size={16} />
+            </IconButton>
+            <IconButton label="Scroll Jump back in right" size="sm" variant="surface" onClick={() => carouselRef.current?.scrollBy({ left: 520, behavior: 'smooth' })}>
+              <ChevronRight size={16} />
+            </IconButton>
+          </div>
+          <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
+            See all
+          </button>
+        </div>
       </div>
-      <div className="quick-grid">
+      <div ref={carouselRef} className="quick-grid" aria-label="Jump back in">
         {recent.map((track, index) => (
           <button
             type="button"

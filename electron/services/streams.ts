@@ -16,6 +16,7 @@ interface CachedStream {
 
 const streamCache = new Map<string, CachedStream>();
 const active = new Map<string, ReturnType<typeof spawn>>();
+const issuedStreams = new Set<string>();
 
 export function resourcesBinDir(): string {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'bin');
@@ -52,7 +53,7 @@ function cookieFile(): string | null {
 }
 
 function commonArgs(): string[] {
-  const args: string[] = ['--no-warnings', '--no-playlist', '--no-check-certificates'];
+  const args: string[] = ['--no-warnings', '--no-playlist'];
   const settings = settingsStore.get();
   const cookies = cookieFile();
   if (cookies) args.push('--cookies', cookies);
@@ -96,7 +97,22 @@ function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string;
 }
 
 function proxyStreamUrl(url: string): string {
+  issuedStreams.add(url);
+  if (issuedStreams.size > 250) {
+    const oldest = issuedStreams.values().next().value;
+    if (oldest) issuedStreams.delete(oldest);
+  }
   return `auralis-media://stream/${Buffer.from(url, 'utf8').toString('base64url')}`;
+}
+
+/** True only for URLs this process resolved itself through yt-dlp. */
+export function isIssuedStreamUrl(url: string): boolean {
+  return issuedStreams.has(url);
+}
+
+function downloadStem(trackId: string): string {
+  const safe = String(trackId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+  return safe || `track-${crypto.createHash('sha1').update(String(trackId)).digest('hex').slice(0, 16)}`;
 }
 
 export class StreamService {
@@ -207,7 +223,8 @@ export class StreamService {
     if (existing && fs.existsSync(existing.path)) return existing;
 
     const dir = ensureDownloadsDir();
-    const output = path.join(dir, `${track.id}.%(ext)s`);
+    const stem = downloadStem(track.id);
+    const output = path.join(dir, `${stem}.%(ext)s`);
     const args = [
       ...commonArgs(),
       '--newline',
@@ -250,7 +267,7 @@ export class StreamService {
         if (cookie) fs.rm(cookie, { force: true }, () => {});
         let file = '';
         try {
-          file = fs.readdirSync(dir).find((name) => name.startsWith(`${track.id}.`)) || '';
+          file = fs.readdirSync(dir).find((name) => name.startsWith(`${stem}.`)) || '';
           if (file) file = path.join(dir, file);
         } catch {
           file = '';

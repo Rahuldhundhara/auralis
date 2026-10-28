@@ -36,6 +36,7 @@ interface AppState {
   removeFromPlaylist: (id: string, trackId: string) => Promise<void>;
   reorderPlaylist: (id: string, from: number, to: number) => Promise<void>;
   addSearchHistory: (query: string) => Promise<void>;
+  removeSearchHistory: (query: string) => Promise<void>;
   clearSearchHistory: () => Promise<void>;
   clearRecent: () => Promise<void>;
   toggleSaveAlbum: (album: Card) => Promise<void>;
@@ -62,7 +63,7 @@ const EMPTY_SETTINGS: Settings = {
   normalize: false,
   crossfadeSec: 0,
   gapless: true,
-  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 },
+  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: false },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
@@ -70,7 +71,7 @@ const EMPTY_SETTINGS: Settings = {
   translation: {
     enabled: false,
     provider: 'deepl',
-    targetLanguage: 'en',
+    targetLanguage: 'EN',
     deeplApiKey: '',
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiApiKey: '',
@@ -131,6 +132,7 @@ export function applyAppearance(settings: Settings) {
 }
 
 let initialized = false;
+let eventsBound = false;
 let systemThemeListener: (() => void) | null = null;
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -143,25 +145,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   init: async () => {
     if (initialized) return;
     initialized = true;
-    try {
-      const [settings, library, session, appInfo] = await Promise.all([
-        window.auralis.settings.get(),
-        window.auralis.library.get(),
-        window.auralis.yt.session(),
-        window.auralis.app.info(),
-      ]);
-      set({ settings, library, session, appInfo, ready: true });
-      applyAppearance(settings);
-      if (settings.sidebarCollapsed) {
-        const { useUiStore } = await import('./ui');
-        useUiStore.getState().setSidebarCollapsed(true);
-      }
+    const [settingsResult, libraryResult, sessionResult, infoResult] = await Promise.allSettled([
+      window.auralis.settings.get(),
+      window.auralis.library.get(),
+      window.auralis.yt.session(),
+      window.auralis.app.info(),
+    ]);
+    const failures: string[] = [];
+    const settings = settingsResult.status === 'fulfilled' ? settingsResult.value : get().settings;
+    const library = libraryResult.status === 'fulfilled' ? libraryResult.value : get().library;
+    const session = sessionResult.status === 'fulfilled' ? sessionResult.value : get().session;
+    const appInfo = infoResult.status === 'fulfilled' ? infoResult.value : get().appInfo;
+    if (settingsResult.status === 'rejected') failures.push('settings');
+    if (libraryResult.status === 'rejected') failures.push('library');
+    if (sessionResult.status === 'rejected') failures.push('account session');
+    if (infoResult.status === 'rejected') failures.push('app diagnostics');
+
+    set({ settings, library, session, appInfo, ready: true });
+    applyAppearance(settings);
+
+    if (settings.sidebarCollapsed) {
+      const { useUiStore } = await import('./ui');
+      useUiStore.getState().setSidebarCollapsed(true);
+    }
+
+    if (!systemThemeListener) {
       const media = window.matchMedia('(prefers-color-scheme: light)');
       systemThemeListener = () => {
         if (get().settings.theme === 'system') applyAppearance(get().settings);
       };
       media.addEventListener('change', systemThemeListener);
+    }
 
+    // Event wiring must survive a partial load; otherwise later settings or
+    // library writes would never reach this window.
+    if (!eventsBound) {
+      eventsBound = true;
       window.auralis.events.onSettingsChange((next) => {
         set({ settings: next });
         applyAppearance(next);
@@ -189,10 +208,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
         if (progress.status === 'done' || progress.status === 'error') void get().refreshLibrary();
       });
-    } catch (error: any) {
+    }
+
+    if (failures.length) {
+      // Leave init retryable. Successfully loaded data stays visible.
       initialized = false;
-      set({ ready: true });
-      toast(`Could not load Auralis data: ${error?.message || error}`, 'error');
+      toast(
+        `Auralis started with partial data (could not load ${failures.join(', ')}).`,
+        'error',
+        { label: 'Retry', onClick: () => void get().init() },
+      );
     }
   },
 
@@ -332,6 +357,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   addSearchHistory: async (query) => {
     if (!query.trim()) return;
     const library = await window.auralis.library.addSearchHistory(query);
+    set({ library });
+  },
+
+  removeSearchHistory: async (query) => {
+    const library = await window.auralis.library.removeSearchHistory(query);
     set({ library });
   },
 

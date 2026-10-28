@@ -553,6 +553,7 @@
 /* -------------------------------------------------------------------------- */
 
 .player-bar {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(235px, 1fr) minmax(390px, 1.75fr) minmax(285px, 1fr);
   align-items: center;
@@ -564,6 +565,64 @@
   background: var(--player-bg);
   backdrop-filter: blur(22px);
   z-index: 90;
+}
+
+/* Always-on progress rail for the minimised player. The native range sits
+   above the visual fill so the rail stays thin while remaining seekable. */
+.mini-progress {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 4;
+  height: 3px;
+  background: var(--surface-3);
+}
+
+.mini-progress-fill {
+  height: 100%;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  box-shadow: 0 0 9px rgba(var(--accent-rgb), 0.46);
+  transition: width 240ms linear;
+  pointer-events: none;
+}
+
+.mini-progress:not(.is-playing) .mini-progress-fill {
+  transition: none;
+}
+
+.mini-progress-range {
+  position: absolute;
+  top: -7px;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  width: 100%;
+  height: 17px;
+  margin: 0;
+}
+
+.mini-progress-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mini-progress-range::-webkit-slider-thumb {
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  opacity: 0;
+}
+
+.mini-progress:hover .mini-progress-range::-webkit-slider-thumb,
+.mini-progress-range:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.mini-progress-range:disabled {
+  cursor: default;
 }
 
 .player-bar-empty {
@@ -1280,6 +1339,18 @@
   border-radius: 18px;
   background: rgba(var(--surface-rgb), 0.42);
   backdrop-filter: blur(16px);
+  animation: np-panel-in 170ms var(--ease);
+}
+
+@keyframes np-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.np-tabs button:focus-visible {
+  outline-offset: 1px;
 }
 
 .np-about {
@@ -1396,6 +1467,79 @@
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.lyrics-language-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.lyrics-language-toggle button {
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  transition: background var(--fast), color var(--fast);
+}
+
+.lyrics-language-toggle button:hover {
+  color: var(--text);
+}
+
+.lyrics-language-toggle button.is-active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.lyrics-translation-note,
+.lyrics-translation-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 14px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(var(--bg-rgb), 0.35);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.lyrics-translation-note svg,
+.lyrics-translation-error svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.lyrics-translation-note span,
+.lyrics-translation-error span {
+  min-width: 0;
+  flex: 1;
+}
+
+.lyrics-translation-error {
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.lyrics-translation-error svg {
+  color: var(--danger);
+}
+
+.lyrics-translation-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 16px 0;
+  color: var(--muted);
+  font-size: 10.5px;
 }
 
 .lyrics-loading {

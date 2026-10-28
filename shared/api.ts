@@ -62,6 +62,7 @@ export interface AuralisApi {
     removeFromPlaylist(id: string, trackId: string): Promise<LocalPlaylist>;
     reorderPlaylist(id: string, from: number, to: number): Promise<LocalPlaylist>;
     addSearchHistory(query: string): Promise<LibraryData>;
+    removeSearchHistory(query: string): Promise<LibraryData>;
     clearSearchHistory(): Promise<LibraryData>;
     clearRecent(): Promise<LibraryData>;
     saveAlbum(album: Card): Promise<LibraryData>;
@@ -118,7 +119,7 @@ export interface AuralisApi {
     ytdlpUpdate(): Promise<string>;
   };
   lyrics: {
-    fetch(track: Track, providers?: string[]): Promise<LyricsResult | null>;
+    fetch(track: Track, providers?: string[], force?: boolean): Promise<LyricsResult | null>;
     translate(
       lines: string[],
       targetLanguage?: string,

@@ -98,7 +98,6 @@ const TRANSLATION_LANGUAGES = [
 
 const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
   { id: 'BetterLyrics', label: 'BetterLyrics', description: 'Community lyrics with word-by-word timing and translations.' },
-  { id: 'Paxsenix', label: 'Paxsenix', description: 'Synced lyrics with romanisation and translation support.' },
   { id: 'LyricsPlus', label: 'LyricsPlus', description: 'Large community catalogue with synced and plain lyrics.' },
   { id: 'LrcLib', label: 'LRCLIB', description: 'Open, crowd-sourced lyrics database with timestamps.' },
   { id: 'KuGou', label: 'KuGou', description: 'Chinese catalogue with synced lyrics and translations.' },
@@ -412,6 +411,15 @@ function AppearanceTab() {
   );
 }
 
+const EQ_PRESETS: Array<{ label: string; bands: number[]; preamp: number }> = [
+  { label: 'Flat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 },
+  { label: 'Bass boost', bands: [9, 8, 6, 3, 0, 0, 0, 0, 0, 0], preamp: -2 },
+  { label: 'Vocal', bands: [-2, -1, 0, 2, 4, 4, 3, 1, 0, 0], preamp: -1 },
+  { label: 'Rock', bands: [5, 4, 2, 0, -1, -1, 1, 3, 4, 4], preamp: -2 },
+  { label: 'Podcast', bands: [-4, -3, -1, 2, 5, 4, 2, 0, -2, -3], preamp: 0 },
+  { label: 'Night', bands: [-2, -1, 0, 1, 2, 1, 0, -1, -2, -3], preamp: -2 },
+];
+
 function PlaybackTab() {
   const settings = useAppStore((state) => state.settings);
   const update = useAppStore((state) => state.updateSettings);
@@ -421,6 +429,10 @@ function PlaybackTab() {
     const bands = [...settings.eq.bands];
     bands[index] = value;
     void update({ eq: { ...settings.eq, bands } });
+  };
+
+  const applyPreset = (preset: (typeof EQ_PRESETS)[number]) => {
+    void update({ eq: { ...settings.eq, bands: [...preset.bands], preamp: preset.preamp, bassBoost: false } });
   };
 
   return (
@@ -459,6 +471,24 @@ function PlaybackTab() {
         <SettingRow label="Enable equalizer" description="Bypass leaves the audio untouched.">
           <Toggle checked={settings.eq.enabled} onChange={(value) => void update({ eq: { ...settings.eq, enabled: value } })} />
         </SettingRow>
+        <SettingRow label="Bass boost" description="Adds a low-end shelf on top of the 10-band curve.">
+          <Toggle
+            checked={settings.eq.bassBoost}
+            onChange={(value) => void update({ eq: { ...settings.eq, bassBoost: value } })}
+          />
+        </SettingRow>
+        <div className="eq-presets" role="group" aria-label="Equalizer presets">
+          {EQ_PRESETS.map((preset) => (
+            <button
+              type="button"
+              key={preset.label}
+              className={`chip ${settings.eq.bands.join(',') === preset.bands.join(',') && settings.eq.preamp === preset.preamp ? 'is-selected' : ''}`}
+              onClick={() => applyPreset(preset)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
         <div className={`eq-panel ${settings.eq.enabled ? '' : 'is-disabled'}`}>
           <div className="eq-head">
             <span>Preamp</span>
@@ -523,7 +553,15 @@ function LyricsTab() {
   const settings = useAppStore((state) => state.settings);
   const update = useAppStore((state) => state.updateSettings);
   const [testing, setTesting] = useState(false);
-  const order = settings.lyricsProviders.length ? settings.lyricsProviders : PROVIDERS.map((provider) => provider.id);
+  const knownOrder = settings.lyricsProviders.filter((id) => PROVIDERS.some((provider) => provider.id === id));
+  const order = knownOrder.length ? knownOrder : PROVIDERS.map((provider) => provider.id);
+  const enabledProviders = new Set(order);
+  const orderedProviders = [
+    ...order
+      .map((id) => PROVIDERS.find((provider) => provider.id === id))
+      .filter((provider): provider is (typeof PROVIDERS)[number] => Boolean(provider)),
+    ...PROVIDERS.filter((provider) => !enabledProviders.has(provider.id)),
+  ];
 
   const setOrder = (next: string[]) => void update({ lyricsProviders: next });
 
@@ -561,24 +599,34 @@ function LyricsTab() {
         icon={<ListMusic size={19} />}
       >
         <div className="provider-list">
-          {order.map((id, index) => {
-            const provider = PROVIDERS.find((entry) => entry.id === id);
-            if (!provider) return null;
+          {orderedProviders.map((provider) => {
+            const enabled = enabledProviders.has(provider.id);
+            const enabledIndex = order.indexOf(provider.id);
             return (
-              <div className="provider-row" key={id}>
-                <span className="provider-rank">{index + 1}</span>
+              <div className={`provider-row ${enabled ? '' : 'is-disabled'}`} key={provider.id}>
+                <span className="provider-rank">{enabled ? enabledIndex + 1 : '—'}</span>
                 <div className="provider-copy">
                   <span className="provider-name">{provider.label}</span>
                   <span className="provider-description">{provider.description}</span>
                 </div>
                 <div className="provider-controls">
-                  <IconButton label={`Move ${provider.label} up`} size="xs" disabled={index === 0} onClick={() => move(index, -1)}>
+                  <IconButton
+                    label={`Move ${provider.label} up`}
+                    size="xs"
+                    disabled={!enabled || enabledIndex <= 0}
+                    onClick={() => move(enabledIndex, -1)}
+                  >
                     <ChevronUp size={14} />
                   </IconButton>
-                  <IconButton label={`Move ${provider.label} down`} size="xs" disabled={index === order.length - 1} onClick={() => move(index, 1)}>
+                  <IconButton
+                    label={`Move ${provider.label} down`}
+                    size="xs"
+                    disabled={!enabled || enabledIndex < 0 || enabledIndex >= order.length - 1}
+                    onClick={() => move(enabledIndex, 1)}
+                  >
                     <ChevronDown size={14} />
                   </IconButton>
-                  <Toggle checked={order.includes(id)} onChange={(enabled) => toggleProvider(id, enabled)} />
+                  <Toggle checked={enabled} onChange={(value) => toggleProvider(provider.id, value)} />
                 </div>
               </div>
             );
@@ -606,7 +654,7 @@ function LyricsTab() {
         </SettingRow>
         <SettingRow label="Target language">
           <Select
-            value={settings.translation.targetLanguage}
+            value={settings.translation.targetLanguage.toUpperCase()}
             onChange={(value) => void update({ translation: { ...settings.translation, targetLanguage: value } })}
           >
             {TRANSLATION_LANGUAGES.map(([value, label]) => (

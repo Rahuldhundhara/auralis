@@ -180,6 +180,8 @@ export interface EqSettings {
   /** 10 bands, dB gain -12..12. */
   bands: number[];
   preamp: number;
+  /** Extra low-end shelf applied on top of the bands. */
+  bassBoost: boolean;
 }
 
 export interface LastFmSettings {

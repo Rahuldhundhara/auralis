@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>Version 1.0.3</strong> · Windows x64 · GPL-3.0-or-later
+  <strong>Version 1.1.0</strong> · Windows x64 · GPL-3.0-or-later
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -24,16 +24,16 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | | |
 |---|---|
 | **Home** | Personalised home feed, quick picks, mixes, charts, new releases, moods and genres |
-| **Search** | Search suggestions plus separate songs, videos, albums, artists, playlists and podcasts; song picks start a related station |
+| **Search** | Dedicated search page with live suggestions, removable history chips, songs/videos/albums/artists/playlists/podcasts filters and continuation without duplicates |
 | **Details** | Album, playlist, artist and podcast pages with continuation and full track/episode lists |
-| **Player** | Seek, volume, speed, repeat, shuffle, queue, radio/automix with queue-end autoplay, prefetch, sleep timer and media keys |
-| **Now Playing** | Full-screen artwork, queue, synced lyrics and word-by-word highlighting |
-| **Lyrics** | Eight providers, including LRCLIB, BetterLyrics, Paxsenix, LyricsPlus, KuGou and YouTube |
+| **Player** | Seek, volume, speed, repeat, shuffle, queue, radio/automix with queue-end autoplay, prefetch, sleep timer, streaming quality and media keys |
+| **Now Playing** | Queue-first panel, full-screen artwork, accessible tabs, synced lyrics and original/translated language switching |
+| **Lyrics** | Seven providers, including BetterLyrics, LyricsPlus, LRCLIB, KuGou and YouTube, plus optional DeepL/OpenAI translation with your own key |
 | **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history |
 | **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
-| **Desktop** | Frameless window, tray icon, close-to-tray, keyboard shortcuts and Windows media controls |
-| **Look and feel** | Material-inspired design, dark/black/light/system themes and eight accent colours |
+| **Desktop** | Frameless window, animated cold-start logo, tray icon, close-to-tray, keyboard shortcuts and Windows media controls |
+| **Look and feel** | Material-inspired design, dark/black/light/system themes, eight accent colours, 10-band EQ with presets and bass boost |
 
 ### Screens
 
@@ -55,8 +55,8 @@ Download the latest Windows x64 build from the [GitHub Releases page](https://gi
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| Installer | [`Auralis-Setup-1.0.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.0.3.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.0.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.0.3.exe) | You want a single executable that does not need installation |
+| Installer | [`Auralis-Setup-1.1.0.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.0.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
+| Portable | [`Auralis-Portable-1.1.0.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.0.exe) | You want a single executable that does not need installation |
 
 The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
 
@@ -71,11 +71,17 @@ These community builds are not code-signed, so Windows SmartScreen may show "Win
 
 Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
 
-### What's new in 1.0.3
+### What's new in 1.1.0
 
-- Fixed the Now Playing close/back button being hidden behind the window titlebar.
-- The Now Playing header, queue and more-options controls now sit below the titlebar and remain visible at every supported window size.
-- Rebuilt NSIS installer and portable EXE with the 1.0.3 binaries and refreshed SHA-256 checksums.
+- An animated cold-start logo built from the supplied Auralis artwork, with a reduced-motion fallback.
+- A dedicated search page: debounced suggestions, removable and clearable history, request-cancellation guards, deduplicated continuation and explicit load-more errors.
+- Queue-first Now Playing with accessible tabs, a swipe-down header and lyrics that keep playing while you switch views.
+- Lyrics translation with a real language picker, original/translated switching, synced timing preserved and actionable provider errors. DeepL or an OpenAI-compatible key is required; no keyless translation is faked.
+- An always-visible mini-player progress rail that becomes seekable as soon as duration metadata arrives, plus an in-player streaming-quality selector that reloads at the current position.
+- A horizontal Jump Back In carousel backed by real listening history, and a Create a Mix action built from local history.
+- Equalizer presets and a real bass-boost low shelf on top of the 10-band curve.
+- Hardened media handling: local playback is restricted to recorded downloads or the configured download roots, stream proxying requires an app-issued URL, downloads use sanitized filenames and interrupted downloads are reconciled on startup.
+- Resilient startup: independent library, settings and session initialisation, preserved loaded data, retry feedback and animated splash gating.
 
 ## Where your data lives
 
@@ -136,6 +142,7 @@ Packaging uses `electron-builder` with `npmRebuild: false`; the Electron main pr
 ```powershell
 npm run test:api            # live Innertube parser check
 node scripts/qa-full.mjs    # 21-check live end-to-end pass
+node scripts/qa-upgrade.mjs # focused 1.1.0 upgrade regression pass
 node scripts/qa-sleep.mjs   # focused sleep-timer regression
 ```
 

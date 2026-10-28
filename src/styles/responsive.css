@@ -51,8 +51,9 @@
     transform: translateY(-50%) scale(0.82);
   }
 
-  .quick-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .quick-card {
+    flex-basis: 285px;
+    width: 285px;
   }
 
   .library-hero-art {
@@ -380,12 +381,18 @@
     font-size: 11.5px;
   }
 
-  .quick-grid {
-    grid-template-columns: 1fr;
+  .quick-card {
+    flex-basis: 252px;
+    width: 252px;
+    height: 56px;
   }
 
-  .quick-card {
-    height: 56px;
+  .quick-access-actions {
+    gap: 5px;
+  }
+
+  .quick-access-actions .shelf-scroll-buttons {
+    display: none;
   }
 
   .quick-art {

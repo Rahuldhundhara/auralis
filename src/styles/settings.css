@@ -706,6 +706,14 @@
   border-bottom: 0;
 }
 
+.provider-row.is-disabled {
+  opacity: 0.55;
+}
+
+.provider-row.is-disabled .provider-name {
+  color: var(--muted);
+}
+
 .provider-rank {
   display: grid;
   width: 21px;

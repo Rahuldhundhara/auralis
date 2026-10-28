@@ -1,0 +1,86 @@
+{
+  "version": "1.1.0",
+  "checks": [
+    {
+      "name": "Cold-start animation renders all 13 layers",
+      "ok": true,
+      "detail": "{\"layers\":13,\"visible\":true}"
+    },
+    {
+      "name": "Splash clears after startup",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Content scrollbars hidden but scrolling enabled",
+      "ok": true,
+      "detail": "{\"scrollbarWidth\":\"none\",\"overflowY\":\"auto\"}"
+    },
+    {
+      "name": "Mini-player progress is always present and seekable",
+      "ok": true,
+      "detail": "{\"max\":268.164875,\"value\":0,\"disabled\":false}"
+    },
+    {
+      "name": "Seeking from the mini-player moves playback",
+      "ok": true,
+      "detail": "{\"value\":93.5,\"text\":\"1:34 of 4:28\"}"
+    },
+    {
+      "name": "Now Playing defaults to Queue",
+      "ok": true,
+      "detail": "true/50"
+    },
+    {
+      "name": "Lyrics tab switches without stopping playback",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "In-player quality selector persists and reloads",
+      "ok": true,
+      "detail": "high"
+    },
+    {
+      "name": "Media Session mirrors the single playback source",
+      "ok": true,
+      "detail": "{\"title\":\"Kesariya (From \\\"Brahmastra\\\")\",\"state\":\"playing\"}"
+    },
+    {
+      "name": "Jump back in is a horizontal real-history carousel",
+      "ok": true,
+      "detail": "{\"cards\":1,\"overflowX\":\"auto\",\"overflowY\":\"hidden\"}"
+    },
+    {
+      "name": "Individual search history removal is persisted",
+      "ok": true,
+      "detail": "1 -> 0"
+    },
+    {
+      "name": "EQ enables and a preset applies a real low-frequency curve",
+      "ok": true,
+      "detail": "{\"enabled\":true,\"bands\":[9,8,6,3,0,0,0,0,0,0],\"preamp\":-2,\"bassBoost\":false}"
+    },
+    {
+      "name": "Bass boost toggle persists",
+      "ok": true,
+      "detail": "true"
+    },
+    {
+      "name": "Translation target language selection persists",
+      "ok": true,
+      "detail": "HI"
+    },
+    {
+      "name": "Keyless translation surfaces a real setup error",
+      "ok": true,
+      "detail": "Error invoking remote method 'lyrics:translate': Error: Configure a DeepL API key or an OpenAI-compatible endpoint in Settings → Lyrics."
+    },
+    {
+      "name": "No unexpected page or console errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "issues": []
+}

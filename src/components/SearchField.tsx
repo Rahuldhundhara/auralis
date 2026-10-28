@@ -63,6 +63,7 @@ export function SearchField({
     }
     if (!open) return;
     let cancelled = false;
+    setSuggestions([]);
     setLoading(true);
     const timer = window.setTimeout(async () => {
       try {

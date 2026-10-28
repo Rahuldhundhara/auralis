@@ -84,6 +84,12 @@ export const libraryService = {
     return commit({ ...data, searchHistory: [] });
   },
 
+  removeSearchHistory(query: string): LibraryData {
+    const value = clip(query, 120).toLowerCase();
+    const data = libraryStore.get();
+    return commit({ ...data, searchHistory: data.searchHistory.filter((item) => item.toLowerCase() !== value) });
+  },
+
   saveAlbum(album: Card): LibraryData {
     const data = libraryStore.get();
     if (data.savedAlbums.some((item) => item.id === album.id)) return data;
@@ -202,6 +208,33 @@ export const libraryService = {
 
   getDownloads(): DownloadItem[] {
     return libraryStore.get().downloads;
+  },
+
+  /** Repairs downloads left in-flight by a crash or a moved file. */
+  reconcileDownloads(): LibraryData {
+    const data = libraryStore.get();
+    let changed = false;
+    const downloads = data.downloads.map((item) => {
+      if (item.status === 'downloading') {
+        changed = true;
+        return {
+          ...item,
+          status: 'error' as const,
+          error: 'The download was interrupted when Auralis closed. Start it again.',
+        };
+      }
+      if (item.status === 'done' && item.path && !fs.existsSync(item.path)) {
+        changed = true;
+        return {
+          ...item,
+          status: 'error' as const,
+          path: '',
+          error: 'The downloaded file is no longer at this path. Download it again.',
+        };
+      }
+      return item;
+    });
+    return changed ? commit({ ...data, downloads }) : data;
   },
 
   removeDownload(id: string, deleteFile = true): DownloadItem[] {

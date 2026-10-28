@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]) {
+export function useAsync<T>(loader: () => Promise<T>, deps: unknown[], options?: { resetOnChange?: boolean }) {
   const [data, setData] = useState<T | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
@@ -12,6 +12,7 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]) {
     let cancelled = false;
     setLoading(true);
     setError(undefined);
+    if (options?.resetOnChange) setData(undefined);
     loaderRef
       .current()
       .then((result) => {

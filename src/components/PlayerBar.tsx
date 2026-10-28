@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ChevronUp,
+  Gauge,
   Heart,
   ListMusic,
   Loader2,
@@ -18,7 +19,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type { Track } from '@shared/types';
+import type { Settings, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
@@ -26,6 +27,37 @@ import { useUiStore, type MenuItem } from '../stores/ui';
 import { artistsLine, formatDuration } from '../lib/format';
 import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton, Range } from './primitives';
+
+export function MiniProgress() {
+  const position = usePlayerStore((state) => state.position);
+  const duration = usePlayerStore((state) => state.duration);
+  const playing = usePlayerStore((state) => state.playing);
+  const currentId = usePlayerStore((state) => state.current?.id);
+  const seek = usePlayerStore((state) => state.seek);
+  const knownDuration = Number.isFinite(duration) && duration > 0;
+  const percent = knownDuration ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0;
+
+  return (
+    <div
+      className={`mini-progress ${playing ? 'is-playing' : ''}`}
+      role="group"
+      aria-label="Song progress"
+    >
+      <div key={currentId || 'none'} className="mini-progress-fill" style={{ width: `${percent}%` }} />
+      <Range
+        className="mini-progress-range"
+        min={0}
+        max={knownDuration ? duration : 1}
+        step={0.25}
+        value={knownDuration ? Math.min(position, duration) : 0}
+        onValueChange={seek}
+        disabled={!knownDuration}
+        aria-label="Song progress"
+        aria-valuetext={`${formatDuration(position)} of ${knownDuration ? formatDuration(duration) : 'unknown duration'}`}
+      />
+    </div>
+  );
+}
 
 export function SeekBar({ compact = false }: { compact?: boolean }) {
   const position = usePlayerStore((state) => state.position);
@@ -167,6 +199,43 @@ function SleepTimerButton() {
   );
 }
 
+const QUALITY_LABELS: Record<Settings['audioQuality'], string> = {
+  auto: 'Automatic',
+  best: 'Best available',
+  high: 'High (256 kbps)',
+  medium: 'Medium (128 kbps)',
+  low: 'Data saver',
+};
+
+function QualityButton() {
+  const quality = useAppStore((state) => state.settings.audioQuality);
+  const selectQuality = async (value: Settings['audioQuality']) => {
+    await useAppStore.getState().updateSettings({ audioQuality: value });
+    const current = usePlayerStore.getState().current;
+    if (!current) return;
+    await window.auralis.player.invalidate(current.id).catch(() => {});
+    usePlayerStore.getState().reloadCurrent();
+  };
+  const openMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const items: MenuItem[] = (Object.keys(QUALITY_LABELS) as Array<Settings['audioQuality']>).map((value) => ({
+      label: QUALITY_LABELS[value],
+      checked: quality === value,
+      onClick: () => void selectQuality(value),
+    }));
+    useUiStore.getState().openMenu(event.clientX, event.clientY, items);
+  };
+  return (
+    <IconButton
+      label={`Streaming quality: ${QUALITY_LABELS[quality] || quality}`}
+      size="sm"
+      active={quality !== 'auto'}
+      onClick={openMenu}
+    >
+      <Gauge size={18} />
+    </IconButton>
+  );
+}
+
 export function PlayerTrackInfo({ track, compact = false }: { track: Track; compact?: boolean }) {
   const liked = useAppStore((state) => state.library.liked.some((item) => item.id === track.id));
   const toggleLike = useAppStore((state) => state.toggleLike);
@@ -255,6 +324,7 @@ export function PlayerBar() {
 
   return (
     <footer className="player-bar">
+      <MiniProgress />
       <div className="player-left">
         <PlayerTrackInfo track={current} />
       </div>
@@ -263,14 +333,15 @@ export function PlayerBar() {
         <SeekBar />
       </div>
       <div className="player-right">
+        <QualityButton />
         <SleepTimerButton />
         <IconButton
           label="Lyrics"
           size="sm"
           active={nowPlayingOpen && nowPlayingTab === 'lyrics'}
           onClick={() => {
-            setNowPlayingTab('lyrics');
             setNowPlayingOpen(true);
+            setNowPlayingTab('lyrics');
           }}
         >
           <MicVocal size={18} />

@@ -88,7 +88,9 @@ try {
   await row.hover();
   await row.locator('.track-more').click();
   await page.waitForSelector('.context-menu', { timeout: 10000 });
-  await page.locator('.context-menu .menu-item', { hasText: 'Download' }).first().click();
+  // The menu re-renders as the pointer crosses items; dispatch the click on the
+  // resolved button so Playwright's stability check cannot race the animation.
+  await page.locator('.context-menu .menu-item', { hasText: 'Download' }).first().dispatchEvent('click');
   let download = null;
   for (let attempt = 0; attempt < 60; attempt++) {
     await page.waitForTimeout(2000);

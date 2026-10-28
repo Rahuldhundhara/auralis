@@ -70,8 +70,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   queueOpen: false,
   setQueueOpen: (value) => set({ queueOpen: value }),
   nowPlayingOpen: false,
-  setNowPlayingOpen: (value) => set({ nowPlayingOpen: value }),
-  nowPlayingTab: 'lyrics',
+  setNowPlayingOpen: (value) =>
+    set(value ? { nowPlayingOpen: true, nowPlayingTab: 'queue' } : { nowPlayingOpen: false }),
+  nowPlayingTab: 'queue',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
 
   toasts: [],

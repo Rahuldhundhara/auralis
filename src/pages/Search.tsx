@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Play, Search, Sparkles, X } from 'lucide-react';
-import type { Card, SearchResults, Shelf as ShelfType } from '@shared/types';
+import type { Card, SearchResults, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
@@ -54,6 +54,7 @@ function TopResult({ card }: { card: Card }) {
 
 function SearchLanding() {
   const history = useAppStore((state) => state.library.searchHistory);
+  const removeSearchHistory = useAppStore((state) => state.removeSearchHistory);
   const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
   const navigate = useNavStore((state) => state.navigate);
   return (
@@ -76,10 +77,21 @@ function SearchLanding() {
           </div>
           <div className="search-history-chips">
             {history.map((query) => (
-              <button type="button" key={query} className="search-history-chip" onClick={() => navigate({ page: 'search', q: query })}>
-                <Clock3 size={15} />
-                {query}
-              </button>
+              <span className="search-history-item" key={query}>
+                <button type="button" className="search-history-chip" onClick={() => navigate({ page: 'search', q: query })}>
+                  <Clock3 size={15} />
+                  {query}
+                </button>
+                <button
+                  type="button"
+                  className="search-history-remove"
+                  aria-label={`Remove “${query}” from search history`}
+                  title={`Remove “${query}”`}
+                  onClick={() => void removeSearchHistory(query)}
+                >
+                  <X size={12} />
+                </button>
+              </span>
             ))}
           </div>
         </section>
@@ -103,77 +115,80 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const [extra, setExtra] = useState<SearchResults | null>(null);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | undefined>();
+  const [loadMoreEnded, setLoadMoreEnded] = useState(false);
   const addHistory = useAppStore((state) => state.addSearchHistory);
   const player = usePlayerStore();
   const key = FILTER_KEYS[filter];
+  const requestToken = useRef(0);
+  const loadMoreBusy = useRef(false);
+  const historyQuery = useRef('');
   const { data, loading, error, reload } = useAsync<SearchResults>(
-    () => (query ? window.auralis.yt.search(query, key) : Promise.resolve({ songs: [], videos: [], albums: [], artists: [], playlists: [], podcasts: [], episodes: [], profiles: [] })),
+    () => (query ? window.auralis.yt.search(query, key) : Promise.resolve(emptySearchResults())),
     [query, key],
+    { resetOnChange: true },
   );
 
   useEffect(() => {
-    if (query) void addHistory(query);
+    if (query && historyQuery.current !== query) {
+      historyQuery.current = query;
+      void addHistory(query);
+    }
+    requestToken.current += 1;
+    loadMoreBusy.current = false;
     setExtra(null);
     setContinuation(undefined);
-  }, [query]);
-
-  useEffect(() => {
-    setExtra(null);
-    setContinuation(undefined);
-  }, [filter]);
+    setLoadingMore(false);
+    setLoadMoreError(undefined);
+    setLoadMoreEnded(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, key]);
 
   const results = useMemo(() => {
     if (!data) return undefined;
-    if (!extra) return data;
-    return {
-      ...data,
-      songs: [...data.songs, ...extra.songs],
-      videos: [...data.videos, ...extra.videos],
-      albums: dedupeCards([...data.albums, ...extra.albums]),
-      artists: dedupeCards([...data.artists, ...extra.artists]),
-      playlists: dedupeCards([...data.playlists, ...extra.playlists]),
-      podcasts: dedupeCards([...data.podcasts, ...extra.podcasts]),
-      episodes: [...data.episodes, ...extra.episodes],
-    };
+    return extra ? mergeSearchResults(data, extra) : dedupeSearchResults(data);
   }, [data, extra]);
 
   if (!query) return <SearchLanding />;
 
   const loadMore = async () => {
     const next = continuation || data?.continuation;
-    if (!next) return;
+    if (!next || loadMoreBusy.current || loadMoreEnded) return;
+    const token = requestToken.current;
+    loadMoreBusy.current = true;
     setLoadingMore(true);
+    setLoadMoreError(undefined);
     try {
       const page = await window.auralis.yt.search(query, key, next);
-      setExtra((current) => {
-        if (!current) return page;
-        return {
-          ...current,
-          songs: [...current.songs, ...page.songs],
-          videos: [...current.videos, ...page.videos],
-          albums: dedupeCards([...current.albums, ...page.albums]),
-          artists: dedupeCards([...current.artists, ...page.artists]),
-          playlists: dedupeCards([...current.playlists, ...page.playlists]),
-          podcasts: dedupeCards([...current.podcasts, ...page.podcasts]),
-          episodes: [...current.episodes, ...page.episodes],
-        };
-      });
+      if (token !== requestToken.current) return;
+      const merged = extra ? mergeSearchResults(extra, page) : dedupeSearchResults(page);
+      setExtra(merged);
       setContinuation(page.continuation);
+      const currentCount = results ? searchResultCount(results) : 0;
+      const mergedCount = results ? searchResultCount(mergeSearchResults(results, page)) : searchResultCount(merged);
+      if (!page.continuation || page.continuation === next || mergedCount <= currentCount) {
+        setLoadMoreEnded(true);
+      }
+    } catch (err: any) {
+      if (token === requestToken.current) {
+        setLoadMoreError(err?.message || 'Could not load more results.');
+      }
     } finally {
-      setLoadingMore(false);
+      if (token === requestToken.current) {
+        loadMoreBusy.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
-  const hasAny = results
-    ? results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length > 0
-    : false;
+  const hasAny = results ? searchResultCount(results) > 0 : false;
 
   return (
     <div className="page search-page">
       <header className="page-hero search-hero">
         <span className="eyebrow">Search results</span>
         <h1>{query}</h1>
-        <p>{results ? `${results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length} results` : 'Searching YouTube Music…'}</p>
+        <p>{results ? `${searchResultCount(results)} results` : 'Searching YouTube Music…'}</p>
       </header>
 
       <Chips items={[...FILTERS]} selected={filter} onSelect={setFilter} />
@@ -246,7 +261,14 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
             ) : null
           ) : null}
 
-          {data?.continuation || continuation ? (
+          {loadMoreError ? (
+            <div className="load-more-row load-more-error" role="alert">
+              <span>{loadMoreError}</span>
+              <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+                Try again
+              </Button>
+            </div>
+          ) : (data?.continuation || continuation) && !loadMoreEnded ? (
             <div className="load-more-row">
               <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
                 {loadingMore ? 'Loading…' : 'Load more'}
@@ -267,4 +289,69 @@ function dedupeCards(cards: Card[]): Card[] {
     seen.add(key);
     return true;
   });
+}
+
+function dedupeTracks(tracks: Track[]): Track[] {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (!track?.id || seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+}
+
+function emptySearchResults(): SearchResults {
+  return {
+    songs: [],
+    videos: [],
+    albums: [],
+    artists: [],
+    playlists: [],
+    podcasts: [],
+    episodes: [],
+    profiles: [],
+  };
+}
+
+function dedupeSearchResults(results: SearchResults): SearchResults {
+  return {
+    ...results,
+    songs: dedupeTracks(results.songs),
+    videos: dedupeTracks(results.videos),
+    episodes: dedupeTracks(results.episodes),
+    albums: dedupeCards(results.albums),
+    artists: dedupeCards(results.artists),
+    playlists: dedupeCards(results.playlists),
+    podcasts: dedupeCards(results.podcasts),
+    profiles: dedupeCards(results.profiles || []),
+  };
+}
+
+function mergeSearchResults(base: SearchResults, next: SearchResults): SearchResults {
+  return dedupeSearchResults({
+    ...base,
+    top: base.top || next.top,
+    songs: [...base.songs, ...next.songs],
+    videos: [...base.videos, ...next.videos],
+    episodes: [...base.episodes, ...next.episodes],
+    albums: [...base.albums, ...next.albums],
+    artists: [...base.artists, ...next.artists],
+    playlists: [...base.playlists, ...next.playlists],
+    podcasts: [...base.podcasts, ...next.podcasts],
+    profiles: [...(base.profiles || []), ...(next.profiles || [])],
+    continuation: next.continuation,
+  });
+}
+
+function searchResultCount(results: SearchResults): number {
+  return (
+    results.songs.length +
+    results.videos.length +
+    results.albums.length +
+    results.artists.length +
+    results.playlists.length +
+    results.podcasts.length +
+    results.episodes.length +
+    (results.profiles?.length || 0)
+  );
 }

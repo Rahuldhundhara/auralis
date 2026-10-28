@@ -1,15 +1,15 @@
 # Quality assurance record
 
-**Build:** Auralis 1.0.2
+**Build:** Auralis 1.1.0
 **Platform:** Windows 11 x64 (build 10.0.26300)
 **Electron:** 45.0.0
 **Node:** 24.19.0
-**Test date:** 25 October 2026
+**Test date:** 28 October 2026
 **Live catalogue:** YouTube Music anonymous session
 
-> **Release note:** 1.0.3 is a focused fix for the Now Playing header. This document records the 1.0.2 feature baseline; the 1.0.3 patch was verified with typecheck, production build, packaged launch, portable launch and a focused Now Playing regression test.
+> **1.1.0 scope:** cold-start animation, dedicated search, Queue-first Now Playing, lyrics translation UI, mini-player progress, streaming-quality reload, EQ presets/bass boost, Jump Back In and hardened media handling. The full 21-check suite was re-run on 1.1.0; the 1.0.2 results remain the baseline for older evidence.
 >
-> **Build paths:** This record uses the old `release/` layout. Current builds are written to `release/<version>/`.
+> **Build paths:** Builds are written to `release/<version>/`; this record uses `release/1.1.0/`.
 
 ## Summary
 
@@ -17,6 +17,8 @@
 | --- | --- |
 | TypeScript typecheck | Pass |
 | Production renderer build | Pass |
+| 1.1.0 focused upgrade UI QA | Pass (16/16 checks) |
+| 1.1.0 packaged smoke test | Pass |
 | Branding | Pass (supplied Auralis logo in app, installer, portable, title bar, splash, tray and README) |
 | Full end-to-end UI QA | Pass (21/21 checks) |
 | Sleep timer | Pass |
@@ -30,9 +32,9 @@
 | Moods & genres | Pass (49 tiles) |
 | Podcast episodes | Pass (20 episodes) |
 | Themes, EQ, settings | Pass |
-| Browser/page errors during final pass | None |
+| Browser/page errors during final pass | None from app code; one remote artwork 404 fell back |
 
-The final full-app pass and the packaged smoke test both produced no `pageerror` or console-error entries. The QA watcher ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
+The final full-app pass, focused upgrade pass and packaged smoke test produced no page errors. The full pass logged one remote artwork 404 from `yt3.googleusercontent.com`; the image simply fell back, and no app code failed. The QA watcher ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
 
 ## Test environment
 
@@ -40,8 +42,8 @@ Tests were run against the real YouTube Music service, not fixtures. Each Playwr
 
 | Setting | Value |
 | --- | --- |
-| App build | `release/win-unpacked/Auralis.exe` |
-| Packaged app version | `1.0.2` |
+| App build | `release/1.1.0/win-unpacked/Auralis.exe` |
+| Packaged app version | `1.1.0` |
 | Bundled yt-dlp | `2026.10.21` |
 | Bundled FFmpeg | `9.0.2-essentials_build` |
 | DB / accounts | None; local JSON stores |
@@ -60,6 +62,7 @@ Tests were run against the real YouTube Music service, not fixtures. Each Playwr
 | `node scripts/qa-full.mjs` | 21 live end-to-end checks: home, Explore, search filters, playback, likes, related-song radio and queue-end autoplay, detail pages, queue edit, sleep timer, local playlists, download/offline play, settings, lyrics, now playing, history, downloads page and restart persistence |
 | `node scripts/qa-sleep.mjs` | Focused sleep-timer countdown, simulated expiry, toast, end-of-track option and off |
 | `node scripts/qa-packaged.mjs` | Packaged EXE launch, app info, playback, download, moods, podcast API |
+| `node scripts/qa-upgrade.mjs` | 1.1.0 focused upgrade checks: splash layers, hidden scrollbars, mini-player seek, Queue-first panel, lyrics view switch, quality reload, Media Session, Jump Back In, search-history removal, EQ/bass boost, translation language and keyless setup error |
 | `node scripts/qa-portable-cdp.mjs [exe]` | Starts a portable or installed EXE, connects over CDP, verifies home and bundled tools, then cleans up its own profile |
 | `node scripts/qa-download-debug.mjs` | Focused download progress and file verification |
 
@@ -71,18 +74,18 @@ Run the packaged check after `npm run dist`:
 node scripts/qa-packaged.mjs
 ```
 
-## Packaged EXE — final result
+## Packaged EXE — final 1.1.0 result
 
-Launch: `release/win-unpacked/Auralis.exe` built from the final source, with the app's bundled binaries and icon resources.
+Launch: `release/1.1.0/win-unpacked/Auralis.exe` built from the final source, with the app's bundled binaries and icon resources.
 
 ```text
-[packaged info] {"name":"Auralis","version":"1.0.2","electron":"45.0.0",
+[packaged info] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
   "downloadsDir":"%USERPROFILE%\\Music\\Auralis"}
-[packaged home] {"shelves":6,"cards":122}
+[packaged home] {"shelves":6,"cards":112}
 [packaged playback] {"title":"Kesariya (From \"Brahmastra\")",
   "playerTitle":"Kesariya (From \"Brahmastra\")",
-  "playerArtist":"Arijit Singh","playerTime":"0:04",
+  "playerArtist":"Arijit Singh","playerTime":"0:07",
   "playerError":"","playing":true}
 [packaged radio] {"rows":50,"radio":1}
 [packaged download] {"status":"done",
@@ -92,40 +95,62 @@ Launch: `release/win-unpacked/Auralis.exe` built from the final source, with the
 [packaged issues] []
 ```
 
-The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:04 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 49 navigation tiles.
+The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:07 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 49 navigation tiles.
 
-## Portable EXE — final result
+## Focused 1.1.0 upgrade result
+
+`node scripts/qa-upgrade.mjs` launched the packaged 1.1.0 EXE with a fresh profile and passed all 16 checks:
+
+| Check | Observed |
+| --- | --- |
+| Cold-start animation | 13 layers rendered, then the splash cleared into Home |
+| Hidden scrollbars | `scrollbar-width: none`, `overflow-y: auto`; scrolling stayed enabled |
+| Mini-player progress | Enabled rail with `max=268.16`, then a seek to 1:34 of 4:28 |
+| Queue-first Now Playing | Queue tab selected with 50 rows |
+| Lyrics view switch | Playback still reported Pause (playing) |
+| Streaming quality | High (256 kbps) persisted and playback resumed |
+| Media Session | Title matched the player bar and state was `playing` |
+| Jump Back In | Real-history carousel, `overflow-x: auto` |
+| Search history removal | 1 → 0 entries, confirmed through a fresh `library.get()` |
+| EQ + bass boost | Equalizer enabled, preset curve `[9,8,6,3,0,…]`, bass boost persisted |
+| Translation language | Hindi (HI) persisted in settings |
+| Keyless translation | Real setup error from the backend, no fake translation |
+
+Machine-readable output: [`qa/upgrade-results.json`](../qa/upgrade-results.json). Screenshots: [`qa/upgrade-splash.png`](../qa/upgrade-splash.png) and [`qa/upgrade-settings.png`](../qa/upgrade-settings.png).
+
+## Portable EXE — final 1.1.0 result
 
 The portable build was started directly, allowed to finish unpacking, then inspected over the Chromium debugging protocol:
 
 ```text
-[portable] {"name":"Auralis","version":"1.0.2","electron":"45.0.0",
+[portable] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
   "shelves":6,"cards":122}
 ```
 
 This confirms that the portable stub unpacks and launches the same app, the home feed loads, and the bundled yt-dlp/FFmpeg resources are present. The QA script closes the app through its own API and then terminates only processes belonging to its isolated test profile. A follow-up process check confirmed that no Auralis processes were left running.
 
-## Silent install — final result
+## Silent install — final 1.1.0 result
 
-The 1.0.2 NSIS installer was installed silently into a temporary directory:
+The 1.1.0 NSIS installer was installed silently into a temporary directory:
 
 ```text
 installer exit: 0
 Auralis.exe: present
 Uninstall Auralis.exe: present
 resources/bin/yt-dlp.exe, ffmpeg.exe: present
+registry: Auralis [e5728c7e-3e5e-5138-8034-c30069bad0ea]
 ```
 
 The installed executable was then launched with a separate test profile:
 
 ```text
-[installed] {"name":"Auralis","version":"1.0.2","electron":"45.0.0",
+[installed] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
-  "shelves":6,"cards":122}
+  "shelves":6,"cards":112}
 ```
 
-The installed app was closed through its API and uninstalled silently. The uninstaller exited 0, the temporary installation folder was removed, and no Auralis registry entry, shortcut or process remained.
+The installed app was closed through its API and uninstalled silently. The uninstaller exited 0, the temporary installation folder was removed, and no Auralis registry entry remained.
 
 ## Feature checks
 
@@ -140,7 +165,7 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 | Songs filter | Live songs with artists and durations | Pass |
 | Explore | New releases, popular episodes, trending, videos | Pass |
 | Charts | Video, language and artist charts | Pass |
-| New releases | Fresh album grid | 133 live items |
+| New releases | Fresh album grid | 134 live items |
 | Moods & genres | Mood and genre navigation | 49 tiles across two shelves |
 | Mood category | Opens a browse page | "Chill" loaded 13 shelves |
 | Album detail | Header, tracks, related shelves | Pass |
@@ -195,12 +220,12 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 | --- | --- | --- |
 | Main/preload bundles | Written to `dist-electron` | Pass |
 | Renderer | Written to `dist` | Pass |
-| `app.asar` | Contains app code | 2.6 MB |
+| `app.asar` | Contains app code | 3,756,774 bytes |
 | Icons | Present in packaged resources and match source | `icon.png`, `tray.png` |
 | Executable icon | Supplied Auralis mark embedded | 32x32 icon extracted from EXE and installer |
 | Binaries | Present in packaged resources | `bin/yt-dlp.exe`, `bin/ffmpeg.exe` |
-| NSIS installer | Produces Setup EXE | 158,300,663 bytes |
-| Portable | Produces single EXE | 145,354,641 bytes |
+| NSIS installer | Produces Setup EXE | 158,842,789 bytes |
+| Portable | Produces single EXE | 158,595,674 bytes |
 | Packaged launch | Home renders | Pass |
 | Packaged playback | Audio from bundled tools | Pass |
 | Packaged download | File via bundled tools | Pass |
@@ -217,17 +242,17 @@ The supplied Auralis artwork is the only logo used in the release:
 - `resources/logo.png` is the full green `AURALIS` lockup used by the README.
 - `resources/icon.png` is the 512px black app tile built from the supplied green "A" play mark and soundwave arcs; `resources/icon-256.png` and `public/icon.png` are derived from it.
 - `resources/tray.png` is the transparent mark used by the Windows tray.
-- The packaged `resources/icon.png` and `resources/tray.png` hashes match the source files. The 32x32 icon extracted from `Auralis.exe`, `Auralis-Setup-1.0.2.exe` and `Auralis-Portable-1.0.2.exe` is the supplied mark.
+- The packaged `resources/icon.png` and `resources/tray.png` hashes match the source files. The 32x32 icon extracted from `Auralis.exe`, `Auralis-Setup-1.1.0.exe` and `Auralis-Portable-1.1.0.exe` is the supplied mark.
 - Branding asset hashes: `icon.png` `3E9F4FA978D9E9FE6971325EAED16D03A0A1728A7A4F519D32E12332C41F7279`; `tray.png` `6445D58E3336166CAAA5EAD5CD5BBD8ABF425DB9E4AC647F61ACFA66EBA868AA`.
 
 ## Build artifacts
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `Auralis-Setup-1.0.2.exe` | 158,300,663 bytes | `07CCAFBF5906D32C35125CCB405600A53F30C57E43B32DEC4DA56A81BA53739E` |
-| `Auralis-Portable-1.0.2.exe` | 145,354,641 bytes | `FDEAF92AA87E596027D11CA2B33F004CF511269F42D035350504A95A6BD2EDC0` |
+| `Auralis-Setup-1.1.0.exe` | 158,842,789 bytes | `a871786bb46c57c97f44113d924ff2a91dfe6d9d14e5e750a0fc6f2a9f3f5d20` |
+| `Auralis-Portable-1.1.0.exe` | 158,595,674 bytes | `1672fc0166b259f01c3979eb84331e8bdef33bd041e078dbce7c0f38ea9d016c` |
 
-The same hashes are written to `release/SHA256SUMS.txt`.
+The same hashes are written to `release/1.1.0/SHA256SUMS.txt`.
 
 ## Known limitations and unverified paths
 
@@ -235,37 +260,41 @@ These are not mocked or faked; they are implemented calls that require credentia
 
 | Path | Why it was not live-verified | What to check manually |
 | --- | --- | --- |
-| Google sign-in | Requires the user's Google account and may be challenged by Google | Settings â†’ Account â†’ Sign in; confirm name/avatar, then open Library â†’ YouTube Music |
+| Google sign-in | Requires the user's Google account and may be challenged by Google | Settings → Account → Sign in; confirm name/avatar, then open Library → YouTube Music |
 | YouTube Music likes/ratings | Needs a signed-in account | Like a song, check music.youtube.com; dislike and clear rating |
 | Remote playlist editing | Needs a signed-in account and a playlist owned by the user | Create, rename, add, remove and delete a playlist |
 | Subscribe/unsubscribe | Needs a signed-in account | Follow an artist and check YouTube Music |
-| Cloud library and history | Needs a signed-in account | Open Library â†’ YouTube Music and History |
+| Cloud library and history | Needs a signed-in account | Open Library → YouTube Music and History |
 | Last.fm | Needs the user's API key, secret and authorisation | Connect, play a track past 50%, check the Last.fm profile |
 | Discord Rich Presence | Needs a Discord application id and running client | Enable, play a track, inspect the profile activity |
-| Lyrics translation | Needs an OpenAI or DeepL key | Enable auto-translate and open a synced song |
+| Lyrics translation | Needs an OpenAI or DeepL key | The keyless setup error and target-language persistence were verified; enter a key, run Test translation, then open a synced song |
 | Shazam recognition | Needs a known audio sample or microphone input | Use Identify on a track with a clean intro |
-| YouTube captions fallback | The official transcript endpoint returns HTTP 400; needs a captioned video | Play a video with captions and open Lyrics â†’ YouTube captions |
+| YouTube captions fallback | The official transcript endpoint returns HTTP 400; needs a captioned video | Play a video with captions and open Lyrics → YouTube captions |
 
 The transcript endpoint issue is external: YouTube Music returns HTTP 400 for that request shape. The yt-dlp VTT fallback is implemented and fails gracefully.
 
-### Features not implemented in 1.0.2
+### Features not implemented in 1.1.0
 
 These reference-client features have no working implementation in the current Windows build. They are listed here so the parity claim stays accurate; they are not hidden toggles or stubs.
 
-| Feature | Status | Why it is not in 1.0.2 |
+| Feature | Status | Why it is not in 1.1.0 |
 | --- | --- | --- |
+| Voice search | Not implemented | No speech-recognition engine or service is configured; the search bar is typed-only. |
+| Music video playback | Not implemented | The resolver and player are audio-only; video metadata is displayed but no video pipeline exists. |
+| Playlist migration / import | Not implemented | Public playlists can be opened and saved as a local copy, but importing arbitrary external playlists needs provider APIs or authorised export files. |
+| Encrypted app-private downloads | Not implemented | Downloads are plain M4A files in the chosen folder; app-private encrypted storage needs a storage/decryption redesign and a licensing review. |
+| Notification Like action | Not applicable | Windows Media Session exposes transport, metadata and position, but not a standard custom Like action. |
 | Skip silence | Not implemented | Requires silence detection and automatic seek on top of the single HTML5 audio pipeline. |
 | Crossfade | Not implemented | Overlapping two tracks needs a dual-audio mixer; Auralis uses one audio element. |
 | Independent pitch | Not implemented | Playback speed uses the browser's pitch-preserving rate; a separate pitch control is not exposed. |
-| Playlist import by URL | Not implemented | Public playlists can be opened and saved as a local copy from their detail page, but pasting an arbitrary playlist URL into the local library is not built. |
 | Listen Together | Not implemented | Needs a realtime relay service and a shared-session protocol; Auralis has no backend. |
 
 ## Manual account checklist
 
 Use a throwaway or personal test account, not shared credentials.
 
-1. **Settings â†’ Account â†’ Sign in** completes in the embedded window and the account name appears.
-2. **Library â†’ YouTube Music** lists cloud playlists and liked music.
+1. **Settings → Account → Sign in** completes in the embedded window and the account name appears.
+2. **Library → YouTube Music** lists cloud playlists and liked music.
 3. Like a song in Auralis, then refresh music.youtube.com and confirm the like.
 4. Dislike a song and confirm the rating on the website; clear it again.
 5. Create a playlist in Auralis from a track menu; confirm it appears on YouTube Music.
@@ -281,6 +310,8 @@ Screenshots are stored in `qa/` and selected product screenshots in `docs/screen
 
 | Evidence | File |
 | --- | --- |
+| Cold-start animation | `qa/upgrade-splash.png` |
+| 1.1.0 settings/EQ/translation | `qa/upgrade-settings.png` |
 | Packaged home | `qa/packaged-home.png` |
 | Packaged final state | `qa/packaged-final.png` |
 | Moods & genres | `qa/full/02-explore-moods.png`, `docs/screenshots/moods.png` |
@@ -300,6 +331,7 @@ npm run typecheck
 npm run build
 npm run dist
 node scripts/qa-packaged.mjs
+node scripts/qa-upgrade.mjs
 ```
 
 The packaged QA script creates its own temporary profile and download folder, so it does not touch your normal Auralis library, queue, account or downloads.

@@ -347,16 +347,97 @@ const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>
   Paxsenix: async () => null,
 };
 
+const TRANSLATION_LANGUAGE_NAMES: Record<string, string> = {
+  AR: 'Arabic',
+  DE: 'German',
+  EN: 'English',
+  ES: 'Spanish',
+  FR: 'French',
+  HI: 'Hindi',
+  IT: 'Italian',
+  JA: 'Japanese',
+  KO: 'Korean',
+  NL: 'Dutch',
+  PL: 'Polish',
+  PT: 'Portuguese',
+  RU: 'Russian',
+  TR: 'Turkish',
+  UK: 'Ukrainian',
+  ZH: 'Chinese',
+};
+
+function batchLines(lines: string[], maxItems: number, maxChars: number): string[][] {
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let chars = 0;
+  for (const line of lines) {
+    const size = line.length + 8;
+    if (current.length && (current.length >= maxItems || chars + size > maxChars)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(line);
+    chars += size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+function translationLanguage(language: string | undefined): string {
+  return (language || 'EN').trim().toUpperCase() || 'EN';
+}
+
+function errorDetail(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  try {
+    const json = JSON.parse(trimmed);
+    return String(json?.message || json?.error?.message || json?.detail || '').slice(0, 240);
+  } catch {
+    return trimmed.slice(0, 240);
+  }
+}
+
+function parseOpenAiTranslation(content: string, expected: number): string[] {
+  const cleaned = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!cleaned) throw new Error('The translation provider returned an empty response.');
+
+  let lines: string[] | null = null;
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) lines = parsed.map((item) => (typeof item === 'string' ? item : String(item ?? '')));
+  } catch {
+    // Some OpenAI-compatible endpoints ignore the JSON instruction.
+  }
+  if (!lines) {
+    lines = cleaned
+      .split('\n')
+      .map((line) => line.replace(/^\s*(?:\d+[.)]|[-•])\s+/, '').trim())
+      .filter((line, index, all) => line || (index > 0 && index < all.length - 1));
+  }
+  if (lines.length !== expected) {
+    throw new Error(
+      `The provider returned ${lines.length} translated lines for ${expected} lyric lines, so alignment was rejected.`,
+    );
+  }
+  return lines;
+}
+
 export class LyricsService {
   private cache = new Map<string, { at: number; result: LyricsResult | null }>();
 
-  async fetch(track: Track, providers?: string[]): Promise<LyricsResult | null> {
+  async fetch(track: Track, providers?: string[], force = false): Promise<LyricsResult | null> {
     const configured = providers?.length
       ? providers
       : settingsStore.get().lyricsProviders;
     const key = `${track.id}:${track.title}:${configured.join(',')}`;
     const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.at < 30 * 60_000) return cached.result;
+    if (!force && cached && Date.now() - cached.at < 30 * 60_000) return cached.result;
 
     for (const name of configured) {
       const provider = PROVIDERS[name];
@@ -379,53 +460,84 @@ export class LyricsService {
 
   async translate(lines: string[], targetLanguage?: string): Promise<TranslationResult> {
     const settings = settingsStore.get().translation;
-    const language = targetLanguage || settings.targetLanguage;
+    const language = translationLanguage(targetLanguage || settings.targetLanguage);
     const text = lines.join('\n');
     if (!text.trim()) return { lines: [], provider: settings.provider };
+
     if (settings.provider === 'deepl' && settings.deeplApiKey) {
       const endpoint = settings.deeplApiKey.endsWith(':fx')
         ? 'https://api-free.deepl.com/v2/translate'
         : 'https://api.deepl.com/v2/translate';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `DeepL-Auth-Key ${settings.deeplApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: lines, target_lang: language.toUpperCase() }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) throw new Error(`DeepL returned HTTP ${response.status}.`);
-      const json: any = await response.json();
-      return {
-        lines: (json.translations || []).map((t: any) => t.text),
-        provider: 'deepl',
-      };
+      const translated: string[] = [];
+      for (const batch of batchLines(lines, 45, 40_000)) {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `DeepL-Auth-Key ${settings.deeplApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ text: batch, target_lang: language }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (!response.ok) {
+          const detail = errorDetail(await response.text().catch(() => ''));
+          throw new Error(
+            `DeepL returned HTTP ${response.status}${detail ? `: ${detail}` : '.'} Target language ${language} may not be supported.`,
+          );
+        }
+        const json: any = await response.json();
+        const batchLinesOut = Array.isArray(json?.translations) ? json.translations.map((item: any) => String(item?.text ?? '')) : [];
+        if (batchLinesOut.length !== batch.length) {
+          throw new Error(`DeepL returned ${batchLinesOut.length} lines for a ${batch.length}-line batch.`);
+        }
+        translated.push(...batchLinesOut);
+      }
+      if (translated.length !== lines.length) {
+        throw new Error(`DeepL returned ${translated.length} lines for ${lines.length} lyric lines.`);
+      }
+      return { lines: translated, provider: 'deepl' };
     }
+
     if (settings.provider === 'openai' && settings.openaiApiKey) {
-      const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${settings.openaiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: settings.openaiModel || 'gpt-4o-mini',
-          temperature: 0.2,
-          messages: [
-            {
-              role: 'system',
-              content: `Translate each line to ${language}. Return only the translated lines, one per line, in the same order.`,
-            },
-            { role: 'user', content: text },
-          ],
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!response.ok) throw new Error(`OpenAI returned HTTP ${response.status}.`);
-      const json: any = await response.json();
-      const content = String(json?.choices?.[0]?.message?.content || '');
-      return { lines: content.split('\n'), provider: 'openai' };
+      const translated: string[] = [];
+      const languageName = TRANSLATION_LANGUAGE_NAMES[language] || language;
+      for (const batch of batchLines(lines, 40, 16_000)) {
+        const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${settings.openaiApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: settings.openaiModel || 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  `You are a professional lyric translator. Translate every string in the JSON array to ${languageName}. ` +
+                  `The input is an array of lyric lines. Return only a JSON array of exactly ${batch.length} translated strings, ` +
+                  'in the same order. Do not merge, split, add, or omit lines. Keep empty strings empty. Never add commentary.',
+              },
+              { role: 'user', content: JSON.stringify(batch) },
+            ],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!response.ok) {
+          const detail = errorDetail(await response.text().catch(() => ''));
+          throw new Error(
+            `The OpenAI-compatible endpoint returned HTTP ${response.status}${detail ? `: ${detail}` : '.'} Check the base URL, key, and model.`,
+          );
+        }
+        const json: any = await response.json();
+        const content = String(json?.choices?.[0]?.message?.content || '');
+        translated.push(...parseOpenAiTranslation(content, batch.length));
+      }
+      if (translated.length !== lines.length) {
+        throw new Error(`The provider returned ${translated.length} lines for ${lines.length} lyric lines.`);
+      }
+      return { lines: translated, provider: 'openai' };
     }
     throw new Error('Configure a DeepL API key or an OpenAI-compatible endpoint in Settings → Lyrics.');
   }

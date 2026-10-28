@@ -37,6 +37,8 @@ interface PlayerState {
   playTrack: (track: Track) => void;
   startRadio: (track: Track) => Promise<void>;
   playAt: (index: number) => void;
+  retryCurrent: () => void;
+  reloadCurrent: () => void;
   toggle: () => void;
   play: () => void;
   pause: () => void;
@@ -179,8 +181,9 @@ function applyDsp(settings: Settings) {
     preampNode.gain.setTargetAtTime(Math.pow(10, (settings.eq.enabled ? settings.eq.preamp : 0) / 20), audioContext.currentTime, 0.02);
   }
   eqNodes.forEach((filter, index) => {
-    const gain = settings.eq.enabled ? settings.eq.bands[index] || 0 : 0;
-    filter.gain.setTargetAtTime(gain, audioContext?.currentTime || 0, 0.03);
+    const boost = settings.eq.bassBoost ? [6, 4.5, 3, 1.5][index] || 0 : 0;
+    const gain = settings.eq.enabled ? (settings.eq.bands[index] || 0) + boost : 0;
+    filter.gain.setTargetAtTime(Math.max(-18, Math.min(18, gain)), audioContext?.currentTime || 0, 0.03);
   });
   if (compressorNode && audioContext) {
     const enabled = settings.normalize;
@@ -301,7 +304,16 @@ function attachAudioListeners() {
     const state = usePlayerStore.getState();
     finalizePlayback(true);
     if (state.sleepTimerEndOfTrack) {
-      usePlayerStore.setState({ sleepTimerEndOfTrack: false, sleepTimerEnd: undefined });
+      usePlayerStore.setState({
+        sleepTimerEndOfTrack: false,
+        sleepTimerEnd: undefined,
+        playing: false,
+        buffering: false,
+        loading: false,
+        position: state.duration || state.position,
+      });
+      updateMediaSession(state.current, false);
+      notifyDiscord();
       useUiStore.getState().toast('Sleep timer ended at the end of the track. Playback paused.', 'info');
       return;
     }
@@ -327,7 +339,7 @@ function attachAudioListeners() {
       window.setTimeout(() => {
         const current = usePlayerStore.getState();
         if (current.current?.id === track.id) {
-          current.playAt(current.index);
+          current.retryCurrent();
         }
       }, 700);
       return;
@@ -685,6 +697,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       persistNow();
     },
 
+    retryCurrent: () => {
+      const current = get().current;
+      if (!current) return;
+      void load(current, true, 0, true);
+      persistNow();
+    },
+
+    reloadCurrent: () => {
+      const state = get();
+      if (!state.current) return;
+      void load(state.current, true, state.position || 0, true);
+      persistNow();
+    },
+
     toggle: () => {
       const state = get();
       if (state.playing) {
@@ -737,6 +763,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           if (result === 'ended' || result === 'error') {
             set({ playing: false, position: state.duration || state.position });
             if (audio) audio.currentTime = 0;
+            updateMediaSession(get().current, false);
+            notifyDiscord();
             if (result === 'ended') useUiStore.getState().toast('The radio station has ended.');
             persistNow();
           }
@@ -759,6 +787,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           if (result === 'ended' || result === 'error') {
             set({ playing: false, position: state.duration || state.position });
             if (audio) audio.currentTime = 0;
+            updateMediaSession(get().current, false);
+            notifyDiscord();
             if (result === 'ended') useUiStore.getState().toast('No related songs were found.');
             persistNow();
           }
@@ -767,6 +797,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
       set({ playing: false, position: state.duration || state.position });
       if (audio) audio.currentTime = 0;
+      updateMediaSession(get().current, false);
+      notifyDiscord();
       persistNow();
     },
 
@@ -907,6 +939,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           radioContinuation: undefined,
           radioLoading: false,
         });
+        updateMediaSession(undefined, false);
+        notifyDiscord();
         persistNow();
         return;
       }

@@ -44,6 +44,7 @@ const api: AuralisApi = {
     removeFromPlaylist: (id, trackId) => invoke('library:remove-from-playlist', id, trackId),
     reorderPlaylist: (id, from, to) => invoke('library:reorder-playlist', id, from, to),
     addSearchHistory: (query) => invoke('library:add-search-history', query),
+    removeSearchHistory: (query) => invoke('library:remove-search-history', query),
     clearSearchHistory: () => invoke('library:clear-search-history'),
     clearRecent: () => invoke('library:clear-recent'),
     saveAlbum: (album) => invoke('library:save-album', album),
@@ -101,7 +102,7 @@ const api: AuralisApi = {
     ytdlpUpdate: () => invoke('player:ytdlp-update'),
   },
   lyrics: {
-    fetch: (track, providers) => invoke('lyrics:fetch', track, providers),
+    fetch: (track, providers, force) => invoke('lyrics:fetch', track, providers, force),
     translate: (lines, targetLanguage) => invoke('lyrics:translate', lines, targetLanguage),
   },
   lastfm: {

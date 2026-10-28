@@ -1,7 +1,7 @@
 {
   "name": "auralis",
   "productName": "Auralis",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Auralis - a desktop YouTube Music client for Windows",
   "author": "Auralis",
   "license": "GPL-3.0-or-later",
@@ -22,7 +22,7 @@
     "build": "npm run build:main && npm run build:renderer",
     "dist": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-builder --win portable",
-    "preview": "npm run build && electron .",
+    "preview": "npm run build && cross-env AURALIS_FORCE_PROD=1 electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "test:api": "tsx scripts/test-api.ts"
   },

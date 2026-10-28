@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Download,
@@ -109,6 +109,29 @@ export function NowPlaying() {
   const navigate = useNavStore((state) => state.navigate);
   const openDialog = useUiStore((state) => state.openDialog);
   const [artLoaded, setArtLoaded] = useState(false);
+  const dragStart = useRef<number | null>(null);
+
+  const tabIds = ['lyrics', 'queue', 'about'] as const;
+  const focusTab = (id: (typeof tabIds)[number]) => {
+    setTab(id);
+    document.getElementById(`np-tab-${id}`)?.focus();
+  };
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = tabIds.indexOf(tab);
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      focusTab(tabIds[(index + 1) % tabIds.length]);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      focusTab(tabIds[(index - 1 + tabIds.length) % tabIds.length]);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      focusTab(tabIds[0]);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      focusTab(tabIds[tabIds.length - 1]);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -133,7 +156,19 @@ export function NowPlaying() {
         style={current.thumbnail ? { backgroundImage: `url(${current.thumbnail})` } : undefined}
       />
       <div className="np-overlay" />
-      <header className="np-header">
+      <header
+        className="np-header"
+        onPointerDown={(event) => {
+          dragStart.current = event.clientY;
+        }}
+        onPointerUp={(event) => {
+          if (dragStart.current !== null && event.clientY - dragStart.current > 80) setOpen(false);
+          dragStart.current = null;
+        }}
+        onPointerCancel={() => {
+          dragStart.current = null;
+        }}
+      >
         <IconButton label="Close now playing" size="md" onClick={() => setOpen(false)}>
           <ChevronDown size={22} />
         </IconButton>
@@ -239,18 +274,50 @@ export function NowPlaying() {
         </section>
 
         <section className="np-right">
-          <div className="np-tabs" role="tablist">
-            <button type="button" className={tab === 'lyrics' ? 'is-active' : ''} onClick={() => setTab('lyrics')}>
+          <div className="np-tabs" role="tablist" aria-label="Now playing panels" onKeyDown={onTabKeyDown}>
+            <button
+              type="button"
+              role="tab"
+              id="np-tab-lyrics"
+              aria-selected={tab === 'lyrics'}
+              aria-controls="np-tabpanel-lyrics"
+              tabIndex={tab === 'lyrics' ? 0 : -1}
+              className={tab === 'lyrics' ? 'is-active' : ''}
+              onClick={() => setTab('lyrics')}
+            >
               <MicVocal size={16} /> Lyrics
             </button>
-            <button type="button" className={tab === 'queue' ? 'is-active' : ''} onClick={() => setTab('queue')}>
+            <button
+              type="button"
+              role="tab"
+              id="np-tab-queue"
+              aria-selected={tab === 'queue'}
+              aria-controls="np-tabpanel-queue"
+              tabIndex={tab === 'queue' ? 0 : -1}
+              className={tab === 'queue' ? 'is-active' : ''}
+              onClick={() => setTab('queue')}
+            >
               <ListMusic size={16} /> Queue <span className="np-tab-count">{Math.max(0, queue.length - index - 1)}</span>
             </button>
-            <button type="button" className={tab === 'about' ? 'is-active' : ''} onClick={() => setTab('about')}>
+            <button
+              type="button"
+              role="tab"
+              id="np-tab-about"
+              aria-selected={tab === 'about'}
+              aria-controls="np-tabpanel-about"
+              tabIndex={tab === 'about' ? 0 : -1}
+              className={tab === 'about' ? 'is-active' : ''}
+              onClick={() => setTab('about')}
+            >
               <Info size={16} /> Details
             </button>
           </div>
-          <div className="np-panel">
+          <div
+            className="np-panel"
+            role="tabpanel"
+            id={`np-tabpanel-${tab}`}
+            aria-labelledby={`np-tab-${tab}`}
+          >
             {tab === 'lyrics' ? <LyricsPanel track={current} active /> : null}
             {tab === 'queue' ? <QueueList compact /> : null}
             {tab === 'about' ? <NowPlayingAbout /> : null}

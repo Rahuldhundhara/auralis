@@ -46,13 +46,13 @@ export const DEFAULT_SETTINGS: Settings = {
     enabled: false,
     bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     preamp: 0,
+    bassBoost: false,
   },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
   lyricsProviders: [
     'BetterLyrics',
-    'Paxsenix',
     'LyricsPlus',
     'LrcLib',
     'KuGou',
@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   translation: {
     enabled: false,
     provider: 'deepl',
-    targetLanguage: 'en',
+    targetLanguage: 'EN',
     deeplApiKey: '',
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiApiKey: '',

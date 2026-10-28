@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 import type { SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
 import { innertube } from './services/innertube';
-import { streams } from './services/streams';
+import { streams, isIssuedStreamUrl } from './services/streams';
 import { lyricsService } from './services/lyrics';
 import { lastfm } from './services/lastfm';
 import { discord } from './services/discord';
@@ -30,6 +30,7 @@ import {
   downloadsDir,
   ensureDownloadsDir,
   flushStores,
+  libraryStore,
   sanitizeCookieString,
   sessionStore,
   settingsStore,
@@ -230,13 +231,64 @@ function readWindowSessionCookies(): string {
   return '';
 }
 
+const MEDIA_EXTENSIONS = new Set([
+  '.aac',
+  '.flac',
+  '.m4a',
+  '.m4v',
+  '.mkv',
+  '.mp3',
+  '.mp4',
+  '.oga',
+  '.ogg',
+  '.opus',
+  '.wav',
+  '.webm',
+]);
+
+function pathInside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function safeRealPath(target: string): string | null {
+  if (!target || !path.isAbsolute(target)) return null;
+  try {
+    const real = fs.realpathSync.native(target);
+    return fs.statSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Local media is limited to completed downloads (current or previously recorded). */
+function isAllowedLocalMedia(filePath: string): boolean {
+  const real = safeRealPath(filePath);
+  if (!real || !MEDIA_EXTENSIONS.has(path.extname(real).toLowerCase())) return false;
+  const recorded = libraryStore.get().downloads.some((item) => {
+    if (!item.path) return false;
+    const recordedPath = safeRealPath(item.path);
+    return recordedPath?.toLowerCase() === real.toLowerCase();
+  });
+  if (recorded) return true;
+  const roots = [settingsStore.get().downloadDir, downloadsDir()].filter(Boolean);
+  return roots.some((root) => {
+    try {
+      const realRoot = fs.realpathSync.native(root);
+      return pathInside(real.toLowerCase(), realRoot.toLowerCase());
+    } catch {
+      return false;
+    }
+  });
+}
+
 function registerMediaProtocol() {
   protocol.handle('auralis-media', async (request) => {
     try {
       const url = new URL(request.url);
       if (url.host === 'local') {
         const filePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
-        if (!filePath || !fs.existsSync(filePath)) {
+        if (!isAllowedLocalMedia(filePath)) {
           return new Response('Not found', { status: 404 });
         }
         const response = await net.fetch(pathToFileURL(filePath).toString());
@@ -245,7 +297,9 @@ function registerMediaProtocol() {
       if (url.host === 'stream') {
         const encoded = url.pathname.replace(/^\//, '');
         const remote = Buffer.from(encoded, 'base64url').toString('utf8');
-        if (!/^https?:\/\//.test(remote)) return new Response('Bad request', { status: 400 });
+        if (!/^https:\/\//i.test(remote) || !isIssuedStreamUrl(remote)) {
+          return new Response('Forbidden', { status: 403 });
+        }
         const headers: Record<string, string> = {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
@@ -387,17 +441,29 @@ function mergeSettings(current: Settings, patch: Partial<Settings>): Settings {
 }
 
 function registerIpc() {
-  ipcMain.handle('app:info', async () => ({
-    name: 'Auralis',
-    version: app.getVersion(),
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    platform: process.platform,
-    userData: userDataDir(),
-    downloadsDir: ensureDownloadsDir() || downloadsDir(),
-    ytDlpVersion: await streams.ytdlpVersion(),
-    ffmpegAvailable: await streams.ffmpegAvailable(),
-  }));
+  ipcMain.handle('app:info', async () => {
+    let resolvedDownloads = downloadsDir();
+    try {
+      resolvedDownloads = ensureDownloadsDir() || downloadsDir();
+    } catch (error) {
+      console.error('[app] download folder unavailable', error);
+    }
+    const [ytDlpVersion, ffmpegAvailable] = await Promise.all([
+      streams.ytdlpVersion(),
+      streams.ffmpegAvailable(),
+    ]);
+    return {
+      name: 'Auralis',
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      platform: process.platform,
+      userData: userDataDir(),
+      downloadsDir: resolvedDownloads,
+      ytDlpVersion,
+      ffmpegAvailable,
+    };
+  });
   ipcMain.handle('app:minimize', () => mainWindow?.minimize());
   ipcMain.handle('app:toggle-maximize', () => {
     if (!mainWindow) return false;
@@ -472,6 +538,7 @@ function registerIpc() {
     libraryService.reorderPlaylist(id, from, to),
   );
   ipcMain.handle('library:add-search-history', (_event, query: string) => libraryService.addSearchHistory(query));
+  ipcMain.handle('library:remove-search-history', (_event, query: string) => libraryService.removeSearchHistory(query));
   ipcMain.handle('library:clear-search-history', () => libraryService.clearSearchHistory());
   ipcMain.handle('library:clear-recent', () => libraryService.clearRecent());
   ipcMain.handle('library:save-album', (_event, album) => libraryService.saveAlbum(album));
@@ -547,7 +614,9 @@ function registerIpc() {
   ipcMain.handle('player:ffmpeg-available', () => streams.ffmpegAvailable());
   ipcMain.handle('player:ytdlp-update', () => streams.update());
 
-  ipcMain.handle('lyrics:fetch', (_event, track: Track, providers?: string[]) => lyricsService.fetch(track, providers));
+  ipcMain.handle('lyrics:fetch', (_event, track: Track, providers?: string[], force?: boolean) =>
+    lyricsService.fetch(track, providers, force),
+  );
   ipcMain.handle('lyrics:translate', (_event, lines: string[], targetLanguage?: string) =>
     lyricsService.translate(lines, targetLanguage),
   );
@@ -591,6 +660,7 @@ async function bootstrap() {
   registerMediaProtocol();
   registerIpc();
   setLibraryChangeHandler((data) => broadcast('library-change', data));
+  libraryService.reconcileDownloads();
   createWindow();
   createTray();
   registerShortcuts();
