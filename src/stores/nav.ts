@@ -46,6 +46,8 @@ function sameRoute(a: Route | undefined, b: Route): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+const MAX_HISTORY = 60;
+
 export const useNavStore = create<NavState>((set, get) => ({
   entries: [{ page: 'home' }],
   index: 0,
@@ -58,7 +60,9 @@ export const useNavStore = create<NavState>((set, get) => ({
       set({ entries });
       return;
     }
-    const entries = [...state.entries.slice(0, state.index + 1), route];
+    let entries = [...state.entries.slice(0, state.index + 1), route];
+    // Long browsing sessions should not keep every page route in memory.
+    if (entries.length > MAX_HISTORY) entries = entries.slice(entries.length - MAX_HISTORY);
     set({ entries, index: entries.length - 1 });
   },
   back: () => {

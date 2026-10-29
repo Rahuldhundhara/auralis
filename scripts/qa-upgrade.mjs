@@ -128,17 +128,17 @@ try {
   check('Media Session mirrors the single playback source', media.title === playerTitle && media.state === 'playing', JSON.stringify(media));
 
   await page.locator('.sidebar-item', { hasText: 'Home' }).first().click();
-  await page.waitForSelector('.quick-grid', { timeout: 15000 });
-  const quick = await page.locator('.quick-grid').evaluate((node) => {
+  await page.waitForSelector('.quick-rail', { timeout: 15000 });
+  const quick = await page.locator('.quick-rail').evaluate((node) => {
     const style = getComputedStyle(node);
     return { cards: node.children.length, overflowX: style.overflowX, overflowY: style.overflowY };
   });
   check('Jump back in is a horizontal real-history carousel', quick.cards > 0 && quick.overflowX === 'auto', JSON.stringify(quick));
 
   await page.locator('.sidebar-item', { hasText: 'Search' }).first().click();
-  await page.waitForSelector('.search-history-item', { timeout: 15000 });
+  await page.waitForSelector('.search-history-chip', { timeout: 15000 });
   const historyBefore = await page.evaluate(async () => (await window.auralis.library.get()).searchHistory);
-  await page.locator('.search-history-item .search-history-remove').first().click();
+  await page.locator('.search-history-chip .search-history-remove').first().click();
   await page.waitForTimeout(500);
   const historyAfter = await page.evaluate(async () => (await window.auralis.library.get()).searchHistory);
   check(
@@ -152,20 +152,35 @@ try {
   await page.locator('.settings-nav-item', { hasText: 'Playback' }).click();
   const eqToggle = page.locator('.setting-row', { hasText: 'Enable equalizer' }).locator('button[role="switch"]');
   if ((await eqToggle.getAttribute('aria-checked')) !== 'true') await eqToggle.click();
+  await page.waitForFunction(() => {
+    const row = Array.from(document.querySelectorAll('.setting-row')).find((node) =>
+      node.textContent?.includes('Enable equalizer'),
+    );
+    return row?.querySelector('button[role="switch"]')?.getAttribute('aria-checked') === 'true';
+  }, { timeout: 10000 });
   const presetCount = await page.locator('.eq-presets button').count();
-  await page.locator('.eq-presets button', { hasText: 'Bass boost' }).click();
-  await page.waitForTimeout(500);
+  await page.locator('.eq-presets button', { hasText: 'Bass' }).first().click();
+  await page.waitForFunction(async () => {
+    const eq = (await window.auralis.settings.get()).eq;
+    return eq.enabled === true && eq.bands[0] === 6 && eq.bassBoost === 5;
+  }, { timeout: 10000 }).catch(() => {});
   const eq = await page.evaluate(async () => (await window.auralis.settings.get()).eq);
   check(
-    'EQ enables and a preset applies a real low-frequency curve',
-    presetCount >= 5 && eq.enabled === true && eq.bands[0] === 9,
+    'EQ enables and the Bass preset applies a real curve and shelf',
+    presetCount >= 5 && eq.enabled === true && eq.bands[0] === 6 && eq.bassBoost === 5,
     JSON.stringify(eq),
   );
 
-  await page.locator('.setting-row', { hasText: 'Bass boost' }).locator('button[role="switch"]').click();
-  await page.waitForTimeout(500);
+  const bassSlider = page.locator('input[aria-label="Bass boost"]');
+  await bassSlider.evaluate((node) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(node, '8');
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForFunction(async () => (await window.auralis.settings.get()).eq.bassBoost === 8, { timeout: 10000 }).catch(() => {});
   const bass = await page.evaluate(async () => (await window.auralis.settings.get()).eq.bassBoost);
-  check('Bass boost toggle persists', bass === true, String(bass));
+  check('Bass boost slider persists a numeric dB shelf', bass === 8, String(bass));
 
   await page.locator('.settings-nav-item', { hasText: 'Lyrics' }).click();
   await page.waitForSelector('.provider-list');

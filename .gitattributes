@@ -8,5 +8,6 @@
 *.dll binary
 *.so binary
 *.dylib binary
+android/app/src/main/assets/yt-dlp binary
 *.woff binary
 *.woff2 binary

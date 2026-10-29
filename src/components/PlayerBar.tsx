@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronUp,
   Gauge,
@@ -22,9 +22,10 @@ import {
 import type { Settings, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { usePlayerStore } from '../stores/player';
+import { usePlayerStore, currentPlaybackPosition } from '../stores/player';
 import { useUiStore, type MenuItem } from '../stores/ui';
 import { artistsLine, formatDuration } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton, Range } from './primitives';
 
@@ -62,8 +63,12 @@ export function MiniProgress() {
 export function SeekBar({ compact = false }: { compact?: boolean }) {
   const position = usePlayerStore((state) => state.position);
   const duration = usePlayerStore((state) => state.duration);
+  const trackDuration = usePlayerStore((state) => state.current?.duration);
   const seek = usePlayerStore((state) => state.seek);
-  const safeDuration = duration > 0 ? duration : 1;
+  // A restored local track may not have reported its media duration yet.
+  // Fall back to the catalog duration instead of showing a full, unknown bar.
+  const effectiveDuration = duration > 0 ? duration : trackDuration && trackDuration > 0 ? trackDuration : 0;
+  const safeDuration = effectiveDuration > 0 ? effectiveDuration : 1;
   return (
     <div className={`seek-bar ${compact ? 'is-compact' : ''}`}>
       {!compact ? <span className="time">{formatDuration(position)}</span> : null}
@@ -72,11 +77,12 @@ export function SeekBar({ compact = false }: { compact?: boolean }) {
         min={0}
         max={safeDuration}
         step={0.25}
-        value={Math.min(position, safeDuration)}
+        value={effectiveDuration > 0 ? Math.min(position, safeDuration) : 0}
         onValueChange={seek}
         aria-label="Seek"
+        disabled={effectiveDuration <= 0}
       />
-      {!compact ? <span className="time">{formatDuration(duration)}</span> : null}
+      {!compact ? <span className="time">{formatDuration(effectiveDuration)}</span> : null}
     </div>
   );
 }
@@ -246,8 +252,7 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
         type="button"
         className="player-art-button"
         onClick={() => {
-          const ui = useUiStore.getState();
-          ui.setNowPlayingOpen(true);
+          useUiStore.getState().openNowPlaying();
         }}
         title="Open now playing"
       >
@@ -294,14 +299,215 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
   );
 }
 
+function AndroidMiniProgress() {
+  const duration = usePlayerStore((state) => state.duration);
+  const playing = usePlayerStore((state) => state.playing);
+  const trackId = usePlayerStore((state) => state.current?.id);
+  const barRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLSpanElement>(null);
+  const seekingRef = useRef(false);
+  const previewRef = useRef(0);
+  const known = Number.isFinite(duration) && duration > 0;
+
+  const paint = (ratio: number) => {
+    const safe = Math.max(0, Math.min(1, ratio));
+    if (fillRef.current) fillRef.current.style.transform = `scaleX(${safe})`;
+    if (barRef.current) {
+      const seconds = Math.round(safe * (duration || 0));
+      barRef.current.setAttribute('aria-valuenow', String(seconds));
+      barRef.current.setAttribute('aria-valuetext', `${formatDuration(seconds)} of ${formatDuration(duration || 0)}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!playing || !known) {
+      paint(known ? currentPlaybackPosition() / duration : 0);
+      return;
+    }
+    let frame = 0;
+    let lastPaint = 0;
+    const tick = (time: number) => {
+      frame = window.requestAnimationFrame(tick);
+      if (seekingRef.current || time - lastPaint < 80) return;
+      lastPaint = time;
+      const state = usePlayerStore.getState();
+      const total = state.duration || duration;
+      if (!total) return;
+      paint(currentPlaybackPosition() / total);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, known, duration, trackId]);
+
+  const ratioAt = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return 0;
+    return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  };
+
+  const begin = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!known) return;
+    event.preventDefault();
+    event.stopPropagation();
+    seekingRef.current = true;
+    previewRef.current = ratioAt(event);
+    paint(previewRef.current);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Older WebViews may not support pointer capture.
+    }
+  };
+
+  const move = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekingRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    previewRef.current = ratioAt(event);
+    paint(previewRef.current);
+  };
+
+  const finish = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekingRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    seekingRef.current = false;
+    const target = previewRef.current * (usePlayerStore.getState().duration || duration || 0);
+    if (Number.isFinite(target)) usePlayerStore.getState().seek(target);
+  };
+
+  return (
+    <div
+      ref={barRef}
+      className="player-mini-progress"
+      role="slider"
+      aria-label="Song progress"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration || 0)}
+      aria-valuenow={0}
+      aria-valuetext={`${formatDuration(currentPlaybackPosition())} of ${formatDuration(duration || 0)}`}
+      tabIndex={known ? 0 : -1}
+      onPointerDown={begin}
+      onPointerMove={move}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onKeyDown={(event) => {
+        if (!known) return;
+        const state = usePlayerStore.getState();
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+          event.preventDefault();
+          event.stopPropagation();
+          state.seekBy(event.key === 'ArrowRight' ? 10 : -10);
+        } else if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          event.stopPropagation();
+          state.seek(event.key === 'Home' ? 0 : duration);
+        }
+      }}
+    >
+      <span className="player-mini-track">
+        <span ref={fillRef} className="player-mini-fill" />
+      </span>
+    </div>
+  );
+}
+
+function MobilePlayerControls() {
+  const playing = usePlayerStore((state) => state.playing);
+  const loading = usePlayerStore((state) => state.loading);
+  const buffering = usePlayerStore((state) => state.buffering);
+  const hasQueue = usePlayerStore((state) => state.queue.length > 0);
+
+  return (
+    <div className="player-mobile-actions">
+      <IconButton
+        label="Previous"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().previous()}
+        disabled={!hasQueue}
+      >
+        <SkipBack size={19} fill="currentColor" />
+      </IconButton>
+      <button
+        type="button"
+        className="player-mobile-play"
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={() => usePlayerStore.getState().toggle()}
+      >
+        {loading || buffering ? (
+          <Loader2 size={20} className="spin" />
+        ) : playing ? (
+          <Pause size={20} fill="currentColor" />
+        ) : (
+          <Play size={20} fill="currentColor" className="play-icon-offset" />
+        )}
+      </button>
+      <IconButton
+        label="Next"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().next()}
+        disabled={!hasQueue}
+      >
+        <SkipForward size={19} fill="currentColor" />
+      </IconButton>
+      <IconButton
+        label="Open now playing"
+        className="player-mobile-expand"
+        onClick={() => useUiStore.getState().openNowPlaying()}
+      >
+        <ChevronUp size={20} />
+      </IconButton>
+    </div>
+  );
+}
+
 export function PlayerBar() {
   const current = usePlayerStore((state) => state.current);
   const queueOpen = useUiStore((state) => state.queueOpen);
   const nowPlayingOpen = useUiStore((state) => state.nowPlayingOpen);
   const nowPlayingTab = useUiStore((state) => state.nowPlayingTab);
   const setQueueOpen = useUiStore((state) => state.setQueueOpen);
-  const setNowPlayingOpen = useUiStore((state) => state.setNowPlayingOpen);
-  const setNowPlayingTab = useUiStore((state) => state.setNowPlayingTab);
+  const openNowPlaying = useUiStore((state) => state.openNowPlaying);
+  const swipe = useRef<{ x: number; y: number; ignore: boolean } | null>(null);
+
+  const openFromBar = (event: React.MouseEvent<HTMLElement>) => {
+    // Let artwork, transport buttons, sliders and links keep their own actions.
+    // A tap/click on the song title, artist row or any empty part of the bar
+    // should still open Now Playing, exactly like tapping the artwork does.
+    if ((event.target as HTMLElement).closest('button, a, input, select, textarea, [role="slider"]')) return;
+    openNowPlaying();
+  };
+
+  const beginSwipe = (event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 1) {
+      swipe.current = null;
+      return;
+    }
+    const target = event.target as HTMLElement;
+    const touch = event.touches[0];
+    swipe.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      ignore: Boolean(target.closest('button, a, input, select, textarea, [role="slider"]')),
+    };
+  };
+
+  const endSwipe = (event: React.TouchEvent<HTMLElement>) => {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!start || start.ignore) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    // Swipe up on the bar opens the player panel; a mostly-horizontal gesture
+    // is left to the browser so it never fights a scroll.
+    if (dy < -44 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      event.preventDefault();
+      openNowPlaying();
+    }
+  };
 
   if (!current) {
     return (
@@ -323,8 +529,11 @@ export function PlayerBar() {
   }
 
   return (
-    <footer className="player-bar">
-      <MiniProgress />
+    <footer
+      className="player-bar"
+      {...(isAndroidShell ? { onClick: openFromBar, onTouchStart: beginSwipe, onTouchEnd: endSwipe } : {})}
+    >
+      {isAndroidShell ? <AndroidMiniProgress /> : <MiniProgress />}
       <div className="player-left">
         <PlayerTrackInfo track={current} />
       </div>
@@ -339,10 +548,7 @@ export function PlayerBar() {
           label="Lyrics"
           size="sm"
           active={nowPlayingOpen && nowPlayingTab === 'lyrics'}
-          onClick={() => {
-            setNowPlayingOpen(true);
-            setNowPlayingTab('lyrics');
-          }}
+          onClick={() => openNowPlaying('lyrics')}
         >
           <MicVocal size={18} />
         </IconButton>
@@ -357,10 +563,11 @@ export function PlayerBar() {
           <MoreHorizontal size={19} />
         </IconButton>
         <VolumeControl />
-        <IconButton label="Open now playing" size="sm" onClick={() => setNowPlayingOpen(true)}>
+        <IconButton label="Open now playing" size="sm" onClick={() => openNowPlaying()}>
           <ChevronUp size={19} />
         </IconButton>
       </div>
+      <MobilePlayerControls />
     </footer>
   );
 }

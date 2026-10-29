@@ -49,7 +49,7 @@
     {
       "name": "Jump back in is a horizontal real-history carousel",
       "ok": true,
-      "detail": "{\"cards\":1,\"overflowX\":\"auto\",\"overflowY\":\"hidden\"}"
+      "detail": "{\"cards\":2,\"overflowX\":\"auto\",\"overflowY\":\"auto\"}"
     },
     {
       "name": "Individual search history removal is persisted",
@@ -57,14 +57,14 @@
       "detail": "1 -> 0"
     },
     {
-      "name": "EQ enables and a preset applies a real low-frequency curve",
+      "name": "EQ enables and the Bass preset applies a real curve and shelf",
       "ok": true,
-      "detail": "{\"enabled\":true,\"bands\":[9,8,6,3,0,0,0,0,0,0],\"preamp\":-2,\"bassBoost\":false}"
+      "detail": "{\"enabled\":true,\"bands\":[6,5,4,2,0,-1,-1,0,1,2],\"preamp\":-2,\"bassBoost\":5,\"bassFrequency\":80,\"limiter\":true}"
     },
     {
-      "name": "Bass boost toggle persists",
+      "name": "Bass boost slider persists a numeric dB shelf",
       "ok": true,
-      "detail": "true"
+      "detail": "8"
     },
     {
       "name": "Translation target language selection persists",

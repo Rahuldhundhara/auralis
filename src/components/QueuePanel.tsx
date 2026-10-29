@@ -16,20 +16,24 @@ function QueueRow({
   current?: boolean;
 }) {
   const player = usePlayerStore.getState();
+  const activate = (event: React.SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const store = usePlayerStore.getState();
+    if (current) store.toggle();
+    else store.playAt(queueIndex);
+  };
   return (
     <div
       className={`queue-row ${current ? 'is-current' : ''}`}
-      onDoubleClick={() => usePlayerStore.getState().playAt(queueIndex)}
+      onClick={activate}
       onContextMenu={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         showTrackMenu(track, event, { queueIndex });
       }}
     >
-      <button
-        type="button"
-        className="queue-row-main"
-        onClick={() => (current ? usePlayerStore.getState().toggle() : usePlayerStore.getState().playAt(queueIndex))}
-      >
+      <button type="button" className="queue-row-main" onClick={activate}>
         <Artwork src={track.thumbnail} alt={track.title} className="queue-art" />
         <span className="queue-text">
           <span className="queue-title">
@@ -40,7 +44,11 @@ function QueueRow({
         </span>
         <span className="queue-duration">{track.duration > 0 ? formatDuration(track.duration) : ''}</span>
       </button>
-      <div className="queue-row-actions">
+      <div
+        className="queue-row-actions"
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
+      >
         <IconButton
           label="Move up"
           size="xs"

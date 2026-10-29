@@ -5,6 +5,7 @@ import { usePlayerStore } from '../stores/player';
 import { confirmDialog, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -26,7 +27,7 @@ export function RecentPage() {
   const clear = () => {
     confirmDialog({
       title: 'Clear listening history?',
-      message: 'Recently played songs and play counts will be cleared from this PC. Your YouTube Music history is not affected.',
+      message: `Recently played songs and play counts will be cleared from this ${isAndroidShell ? 'device' : 'PC'}. Your YouTube Music history is not affected.`,
       confirmLabel: 'Clear history',
       danger: true,
       onConfirm: async () => {
@@ -49,7 +50,7 @@ export function RecentPage() {
           <div className="detail-copy">
             <span className="eyebrow">Listening history</span>
             <h1>Recently played</h1>
-            <p className="detail-description">Pick up exactly where you left off. Auralis keeps your last 100 songs on this PC.</p>
+            <p className="detail-description">Pick up exactly where you left off. Auralis keeps your last 100 songs on this {isAndroidShell ? 'device' : 'PC'}.</p>
             <div className="detail-meta">
               <span className="detail-meta-item">{recent.length} songs</span>
               {duration ? (

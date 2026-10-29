@@ -718,6 +718,7 @@ a {
 
 .top-bar {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 14px;
   height: var(--topbar-h);
@@ -734,13 +735,29 @@ a {
   gap: 2px;
 }
 
+.top-mobile-leading {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.top-mobile-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
 .top-search {
-  flex: 1;
+  min-width: 0;
+  flex: 1 1 0;
   max-width: 540px;
 }
 
 .top-actions {
   display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   gap: 10px;
   margin-left: auto;
@@ -748,6 +765,7 @@ a {
 
 .recognize-pill {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   height: 36px;
@@ -769,6 +787,8 @@ a {
 
 .account-chip {
   display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   max-width: 190px;
@@ -817,6 +837,7 @@ a {
 .search-field {
   position: relative;
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 9px;
   height: 42px;
@@ -850,8 +871,9 @@ a {
 }
 
 .search-field input {
+  width: 0;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0;
   border: 0;
   outline: 0;
   background: transparent;
@@ -874,6 +896,41 @@ a {
 
 .search-clear {
   flex: 0 0 auto;
+}
+
+.search-voice {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.search-voice.is-listening {
+  color: var(--accent);
+  animation: voice-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.18);
+  }
+}
+
+.android-search-launch {
+  width: 100%;
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.android-search-launch span {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .search-popover {

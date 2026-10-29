@@ -6,3 +6,11 @@ resources/bin/*.exe
 *.log
 .env
 .env.*
+
+# Android release artifacts are distributed through GitHub Releases.
+Auralis-*-android.apk
+Auralis-*-android.apk.sha256
+*.apk
+*.aab
+*.jks
+*.keystore

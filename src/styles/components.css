@@ -632,6 +632,10 @@
   padding-inline: 24px;
 }
 
+.player-mobile-actions {
+  display: none;
+}
+
 .player-empty {
   display: flex;
   align-items: center;
@@ -1173,6 +1177,7 @@
 .np-art-frame {
   position: relative;
   width: min(395px, 33vw, 47vh);
+  flex: 0 0 auto;
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 17px;
@@ -1184,6 +1189,32 @@
   width: 100%;
   height: 100%;
   border-radius: 17px;
+}
+
+.np-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 17px;
+  background: #000;
+  object-fit: contain;
+}
+
+.np-video-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 
 .preload-img {
@@ -1353,6 +1384,14 @@
   outline-offset: 1px;
 }
 
+/* The queue can be much taller than the Now Playing panel. Give it its own
+   scroller so rows stay reachable instead of being clipped by the panel. */
+.np-panel .queue-list {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .np-about {
   height: 100%;
   overflow-y: auto;
@@ -1467,6 +1506,33 @@
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.lyrics-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.lyrics-language select {
+  max-width: 92px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.lyrics-language select option {
+  background: var(--surface);
+  color: var(--text);
 }
 
 .lyrics-language-toggle {

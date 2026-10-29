@@ -20,6 +20,7 @@ import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { useUiStore } from '../stores/ui';
 import { confirmDialog, toast } from '../stores/ui';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, IconButton } from './primitives';
 
 function NavItem({
@@ -226,7 +227,7 @@ export function Sidebar() {
         {!collapsed ? (
           <div className="sidebar-signature">
             <Music2 size={13} />
-            <span>Auralis for Windows</span>
+            <span>{isAndroidShell ? 'Auralis for Android' : 'Auralis for Windows'}</span>
           </div>
         ) : null}
       </div>

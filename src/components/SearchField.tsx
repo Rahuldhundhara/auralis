@@ -1,9 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock3, Search, X } from 'lucide-react';
+import { Clock3, Mic, Search, X } from 'lucide-react';
 import type { SearchSuggestion } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
+import { toast } from '../stores/ui';
+import { isAndroidShell } from '../lib/platform';
+import { cancelVoiceSearch, startVoiceSearch, voiceSearchAvailable } from '../android/voice';
 import { IconButton, Spinner } from './primitives';
+
+export function AndroidSearchLauncher() {
+  const navigate = useNavStore((state) => state.navigate);
+  return (
+    <button
+      type="button"
+      className="search-field android-search-launch"
+      onClick={() => navigate({ page: 'search' })}
+      aria-label="Open search"
+    >
+      <Search size={17} className="search-icon" />
+      <span>Search songs, artists, podcasts</span>
+    </button>
+  );
+}
 
 export function SearchField({
   autoFocus,
@@ -23,8 +41,11 @@ export function SearchField({
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [listening, setListening] = useState(false);
+  const listeningRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const showVoice = large && isAndroidShell && voiceSearchAvailable();
 
   useEffect(() => {
     if (route.page === 'search') setValue(route.q || '');
@@ -91,6 +112,56 @@ export function SearchField({
     onSubmitted?.();
   };
 
+  const beginVoice = () => {
+    if (listeningRef.current) {
+      cancelVoiceSearch();
+      listeningRef.current = false;
+      setListening(false);
+      return;
+    }
+    listeningRef.current = true;
+    setListening(true);
+    setOpen(true);
+    const started = startVoiceSearch((event) => {
+      if (event.type === 'partial' && event.text) {
+        setValue(event.text);
+        return;
+      }
+      if (event.type === 'final') {
+        listeningRef.current = false;
+        setListening(false);
+        const text = (event.text || '').trim();
+        if (text) {
+          setValue(text);
+          submit(text);
+        }
+        return;
+      }
+      if (event.type === 'error') {
+        listeningRef.current = false;
+        setListening(false);
+        toast(event.message || 'Voice search failed. Try again.', 'error');
+        return;
+      }
+      if (event.type === 'cancelled') {
+        listeningRef.current = false;
+        setListening(false);
+      }
+    });
+    if (!started) {
+      listeningRef.current = false;
+      setListening(false);
+      toast('Voice search is not available on this device.', 'error');
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (listeningRef.current) cancelVoiceSearch();
+    },
+    [],
+  );
+
   const items = value.trim()
     ? suggestions.map((item) => item.text)
     : history.slice(0, 7);
@@ -128,6 +199,16 @@ export function SearchField({
         aria-label="Search"
       />
       {loading ? <Spinner size={16} className="search-spinner" /> : null}
+      {showVoice ? (
+        <IconButton
+          label={listening ? 'Stop voice search' : 'Search with your voice'}
+          size="xs"
+          className={`search-voice ${listening ? 'is-listening' : ''}`}
+          onClick={beginVoice}
+        >
+          <Mic size={16} />
+        </IconButton>
+      ) : null}
       {value ? (
         <IconButton
           label="Clear search"

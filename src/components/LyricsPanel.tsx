@@ -4,6 +4,8 @@ import type { LyricsLine, LyricsResult, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
+import { isAndroidShell } from '../lib/platform';
+import { TRANSLATION_LANGUAGES } from '../lib/languages';
 import { Button, EmptyState, IconButton, Spinner } from './primitives';
 
 function activeLineIndex(lines: LyricsLine[], position: number): number {
@@ -26,6 +28,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const position = usePlayerStore((state) => state.position);
   const settings = useAppStore((state) => state.settings);
   const navigate = useNavStore((state) => state.navigate);
+  const updateSettings = useAppStore((state) => state.updateSettings);
   const [result, setResult] = useState<LyricsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -172,6 +175,24 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
         <div className="lyrics-meta">
           {result?.provider ? <span className="lyrics-provider">{result.provider}</span> : null}
           {result && !synced ? <span className="lyrics-provider is-muted">Unsynced</span> : null}
+          <label className="lyrics-language" title="Translation language">
+            <Languages size={13} />
+            <select
+              value={settings.translation.targetLanguage}
+              aria-label="Translation language"
+              onChange={(event) =>
+                void updateSettings({
+                  translation: { ...settings.translation, targetLanguage: event.target.value },
+                })
+              }
+            >
+              {TRANSLATION_LANGUAGES.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="lyrics-actions">
           {synced && !follow ? (
@@ -355,7 +376,11 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
             Lyrics from {result.provider}
             {translations.length && showTranslation
               ? ` · Translated with ${settings.translation.provider === 'deepl' ? 'DeepL' : 'OpenAI'}`
-              : ''}
+              : !settings.translation.enabled && translations.length === 0
+                ? isAndroidShell
+                  ? ' · Pick a language above and tap Translate'
+                  : ' · Add a translation provider in Settings → Lyrics'
+                : ''}
           </div>
         </div>
       )}

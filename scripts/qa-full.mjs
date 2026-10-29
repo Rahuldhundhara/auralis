@@ -229,19 +229,33 @@ try {
     await chip('Songs');
     const results = await count('.search-page .track-row');
     await page.locator('.search-page .track-row').first().click();
-    await page.waitForTimeout(2600);
     await page.locator('.player-right button[aria-label="Queue"]').click();
     await page.waitForSelector('.queue-drawer');
-    const rows = await count('.queue-drawer .queue-row');
-    const radio = await count('.queue-radio');
-    expect(rows > results, `search results were not replaced by radio: ${rows} <= ${results}`);
-    expect(radio === 1, 'radio badge missing');
+    let rows;
+    let radio;
+    let remaining;
+    try {
+      // Radio is a live request that starts after the track. Wait for the
+      // station to replace the single search pick instead of racing it.
+      await page.waitForFunction(
+        (expected) => document.querySelectorAll('.queue-drawer .queue-row').length > expected,
+        results,
+        { timeout: 30000 },
+      );
+      rows = await count('.queue-drawer .queue-row');
+      radio = await count('.queue-radio');
+      expect(rows > results, `search results were not replaced by radio: ${rows} <= ${results}`);
+      expect(radio === 1, 'radio badge missing');
 
-    await page.locator('.queue-section').nth(1).locator('.text-button', { hasText: 'Clear' }).click();
-    await page.waitForTimeout(500);
-    const remaining = await page.locator('.queue-section').nth(1).locator('.queue-row').count();
-    expect(remaining === 0, `upcoming queue was not cleared: ${remaining}`);
-    await page.locator('.queue-drawer button[aria-label="Close queue"]').click();
+      await page.locator('.queue-section').nth(1).locator('.text-button', { hasText: 'Clear' }).click();
+      await page.waitForTimeout(500);
+      const remainingAfterClear = await page.locator('.queue-section').nth(1).locator('.queue-row').count();
+      expect(remainingAfterClear === 0, `upcoming queue was not cleared: ${remainingAfterClear}`);
+      remaining = remainingAfterClear;
+    } finally {
+      const close = page.locator('.queue-drawer button[aria-label="Close queue"]');
+      if (await close.count()) await close.click().catch(() => {});
+    }
 
     const before = (await page.locator('.player-title').first().textContent())?.trim();
     await page.locator('.transport button[aria-label="Next"]').click();
@@ -255,11 +269,23 @@ try {
 
     await page.locator('.player-right button[aria-label="Queue"]').click();
     await page.waitForSelector('.queue-drawer');
-    const radioRows = await count('.queue-drawer .queue-row');
-    const autoRadio = await count('.queue-radio');
-    await page.locator('.queue-drawer button[aria-label="Close queue"]').click();
-    expect(radioRows > 1, `auto radio queue is empty: ${radioRows}`);
-    expect(autoRadio === 1, 'auto radio badge missing');
+    let radioRows;
+    let autoRadio;
+    try {
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll('.queue-drawer .queue-row').length > 1 &&
+          document.querySelectorAll('.queue-radio').length === 1,
+        { timeout: 30000 },
+      );
+      radioRows = await count('.queue-drawer .queue-row');
+      autoRadio = await count('.queue-radio');
+      expect(radioRows > 1, `auto radio queue is empty: ${radioRows}`);
+      expect(autoRadio === 1, 'auto radio badge missing');
+    } finally {
+      const close = page.locator('.queue-drawer button[aria-label="Close queue"]');
+      if (await close.count()) await close.click().catch(() => {});
+    }
     return { results, rows, remaining, before, after, radioRows };
   });
 

@@ -19,8 +19,8 @@ Auralis targets the day-to-day feature set of the reference Android YouTube Musi
 | Personalised home with account | **Ready** | The same feed request carries the signed-in cookie set; account-specific ordering cannot be verified without a real session. |
 | Explore page | **Verified** | Live "New albums & singles", "Popular episodes", "Trending" and "New music videos" shelves. |
 | Charts | **Verified** | Video charts, language charts and top artists parsed and rendered. |
-| New releases | **Verified** | 133 live releases returned by the new-releases browse endpoint. |
-| Moods and genres | **Verified** | 49 navigation tiles in two shelves; opening "Chill" loads 13 live category shelves. Added in the final QA pass. |
+| New releases | **Verified** | 128 live releases returned by the new-releases browse endpoint. |
+| Moods and genres | **Verified** | 50 navigation tiles in two shelves; opening "Chill" loads 13 live category shelves. |
 | Search suggestions | **Verified** | Live suggestion endpoint with keyboard navigation and stale-response clearing. |
 | Search history | **Verified** | Individual chip removal and clear-all both persist through the library store. |
 | Dedicated search page | **Verified** | Debounced query, request-token cancellation, stale-result clearing, category chips, pagination, end detection and deduplication. |
@@ -49,10 +49,10 @@ Auralis targets the day-to-day feature set of the reference Android YouTube Musi
 | Queue-first Now Playing | **Verified** | Now Playing defaults to Queue with ARIA tabs and keyboard navigation; switching to Lyrics does not stop playback. |
 | Play next / add to queue | **Verified** | Track context menu and detail-page actions. |
 | Radio / automix | **Verified** | Track radio uses the `RDAMVM<videoId>` playlist and follows continuation tokens for further pages of live recommendations. |
-| Related autoplay | **Verified** | Search picks start a station from the picked song instead of queuing the other search rows. Albums, playlists and one-off queues seed a station from the last track when they end. A Hindi seed produced a 50-track Hindi station; clearing upcoming and pressing Next started `Apna Bana Le` with 49 related rows. |
+| Related autoplay | **Verified** | Search picks start a station from the picked song instead of queuing the other search rows. Albums, playlists and one-off queues seed a station from the last track when they end. A Hindi seed produced a 50-track Hindi station; clearing upcoming and pressing Next started `Chaleya` with 49 related rows. |
 | Gapless prefetch | **Verified** | The next track resolves while the current track is playing. |
 | Playback speed | **Verified** | 0.5x–2x, applied live and persisted. |
-| 10-band equalizer | **Verified** | Web Audio peaking filters, preamp, six presets, bypass and a real low-shelf bass boost; preset and toggle persistence verified. |
+| 10-band equalizer | **Verified** | Web Audio peaking filters, preamp, six presets, bypass, a numeric 0–12 dB low-shelf bass boost with selectable corner frequency and a peak limiter; preset and slider persistence verified. |
 | Loudness normalisation | **Verified** | Dynamics compressor stage in the Web Audio graph. |
 | Lyrics | **Verified** | Seven active providers with fallback; LRCLIB and YouTube Music lyrics verified live, including synced highlighting. |
 | Lyrics auto-translation | **Ready** | DeepL and OpenAI-compatible providers implemented with language selection, original/translated switching, line-count alignment and retryable errors. The keyless setup error was verified; live translation needs an API key. |
@@ -159,6 +159,8 @@ The following features are implemented but cannot be proven end to end without c
 5. Shazam recognition with a known audio sample or microphone input.
 6. yt-dlp caption extraction against a video known to expose captions.
 
+The final full pass also recorded 25 `yt3.googleusercontent.com` artwork request failures (`ERR_CONNECTION_CLOSED`) and one artwork 404. These are third-party CDN failures, not app exceptions; every image fell back to a placeholder and the functional checks passed.
+
 These are credential-bound, not mocked: the buttons call the real services and surface real errors. A signed-in session is required to finish their live verification.
 
 ## Live verification snapshot
@@ -167,14 +169,14 @@ These are credential-bound, not mocked: the buttons call the real services and s
 | --- | --- |
 | 1.1.0 focused upgrade pass | 16/16 checks |
 | 1.1.0 full end-to-end pass | 21/21 checks |
-| 1.1.0 packaged smoke test | Home 122 cards, playback, 50-row radio, 4.34 MB download, 49 moods, 20 podcast episodes |
-| 1.1.0 portable launch | Pass (bundled yt-dlp/FFmpeg, 122 cards) |
+| 1.1.0 packaged smoke test | Home 109 cards, playback, 50-row radio, 4.34 MB download, 50 moods, 20 podcast episodes |
+| 1.1.0 portable launch | Pass (bundled yt-dlp/FFmpeg, 112 cards) |
 | 1.1.0 silent install / uninstall | Pass (installed app launched, folder and registry entry removed) |
 | Cold-start splash | 13 artwork layers render, then Home appears |
 | Mini-player seek | 0:00 → 1:34 of 4:28 in the focused run |
 | Now Playing default tab | Queue, 50 rows; Lyrics switch kept playback running |
 | Streaming quality reload | High (256 kbps) persisted and playback resumed |
-| EQ preset + bass boost | Low-frequency curve persisted, EQ enabled, bass boost toggled |
+| EQ preset + bass boost | Bass preset persisted `[6,5,4,2,0,-1,-1,0,1,2]` with `bassBoost: 5`; the slider then persisted 8 dB |
 | Search history removal | 1 → 0 entries, persisted in the library |
 | Full `qa-full` end-to-end pass (1.1.0) | 21/21 checks |
 | Anonymous home, search, album, artist, playlist | Pass |
@@ -183,10 +185,10 @@ These are credential-bound, not mocked: the buttons call the real services and s
 | Download + offline file | Pass (4,338,550-byte M4A in packaged run) |
 | Local playlist create/add/reorder/remove | Pass |
 | Podcast "The Daily" episodes | Pass (20 episodes, 9h 50m total) |
-| Moods & genres | Pass (49 tiles, category page with 13 shelves) |
+| Moods & genres | Pass (50 tiles, category page with 13 shelves) |
 | Search filters and continuation | Pass |
 | TypeScript + production build | Pass |
 | NSIS installer and portable EXE | Built successfully; both packaged builds launched |
-| Portable EXE cold start | Pass (home feed, bundled yt-dlp/FFmpeg, 122 cards) |
+| Portable EXE cold start | Pass (home feed, bundled yt-dlp/FFmpeg, 112 cards) |
 | Related radio and queue-end autoplay | Pass (20 search rows -> 50-track radio; auto-continue kept 49 related rows) |
 | Silent install / uninstall | Pass (1.1.0 installed app launched with bundled tools, then removed cleanly) |

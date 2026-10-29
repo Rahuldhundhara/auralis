@@ -1,0 +1,580 @@
+import type {
+  LyricsLine,
+  LyricsResult,
+  Track,
+  TranslationResult,
+} from '../../shared/types';
+import { innertube } from './innertube';
+import { parseLyrics, parseNext } from './ytm-parse';
+import { settingsStore } from './store';
+import { streams } from './streams';
+import { translationLanguageTag } from '../lib/languages';
+
+export type ProviderName =
+  | 'YouTube'
+  | 'YouTubeSubtitle'
+  | 'BetterLyrics'
+  | 'Paxsenix'
+  | 'LyricsPlus'
+  | 'LrcLib'
+  | 'KuGou'
+  | 'Zemer';
+
+interface ProviderOutput {
+  provider: string;
+  raw: string;
+  synced: boolean;
+  lines: LyricsLine[];
+}
+
+const API_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  Accept: 'application/json, text/plain, */*',
+};
+
+async function fetchText(url: string, timeoutMs = 15000): Promise<string | null> {
+  try {
+    const response = await fetch(url, { headers: API_HEADERS, signal: AbortSignal.timeout(timeoutMs) });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T | null> {
+  const text = await fetchText(url, timeoutMs);
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+function cleanTitle(title: string): string {
+  return title
+    .replace(/\s*[([].*?(official|video|audio|lyrics?|visuali[sz]er|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit).*?[)\]]/gi, '')
+    .replace(/\s*[-|]\s*(official|video|audio|lyrics?|visuali[sz]er).*$/gi, '')
+    .replace(/\s*\(feat\..*?\)/gi, '')
+    .replace(/\s*\(ft\..*?\)/gi, '')
+    .replace(/\s*\b(feat|ft)\.\s.*$/gi, '')
+    .replace(/\s*\([^)]*\b(19|20)\d{2}\b[^)]*\)/g, '')
+    .trim();
+}
+
+function primaryArtist(track: Track): string {
+  return (track.artists || []).map((a) => a.name).filter(Boolean)[0] || '';
+}
+
+function encode(value: string): string {
+  return encodeURIComponent(value);
+}
+
+/** Parses LRC, including extended word and agent tags. */
+export function parseLrc(raw: string): LyricsLine[] {
+  const lines: LyricsLine[] = [];
+  const timeRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  const wordRe = /<([^<>|]+):(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)(?::([01]))?>/g;
+  const sorted = (raw || '').replace(/\r\n/g, '\n').split('\n');
+  for (const original of sorted) {
+    const stamps: number[] = [];
+    let match: RegExpExecArray | null;
+    timeRe.lastIndex = 0;
+    let lastIndex = 0;
+    while ((match = timeRe.exec(original))) {
+      const minutes = Number(match[1]);
+      const seconds = Number(match[2]);
+      const fraction = match[3] ? Number(match[3].padEnd(3, '0')) : 0;
+      stamps.push(minutes * 60 + seconds + fraction / 1000);
+      lastIndex = timeRe.lastIndex;
+    }
+    if (!stamps.length) continue;
+    let text = original.slice(lastIndex).trim();
+    if (/^\[[a-z]+:.*\]$/i.test(text)) continue;
+    let agent: string | undefined;
+    let background = false;
+    const agentMatch = text.match(/^\{(?:agent:)?([^}]+)\}/);
+    if (agentMatch) {
+      if (/^(bg|background)$/i.test(agentMatch[1])) background = true;
+      else agent = agentMatch[1];
+      text = text.slice(agentMatch[0].length).trim();
+    }
+    if (text.startsWith('{bg}')) {
+      background = true;
+      text = text.slice(4).trim();
+    }
+    const words: NonNullable<LyricsLine['words']> = [];
+    wordRe.lastIndex = 0;
+    let wordMatch: RegExpExecArray | null;
+    while ((wordMatch = wordRe.exec(text))) {
+      words.push({
+        text: wordMatch[1],
+        start: Number(wordMatch[2]),
+        end: Number(wordMatch[3]),
+      });
+    }
+    if (words.length) text = words.map((w) => w.text).join('');
+    for (const time of stamps) {
+      lines.push({
+        time,
+        text,
+        words: words.length ? words : undefined,
+        agent,
+        background: background || undefined,
+      });
+    }
+  }
+  lines.sort((a, b) => a.time - b.time);
+  // Extended LRCs may include translation/romanization on lines starting with `{tr}` / `{ro}`.
+  return lines;
+}
+
+function plainToLines(raw: string): LyricsLine[] {
+  return (raw || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((text) => text.trim())
+    .filter((text) => text && !/^\[[a-z]+:.*\]$/i.test(text))
+    .map((text) => ({ time: 0, text }));
+}
+
+/** Basic TTML parser (line and word timing). */
+export function parseTtml(raw: string): LyricsLine[] {
+  if (!raw) return [];
+  const lines: LyricsLine[] = [];
+  const pRe = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pRe.exec(raw))) {
+    const attrs = match[1];
+    const body = match[2];
+    const begin = Number((attrs.match(/\bbegin="([^"]+)"/) || [])[1]) || 0;
+    const end = Number((attrs.match(/\bend="([^"]+)"/) || [])[1]) || 0;
+    const spans: NonNullable<LyricsLine['words']> = [];
+    const spanRe = /<span\b([^>]*)>([\s\S]*?)<\/span>/gi;
+    let span: RegExpExecArray | null;
+    while ((span = spanRe.exec(body))) {
+      const sAttrs = span[1];
+      const text = span[2].replace(/<[^>]+>/g, '');
+      if (!text.trim()) continue;
+      const sBegin = (sAttrs.match(/\bbegin="([^"]+)"/) || [])[1];
+      const sEnd = (sAttrs.match(/\bend="([^"]+)"/) || [])[1];
+      spans.push({
+        text,
+        start: sBegin ? timeToSeconds(sBegin) : begin,
+        end: sEnd ? timeToSeconds(sEnd) : end,
+      });
+    }
+    const text = body.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
+    if (!text) continue;
+    lines.push({ time: begin, text, words: spans.length ? spans : undefined });
+  }
+  if (!lines.length) return plainToLines(raw.replace(/<[^>]+>/g, ''));
+  lines.sort((a, b) => a.time - b.time);
+  return lines;
+}
+
+function timeToSeconds(value: string): number {
+  const trimmed = value.trim();
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    if (trimmed.includes('.')) return Number(trimmed);
+    return Number(trimmed);
+  }
+  const parts = trimmed.split(':').map(Number);
+  if (parts.some(Number.isNaN)) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return Number(trimmed) || 0;
+}
+
+async function fromYouTube(track: Track): Promise<ProviderOutput | null> {
+  try {
+    const next = parseNext(await innertube.next({ videoId: track.id }));
+    if (!next.lyricsEndpoint) return null;
+    const raw = parseLyrics(await innertube.lyrics(next.lyricsEndpoint));
+    if (!raw) return null;
+    return { provider: 'YouTube', raw, synced: false, lines: plainToLines(raw) };
+  } catch {
+    return null;
+  }
+}
+
+async function fromBetterLyrics(track: Track): Promise<ProviderOutput | null> {
+  const url = `https://lyrics-api.boidu.dev/getLyrics?s=${encode(track.title)}&a=${encode(primaryArtist(track))}` +
+    (track.duration ? `&d=${track.duration}` : '') +
+    (track.album?.name ? `&al=${encode(track.album.name)}` : '');
+  const json = await fetchJson<any>(url);
+  const ttml = (json?.ttml || '').trim();
+  if (!ttml) return null;
+  const lines = parseTtml(ttml);
+  if (!lines.length) return null;
+  return { provider: 'BetterLyrics', raw: ttml, synced: lines.some((l) => l.time > 0), lines };
+}
+
+async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
+  const bases = [
+    'https://lyricsplus.binimum.org',
+    'https://lyricsplus.atomix.one',
+    'https://lyricsplus.prjktla.my.id',
+    'https://lyricsplus-seven.vercel.app',
+  ];
+  for (const base of bases) {
+    const url = `${base}/v2/lyrics/get?title=${encode(track.title)}&artist=${encode(primaryArtist(track))}` +
+      (track.duration ? `&duration=${track.duration}` : '') +
+      (track.album?.name ? `&album=${encode(track.album.name)}` : '');
+    const json = await fetchJson<any>(url, 12000);
+    const items = json?.lyrics;
+    if (!Array.isArray(items) || !items.length) continue;
+    const lines: LyricsLine[] = items.map((item: any) => {
+      const words = Array.isArray(item.syllabus)
+        ? item.syllabus
+            .filter((w: any) => String(w.text || '').length)
+            .map((w: any) => ({
+              text: String(w.text),
+              start: Number(w.time || 0) / 1000,
+              end: (Number(w.time || 0) + Number(w.duration || 0)) / 1000,
+            }))
+        : undefined;
+      return {
+        time: Number(item.time || 0) / 1000,
+        text: String(item.text || words?.map((w: { text: string }) => w.text).join('') || '').trim(),
+        words: words?.length ? words : undefined,
+        translation: item.translation?.text || undefined,
+        romanized: item.transliteration?.text || undefined,
+        agent: item.element?.singer || undefined,
+        background: Boolean(item.syllabus?.some((w: any) => w.isBackground)),
+      };
+    }).filter((line: LyricsLine) => line.text);
+    if (!lines.length) continue;
+    return {
+      provider: 'LyricsPlus',
+      raw: JSON.stringify(json).slice(0, 200_000),
+      synced: String(json?.type || '').toLowerCase() === 'word' || lines.some((l) => l.time > 0),
+      lines,
+    };
+  }
+  return null;
+}
+
+async function fromLrcLib(track: Track): Promise<ProviderOutput | null> {
+  const params = new URLSearchParams({
+    track_name: cleanTitle(track.title),
+    artist_name: primaryArtist(track),
+  });
+  if (track.album?.name) params.set('album_name', track.album.name);
+  if (track.duration) params.set('duration', String(Math.round(track.duration)));
+  let json = await fetchJson<any>(`https://lrclib.net/api/get?${params.toString()}`);
+  if (!json) {
+    const search = await fetchJson<any[]>(
+      `https://lrclib.net/api/search?track_name=${encode(cleanTitle(track.title))}&artist_name=${encode(primaryArtist(track))}`,
+    );
+    if (Array.isArray(search) && search.length) {
+      json = search
+        .filter((entry) => entry.syncedLyrics || entry.plainLyrics)
+        .sort((a, b) => Math.abs((a.duration || 0) - track.duration) - Math.abs((b.duration || 0) - track.duration))[0];
+    }
+  }
+  if (!json || json.instrumental) return null;
+  const raw = json.syncedLyrics || json.plainLyrics;
+  if (!raw) return null;
+  const synced = Boolean(json.syncedLyrics);
+  const lines = synced ? parseLrc(raw) : plainToLines(raw);
+  if (!lines.length) return null;
+  return { provider: 'LrcLib', raw, synced, lines };
+}
+
+async function fromKuGou(track: Track): Promise<ProviderOutput | null> {
+  const query = `${cleanTitle(track.title)} - ${primaryArtist(track)}`;
+  const candidates = await fetchJson<any>(
+    `https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${encode(query)}&duration=${Math.round((track.duration || 0) * 1000)}`,
+  );
+  const candidate = candidates?.candidates?.[0];
+  if (!candidate?.id || !candidate?.accesskey) return null;
+  const json = await fetchJson<any>(
+    `https://lyrics.kugou.com/download?ver=1&client=pc&id=${encode(String(candidate.id))}&accesskey=${encode(String(candidate.accesskey))}&fmt=lrc&charset=utf8`,
+  );
+  if (!json?.content) return null;
+  const binary = atob(json.content);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const raw = new TextDecoder().decode(bytes);
+  let text = raw;
+  if (/^lrc\d*\s*$/i.test(raw.slice(0, 20).trim()) && raw.includes('\n')) {
+    const nl = raw.indexOf('\n');
+    text = raw.slice(nl + 1);
+  }
+  const lines = parseLrc(text);
+  if (!lines.length) return null;
+  return { provider: 'KuGou', raw: text, synced: true, lines };
+}
+
+async function fromZemer(track: Track): Promise<ProviderOutput | null> {
+  const json = await fetchJson<any>(`https://search.zemer.io/lyrics/resolve?videoId=${encode(track.id)}`);
+  if (!json?.sources?.length) return null;
+  const ranked = [...json.sources].sort((a: any, b: any) => {
+    const rank = (s: any) => (s.type === 'jkaraoke' ? 0 : s.type === 'lrclib' ? 1 : s.type === 'bookmark' ? 2 : 3);
+    return Number(Boolean(a.synced) ? 0 : 1) - Number(Boolean(b.synced) ? 0 : 1) || rank(a) - rank(b);
+  });
+  for (const source of ranked) {
+    let raw: string | null = source.syncedLrc || source.plain || null;
+    if (!raw && source.type === 'lrclib' && source.trackId) {
+      const entry = await fetchJson<any>(`https://lrclib.net/api/get/${source.trackId}`);
+      raw = entry?.syncedLyrics || entry?.plainLyrics || null;
+    }
+    if (!raw) continue;
+    const lines = /\[\d{1,3}:\d{2}/.test(raw) ? parseLrc(raw) : plainToLines(raw);
+    if (lines.length) {
+      return { provider: 'Zemer', raw, synced: lines.some((l) => l.time > 0), lines };
+    }
+  }
+  return null;
+}
+
+async function fromYouTubeSubtitle(track: Track): Promise<ProviderOutput | null> {
+  const raw = await streams.fetchSubtitles(track.id);
+  if (!raw) return null;
+  const lines = parseLrc(raw);
+  if (!lines.length) return null;
+  return { provider: 'YouTubeSubtitle', raw, synced: true, lines };
+}
+
+const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>> = {
+  YouTube: fromYouTube,
+  BetterLyrics: fromBetterLyrics,
+  LyricsPlus: fromLyricsPlus,
+  LrcLib: fromLrcLib,
+  KuGou: fromKuGou,
+  Zemer: fromZemer,
+  YouTubeSubtitle: fromYouTubeSubtitle,
+  // Paxsenix needs an Apple Music token; it is attempted after the other
+  // providers so a tokenless failure never blocks an available result.
+  Paxsenix: async () => null,
+};
+
+const TRANSLATION_CACHE_TTL = 6 * 60 * 60_000;
+const TRANSLATION_CACHE_LIMIT = 60;
+const translationCache = new Map<string, { at: number; result: TranslationResult }>();
+const pendingTranslations = new Map<string, Promise<TranslationResult>>();
+
+function translationCacheKey(provider: string, language: string, texts: string[]): string {
+  return `${provider}|${language}|${texts.join('\u0001')}`;
+}
+
+function rememberTranslation(key: string, result: TranslationResult) {
+  translationCache.delete(key);
+  translationCache.set(key, { at: Date.now(), result });
+  while (translationCache.size > TRANSLATION_CACHE_LIMIT) {
+    const oldest = translationCache.keys().next().value;
+    if (oldest === undefined) break;
+    translationCache.delete(oldest);
+  }
+}
+
+function chunkTexts(texts: string[], maxLines = 12, maxChars = 1600): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const text of texts) {
+    const nextSize = size + text.length + 1;
+    if (current.length && (current.length >= maxLines || nextSize > maxChars)) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(text);
+    size += text.length + 1;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Translates a group of lines with Google's public translate endpoint. The
+ * endpoint needs no API key and preserves the newlines between lyrics, which
+ * keeps translated lines aligned with their timestamps.
+ */
+async function automaticChunk(texts: string[], language: string): Promise<string[] | null> {
+  const response = await fetch('https://translate.googleapis.com/translate_a/single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: new URLSearchParams({
+      client: 'gtx',
+      sl: 'auto',
+      tl: language,
+      dt: 't',
+      q: texts.join('\n'),
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!response.ok) throw new Error(`Automatic translation returned HTTP ${response.status}.`);
+  const json: any = await response.json().catch(() => null);
+  const segments = Array.isArray(json?.[0]) ? json[0] : [];
+  let output = segments
+    .map((segment: any) => String(segment?.[0] ?? ''))
+    .join('')
+    .replace(/\r/g, '');
+  if (output.endsWith('\n') && texts.length > 1) output = output.slice(0, -1);
+  const lines = output.split('\n');
+  if (lines.length !== texts.length) return null;
+  return lines;
+}
+
+async function automaticTranslate(texts: string[], language: string): Promise<string[]> {
+  const translated: string[] = [];
+  for (const chunk of chunkTexts(texts)) {
+    let lines = await automaticChunk(chunk, language);
+    if (!lines) {
+      // Some providers merge short lines; fall back to one request per line so
+      // every timestamp still receives its own translation.
+      lines = [];
+      for (const text of chunk) {
+        const single = await automaticChunk([text], language);
+        lines.push(single?.[0] ?? text);
+      }
+    }
+    translated.push(...lines);
+  }
+  return translated;
+}
+
+function splitTranslatedText(content: string, expected: number): string[] {
+  const cleaned = content
+    .replace(/^```[a-z0-9-]*\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .replace(/\r/g, '')
+    .split('\n');
+  while (cleaned.length > expected && !cleaned[0].trim()) cleaned.shift();
+  while (cleaned.length > expected && !cleaned[cleaned.length - 1].trim()) cleaned.pop();
+  if (cleaned.length !== expected) {
+    throw new Error('The translation provider returned an unexpected number of lines.');
+  }
+  return cleaned;
+}
+
+export class LyricsService {
+  private cache = new Map<string, { at: number; result: LyricsResult | null }>();
+
+  async fetch(track: Track, providers?: string[]): Promise<LyricsResult | null> {
+    const configured = providers?.length
+      ? providers
+      : settingsStore.get().lyricsProviders;
+    const key = `${track.id}:${track.title}:${configured.join(',')}`;
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.at < 30 * 60_000) return cached.result;
+
+    for (const name of configured) {
+      const provider = PROVIDERS[name];
+      if (!provider) continue;
+      const result = await provider(track).catch(() => null);
+      if (result && result.lines.length) {
+        const output: LyricsResult = {
+          provider: result.provider,
+          synced: result.synced,
+          lines: result.lines,
+          raw: result.raw,
+        };
+        this.cache.set(key, { at: Date.now(), result: output });
+        return output;
+      }
+    }
+    this.cache.set(key, { at: Date.now(), result: null });
+    return null;
+  }
+
+  async translate(lines: string[], targetLanguage?: string): Promise<TranslationResult> {
+    const settings = settingsStore.get().translation;
+    const language = translationLanguageTag(targetLanguage || settings.targetLanguage);
+    const indexed = lines
+      .map((text, index) => ({ text, index }))
+      .filter((entry) => entry.text.trim().length > 0);
+    if (!indexed.length) return { lines: [...lines], provider: 'Automatic' };
+    const texts = indexed.map((entry) => entry.text);
+
+    let provider: 'auto' | 'deepl' | 'openai' = settings.provider;
+    if (provider === 'deepl' && !settings.deeplApiKey.trim()) provider = 'auto';
+    if (provider === 'openai' && !settings.openaiApiKey.trim()) provider = 'auto';
+
+    const key = translationCacheKey(provider, language, texts);
+    const cached = translationCache.get(key);
+    if (cached && Date.now() - cached.at < TRANSLATION_CACHE_TTL) {
+      return cached.result;
+    }
+    const pending = pendingTranslations.get(key);
+    if (pending) return pending;
+
+    const task = (async (): Promise<TranslationResult> => {
+      let translated: string[];
+      let label: string;
+      if (provider === 'deepl') {
+        const endpoint = settings.deeplApiKey.endsWith(':fx')
+          ? 'https://api-free.deepl.com/v2/translate'
+          : 'https://api.deepl.com/v2/translate';
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `DeepL-Auth-Key ${settings.deeplApiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: texts,
+            target_lang: language === 'zh-CN' ? 'ZH' : language.toUpperCase(),
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (!response.ok) throw new Error(`DeepL returned HTTP ${response.status}.`);
+        const json: any = await response.json();
+        translated = (json.translations || []).map((entry: any) => String(entry?.text ?? ''));
+        label = 'DeepL';
+      } else if (provider === 'openai') {
+        const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${settings.openaiApiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: settings.openaiModel || 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  `Translate each line to ${language}. Return only the translated lines, one per line, ` +
+                  `in the same order. Do not add notes, numbering or blank lines.`,
+              },
+              { role: 'user', content: texts.join('\n') },
+            ],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!response.ok) throw new Error(`OpenAI returned HTTP ${response.status}.`);
+        const json: any = await response.json();
+        translated = splitTranslatedText(
+          String(json?.choices?.[0]?.message?.content || ''),
+          texts.length,
+        );
+        label = 'OpenAI';
+      } else {
+        translated = await automaticTranslate(texts, language);
+        label = 'Google Translate';
+      }
+
+      if (translated.length !== texts.length) {
+        throw new Error('The translation provider returned an unexpected number of lines.');
+      }
+      const resultLines = [...lines];
+      indexed.forEach((entry, index) => {
+        resultLines[entry.index] = translated[index] || entry.text;
+      });
+      const result: TranslationResult = { lines: resultLines, provider: label };
+      rememberTranslation(key, result);
+      return result;
+    })().finally(() => {
+      pendingTranslations.delete(key);
+    });
+
+    pendingTranslations.set(key, task);
+    return task;
+  }
+}
+
+export const lyricsService = new LyricsService();

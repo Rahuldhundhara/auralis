@@ -30,6 +30,12 @@ interface AppState {
   addRecent: (track: Track) => Promise<void>;
   recordEvent: (track: Track, completed: boolean) => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<LocalPlaylist>;
+  importPlaylist: (
+    name: string,
+    tracks: Track[],
+    description?: string,
+    remoteId?: string,
+  ) => Promise<LocalPlaylist>;
   renamePlaylist: (id: string, name: string, description?: string) => Promise<LocalPlaylist>;
   deletePlaylist: (id: string) => Promise<void>;
   addToPlaylist: (id: string, track: Track) => Promise<LocalPlaylist>;
@@ -63,7 +69,7 @@ const EMPTY_SETTINGS: Settings = {
   normalize: false,
   crossfadeSec: 0,
   gapless: true,
-  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: false },
+  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0, bassFrequency: 80, limiter: true },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
@@ -303,6 +309,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     const playlist = await window.auralis.library.createPlaylist(name, description);
     set((state) => ({
       library: { ...state.library, playlists: [playlist, ...state.library.playlists.filter((item) => item.id !== playlist.id)] },
+    }));
+    return playlist;
+  },
+
+  importPlaylist: async (name, tracks, description, remoteId) => {
+    const libraryApi = window.auralis.library;
+    let playlist: LocalPlaylist;
+    if (libraryApi.importPlaylist) {
+      playlist = await libraryApi.importPlaylist(name, tracks, description, remoteId);
+    } else {
+      // Older desktop builds only expose create/add; import one track at a time.
+      playlist = await libraryApi.createPlaylist(name, description);
+      for (const track of tracks) {
+        playlist = await libraryApi.addToPlaylist(playlist.id, track);
+      }
+    }
+    set((state) => ({
+      library: {
+        ...state.library,
+        playlists: [playlist, ...state.library.playlists.filter((item) => item.id !== playlist.id)],
+      },
     }));
     return playlist;
   },

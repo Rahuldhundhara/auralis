@@ -17,6 +17,7 @@ import { Button, ContextMenu, Toasts, useScrollStore } from './components/primit
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { MobileNav } from './components/MobileNav';
 import { PlayerBar } from './components/PlayerBar';
 import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
@@ -199,12 +200,30 @@ export default function App() {
 
     const onKeyDown = (event: KeyboardEvent) => keyboard(event);
     window.addEventListener('keydown', onKeyDown);
+
+    // Android's system back button asks the renderer first. If there is no
+    // in-app history left, the native shell moves the task to the background.
+    const androidWindow = window as unknown as { __auralisAndroidBack?: () => boolean };
+    androidWindow.__auralisAndroidBack = () => {
+      const nav = useNavStore.getState();
+      if (!nav.canBack()) return false;
+      nav.back();
+      return true;
+    };
+
     return () => {
       cancelled = true;
       unsubscribeNav();
       window.removeEventListener('keydown', onKeyDown);
+      delete androidWindow.__auralisAndroidBack;
     };
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const dismiss = (window as unknown as { __auralisDismissSplash?: () => void }).__auralisDismissSplash;
+    dismiss?.();
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || startApplied.current) return;
@@ -269,6 +288,7 @@ export default function App() {
       {showApp ? (
         <>
           <PlayerBar />
+          <MobileNav />
           <QueuePanel />
           <NowPlaying />
         </>

@@ -110,9 +110,22 @@ try {
 
   // Moods and podcasts, the two browse shapes touched in the final pass.
   await page.locator('.sidebar-item', { hasText: 'Explore' }).first().click();
+  await page.waitForSelector('.explore-page', { timeout: 30000 });
   await page.locator('.explore-tab', { hasText: 'Moods & genres' }).click();
-  await page.waitForSelector('.mood-card', { timeout: 30000 });
-  console.log('[packaged moods]', JSON.stringify({ cards: await page.locator('.mood-card').count() }));
+  let moodCards = 0;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await page.waitForFunction(
+      () => document.querySelectorAll('.mood-card').length > 0 || Boolean(document.querySelector('.error-panel')),
+      { timeout: 30000 },
+    );
+    moodCards = await page.locator('.mood-card').count();
+    if (moodCards) break;
+    const retry = page.getByRole('button', { name: 'Try again' });
+    if (!(await retry.count())) throw new Error('Moods failed without a retry control');
+    console.log(`[packaged moods] live request failed; retry ${attempt}`);
+    await retry.first().click();
+  }
+  console.log('[packaged moods]', JSON.stringify({ cards: moodCards }));
 
   const podcast = await page.evaluate(async () => {
     const page = await window.auralis.yt.podcast('MPSPPLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4');

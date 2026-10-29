@@ -3,8 +3,9 @@ import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, IconButton } from './primitives';
-import { SearchField } from './SearchField';
+import { AndroidSearchLauncher, SearchField } from './SearchField';
 
 export function TopBar() {
   const canBack = useNavStore((state) => state.index > 0);
@@ -12,11 +13,27 @@ export function TopBar() {
   const back = useNavStore((state) => state.back);
   const forward = useNavStore((state) => state.forward);
   const navigate = useNavStore((state) => state.navigate);
+  const route = useNavStore((state) => state.entries[state.index] || { page: 'home' as const });
+  const showMobileBack =
+    canBack &&
+    !['home', 'explore', 'search', 'library', 'liked', 'recent', 'downloads', 'history', 'settings'].includes(route.page);
+  // The dedicated Search page owns its search field (hero on the landing view,
+  // inline field on results). Showing the launcher there would duplicate it.
+  const hideMobileSearch = isAndroidShell && route.page === 'search';
   const session = useAppStore((state) => state.session);
   const openDialog = useUiStore((state) => state.openDialog);
 
   return (
     <header className="top-bar">
+      <div className="top-mobile-leading">
+        {showMobileBack ? (
+          <IconButton label="Go back" size="sm" onClick={back}>
+            <ChevronLeft size={21} />
+          </IconButton>
+        ) : (
+          <img src="./icon.png" alt="" className="top-mobile-logo" draggable={false} />
+        )}
+      </div>
       <div className="top-nav-buttons">
         <IconButton label="Go back" size="sm" onClick={back} disabled={!canBack}>
           <ChevronLeft size={20} />
@@ -26,7 +43,7 @@ export function TopBar() {
         </IconButton>
       </div>
       <div className="top-search">
-        <SearchField />
+        {hideMobileSearch ? null : isAndroidShell ? <AndroidSearchLauncher /> : <SearchField />}
       </div>
       <div className="top-actions">
         <button type="button" className="recognize-pill" onClick={() => openDialog({ type: 'recognition' })} title="Identify a song">

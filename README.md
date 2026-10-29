@@ -211,6 +211,17 @@ docs/                Screenshots, API notes, parity matrix and QA record
 release/             Versioned installer and portable output (generated)
 ```
 
+## Android
+
+Auralis also ships as a native Android app. It uses the same React renderer inside a
+WebView shell, with a local HTTP bridge, a foreground playback service and bundled
+yt-dlp. The Android build lives in [`android/`](android/README.md); see that guide
+for prerequisites, signing and the exact Gradle commands.
+
+The Windows and Android clients share the renderer, so desktop-only code paths stay
+behind platform checks and Android-specific layout rules are scoped to the
+`is-android` root class.
+
 ## License
 
 Auralis is free software, licensed under the **GNU General Public License, version 3 or later**. See [LICENSE](LICENSE).

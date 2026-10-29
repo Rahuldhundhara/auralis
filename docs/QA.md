@@ -4,10 +4,12 @@
 **Platform:** Windows 11 x64 (build 10.0.26300)
 **Electron:** 45.0.0
 **Node:** 24.19.0
-**Test date:** 28 October 2026
+**Test date:** 29 October 2026
 **Live catalogue:** YouTube Music anonymous session
 
-> **1.1.0 scope:** cold-start animation, dedicated search, Queue-first Now Playing, lyrics translation UI, mini-player progress, streaming-quality reload, EQ presets/bass boost, Jump Back In and hardened media handling. The full 21-check suite was re-run on 1.1.0; the 1.0.2 results remain the baseline for older evidence.
+> **1.1.0 scope:** cold-start animation, dedicated search, Queue-first Now Playing, lyrics translation UI, mini-player progress, streaming-quality reload, EQ presets/numeric bass boost, Jump Back In and hardened media handling. The full 21-check suite was re-run on 1.1.0; the 1.0.2 results remain the baseline for older evidence.
+>
+> **Merged tree:** The Android/mobile branch (through the `v1.0.3-android` release) was merged into 1.1.0 without dropping platform-specific code. Typecheck, production builds, the 21-check suite, packaged smoke and focused upgrade checks were re-run on the merged tree; the Android renderer keeps its `isAndroidShell` paths and the regenerated web assets are committed.
 >
 > **Build paths:** Builds are written to `release/<version>/`; this record uses `release/1.1.0/`.
 
@@ -16,7 +18,9 @@
 | Area | Result |
 | --- | --- |
 | TypeScript typecheck | Pass |
+| Android renderer typecheck (`npm run typecheck:android`) | Pass |
 | Production renderer build | Pass |
+| Android web asset build (`npm run build:android`) | Pass (assets regenerated) |
 | 1.1.0 focused upgrade UI QA | Pass (16/16 checks) |
 | 1.1.0 packaged smoke test | Pass |
 | Branding | Pass (supplied Auralis logo in app, installer, portable, title bar, splash, tray and README) |
@@ -29,12 +33,12 @@
 | Silent install + installed app launch + uninstall | Pass |
 | Live playback from packaged EXE | Pass |
 | Live download from packaged EXE | Pass |
-| Moods & genres | Pass (49 tiles) |
+| Moods & genres | Pass (50 tiles) |
 | Podcast episodes | Pass (20 episodes) |
 | Themes, EQ, settings | Pass |
-| Browser/page errors during final pass | None from app code; one remote artwork 404 fell back |
+| Browser/page errors during final pass | No app exceptions; third-party artwork CDN failures fell back to placeholders |
 
-The final full-app pass, focused upgrade pass and packaged smoke test produced no page errors. The full pass logged one remote artwork 404 from `yt3.googleusercontent.com`; the image simply fell back, and no app code failed. The QA watcher ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
+The final full-app pass, focused upgrade pass and packaged smoke test produced no page exceptions. The full pass logged 25 `yt3.googleusercontent.com` artwork request failures (`ERR_CONNECTION_CLOSED`) and one artwork 404; every image fell back, and no app code failed. The QA watcher still records these external asset failures in `issues` rather than hiding them. It ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
 
 ## Test environment
 
@@ -81,21 +85,21 @@ Launch: `release/1.1.0/win-unpacked/Auralis.exe` built from the final source, wi
 ```text
 [packaged info] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
-  "downloadsDir":"%USERPROFILE%\\Music\\Auralis"}
-[packaged home] {"shelves":6,"cards":112}
+  "downloadsDir":"C:\\Users\\rv888\\Music\\Auralis"}
+[packaged home] {"shelves":6,"cards":109}
 [packaged playback] {"title":"Kesariya (From \"Brahmastra\")",
   "playerTitle":"Kesariya (From \"Brahmastra\")",
-  "playerArtist":"Arijit Singh","playerTime":"0:07",
+  "playerArtist":"Arijit Singh","playerTime":"0:05",
   "playerError":"","playing":true}
 [packaged radio] {"rows":50,"radio":1}
 [packaged download] {"status":"done",
   "path":"...\\NJAv_7lHUIU.m4a","exists":true,"size":4338550}
-[packaged moods] {"cards":49}
+[packaged moods] {"cards":50}
 [packaged podcast] {"title":"The Daily","episodes":20}
 [packaged issues] []
 ```
 
-The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:07 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 49 navigation tiles.
+The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:05 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 50 navigation tiles.
 
 ## Focused 1.1.0 upgrade result
 
@@ -110,11 +114,11 @@ The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The pla
 | Lyrics view switch | Playback still reported Pause (playing) |
 | Streaming quality | High (256 kbps) persisted and playback resumed |
 | Media Session | Title matched the player bar and state was `playing` |
-| Jump Back In | Real-history carousel, `overflow-x: auto` |
+| Jump Back In | Real-history carousel, 2 cards, `overflow-x: auto` |
 | Search history removal | 1 → 0 entries, confirmed through a fresh `library.get()` |
-| EQ + bass boost | Equalizer enabled, preset curve `[9,8,6,3,0,…]`, bass boost persisted |
+| EQ + bass boost | Equalizer enabled; Bass preset persisted `[6,5,4,2,0,-1,-1,0,1,2]` with `bassBoost: 5`, `bassFrequency: 80` and `limiter: true`; the slider then persisted 8 dB |
 | Translation language | Hindi (HI) persisted in settings |
-| Keyless translation | Real setup error from the backend, no fake translation |
+| Keyless translation | Real setup error from the backend, no fake translation: “Configure a DeepL API key or an OpenAI-compatible endpoint in Settings → Lyrics.” |
 
 Machine-readable output: [`qa/upgrade-results.json`](../qa/upgrade-results.json). Screenshots: [`qa/upgrade-splash.png`](../qa/upgrade-splash.png) and [`qa/upgrade-settings.png`](../qa/upgrade-settings.png).
 
@@ -125,7 +129,7 @@ The portable build was started directly, allowed to finish unpacking, then inspe
 ```text
 [portable] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
-  "shelves":6,"cards":122}
+  "shelves":6,"cards":112}
 ```
 
 This confirms that the portable stub unpacks and launches the same app, the home feed loads, and the bundled yt-dlp/FFmpeg resources are present. The QA script closes the app through its own API and then terminates only processes belonging to its isolated test profile. A follow-up process check confirmed that no Auralis processes were left running.
@@ -147,7 +151,7 @@ The installed executable was then launched with a separate test profile:
 ```text
 [installed] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
-  "shelves":6,"cards":112}
+  "shelves":6,"cards":122}
 ```
 
 The installed app was closed through its API and uninstalled silently. The uninstaller exited 0, the temporary installation folder was removed, and no Auralis registry entry remained.
@@ -160,13 +164,13 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 
 | Check | Expected | Observed |
 | --- | --- | --- |
-| Anonymous home | Shelves and playable cards | 6 shelves, 122 cards in the final packaged run |
+| Anonymous home | Shelves and playable cards | 6 shelves, 109 cards in the final packaged run; 107 in the full pass |
 | Search | Live suggestions and results | Typed a real query and received real songs |
 | Songs filter | Live songs with artists and durations | Pass |
 | Explore | New releases, popular episodes, trending, videos | Pass |
 | Charts | Video, language and artist charts | Pass |
-| New releases | Fresh album grid | 134 live items |
-| Moods & genres | Mood and genre navigation | 49 tiles across two shelves |
+| New releases | Fresh album grid | 128 live items |
+| Moods & genres | Mood and genre navigation | 50 tiles across two shelves |
 | Mood category | Opens a browse page | "Chill" loaded 13 shelves |
 | Album detail | Header, tracks, related shelves | Pass |
 | Artist detail | Top songs, releases, artwork | Pass |
@@ -179,13 +183,13 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 | Check | Expected | Observed |
 | --- | --- | --- |
 | Stream resolution | Bundled yt-dlp returns audio | Pass |
-| Audio start | Player time advances | 0:04 in the final packaged run |
+| Audio start | Player time advances | 0:05 in the final packaged run |
 | Pause/play control | Reflects playing state | Pause control visible |
 | Seek | Position changes | Pass |
 | Queue | Current track and next tracks | Pass |
 | Queue editing | Reorder and remove upcoming tracks | Pass |
 | Sleep timer | Presets, countdown, automatic pause, end-of-track and off | Pass |
-| Radio and related autoplay | Search pick seeds a station; queue end continues with related songs | Search pick produced a 50-track Hindi station; after clearing upcoming and pressing Next, the app started "Apna Bana Le" with 49 related rows. Continuation pages were exercised live. |
+| Radio and related autoplay | Search pick seeds a station; queue end continues with related songs | Search pick produced a 50-track Hindi station; after clearing upcoming and pressing Next, the app started "Chaleya" with 49 related rows. Continuation pages were exercised live. |
 | Lyrics | Synced lyrics from LRCLIB/YouTube | Pass; synced highlight and scrolling |
 | EQ | Ten bands and preamp update | Pass; state persisted |
 | Playback rate | Applied live | Pass |
@@ -194,8 +198,8 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 
 ### Related autoplay
 
-- A search for `Tainu Khabar Nahi` returned 5 song rows. Clicking the first row started that song and built a 50-track radio queue from it, instead of queuing the other search results.
-- Clearing the upcoming queue and pressing Next on the last track seeded a new station from that track. The player moved to `Apna Bana Le (From "Bhediya")` with 49 related rows still queued.
+- A search for `Tainu Khabar Nahi` returned 20 song rows. Clicking the first row started that song and built a 50-track radio queue from it, instead of queuing the other search results.
+- Clearing the upcoming queue and pressing Next on the last track seeded a new station from that track. The player moved to `Chaleya` with 49 related rows still queued.
 - A live probe of the same Hindi seed returned Hindi recommendations from the first page and from the continuation page. The station is seed-based, so it keeps the seed's language and scene instead of mixing in unrelated catalogue results.
 - Radio continuation tokens are kept in player state and persisted, so a restored radio queue can keep fetching related songs when it reaches the end.
 
@@ -220,12 +224,12 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 | --- | --- | --- |
 | Main/preload bundles | Written to `dist-electron` | Pass |
 | Renderer | Written to `dist` | Pass |
-| `app.asar` | Contains app code | 3,756,774 bytes |
+| `app.asar` | Contains app code | 4,810,645 bytes |
 | Icons | Present in packaged resources and match source | `icon.png`, `tray.png` |
 | Executable icon | Supplied Auralis mark embedded | 32x32 icon extracted from EXE and installer |
 | Binaries | Present in packaged resources | `bin/yt-dlp.exe`, `bin/ffmpeg.exe` |
-| NSIS installer | Produces Setup EXE | 158,842,789 bytes |
-| Portable | Produces single EXE | 158,595,674 bytes |
+| NSIS installer | Produces Setup EXE | 159,342,036 bytes |
+| Portable | Produces single EXE | 145,878,108 bytes |
 | Packaged launch | Home renders | Pass |
 | Packaged playback | Audio from bundled tools | Pass |
 | Packaged download | File via bundled tools | Pass |
@@ -249,8 +253,8 @@ The supplied Auralis artwork is the only logo used in the release:
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `Auralis-Setup-1.1.0.exe` | 158,842,789 bytes | `a871786bb46c57c97f44113d924ff2a91dfe6d9d14e5e750a0fc6f2a9f3f5d20` |
-| `Auralis-Portable-1.1.0.exe` | 158,595,674 bytes | `1672fc0166b259f01c3979eb84331e8bdef33bd041e078dbce7c0f38ea9d016c` |
+| `Auralis-Setup-1.1.0.exe` | 159,342,036 bytes | `56dbda7842ae4093e7f400fd3ca7efdb388613e0bb9a72fc19e21da235839faa` |
+| `Auralis-Portable-1.1.0.exe` | 145,878,108 bytes | `df68a549782dfc67d69832a878a288b25d30f4025f0135c79b9cc033e3d01032` |
 
 The same hashes are written to `release/1.1.0/SHA256SUMS.txt`.
 
@@ -270,6 +274,7 @@ These are not mocked or faked; they are implemented calls that require credentia
 | Lyrics translation | Needs an OpenAI or DeepL key | The keyless setup error and target-language persistence were verified; enter a key, run Test translation, then open a synced song |
 | Shazam recognition | Needs a known audio sample or microphone input | Use Identify on a track with a clean intro |
 | YouTube captions fallback | The official transcript endpoint returns HTTP 400; needs a captioned video | Play a video with captions and open Lyrics → YouTube captions |
+| Android runtime | The merged Android shell compiles (`typecheck:android`, `build:android`) and its web assets were regenerated, but this Windows QA pass did not run an Android device/emulator build | Build the APK in `android/` and smoke-test playback, notifications and downloads on a device; the remote `v1.0.3-android` release remains the device-tested baseline |
 
 The transcript endpoint issue is external: YouTube Music returns HTTP 400 for that request shape. The yt-dlp VTT fallback is implemented and fails gracefully.
 
@@ -328,7 +333,9 @@ Screenshots are stored in `qa/` and selected product screenshots in `docs/screen
 ```powershell
 npm install
 npm run typecheck
+npm run typecheck:android
 npm run build
+npm run build:android
 npm run dist
 node scripts/qa-packaged.mjs
 node scripts/qa-upgrade.mjs

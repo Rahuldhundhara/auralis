@@ -64,12 +64,28 @@ interface PlayerState {
 
 const STORAGE_KEY = 'auralis.player.v1';
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const MAX_QUEUE_TRACKS = 400;
+const QUEUE_HISTORY = 50;
+
+function boundedQueue(queue: Track[], index: number) {
+  if (queue.length <= MAX_QUEUE_TRACKS) return { queue, index };
+  const start = Math.max(
+    0,
+    Math.min(index - QUEUE_HISTORY, queue.length - MAX_QUEUE_TRACKS),
+  );
+  return {
+    queue: queue.slice(start, start + MAX_QUEUE_TRACKS),
+    index: index - start,
+  };
+}
 
 let audio: HTMLAudioElement | null = null;
 let audioContext: AudioContext | null = null;
 let sourceNode: MediaElementAudioSourceNode | null = null;
 let preampNode: GainNode | null = null;
+let bassNode: BiquadFilterNode | null = null;
 let compressorNode: DynamicsCompressorNode | null = null;
+let limiterNode: DynamicsCompressorNode | null = null;
 let eqNodes: BiquadFilterNode[] = [];
 let masterNode: GainNode | null = null;
 let graphAttempted = false;
@@ -83,9 +99,12 @@ let lastPersist = 0;
 let persistTimer: number | undefined;
 let volumeTimer: number | undefined;
 let discordTimer: number | undefined;
+let prefetchTimer: number | undefined;
+let prefetchIdle: number | undefined;
 let shuffleBackup: { queue: Track[]; index: number } | null = null;
 let errorRetries = 0;
 let mediaHandlersBound = false;
+let lastNativeSync = 0;
 
 function mediaArtwork(track: Track | undefined) {
   if (!track?.thumbnail) return [];
@@ -96,7 +115,41 @@ function mediaArtwork(track: Track | undefined) {
   ];
 }
 
+/** The audio element is the only clock; the store mirrors it for the UI. */
+export function currentPlaybackPosition(): number {
+  if (audio && audio.src && Number.isFinite(audio.currentTime)) return audio.currentTime;
+  return usePlayerStore.getState().position;
+}
+
+export function isTrackLiked(track?: Track): boolean {
+  if (!track) return false;
+  return useAppStore.getState().library.liked.some((item) => item.id === track.id);
+}
+
+/**
+ * Pushes the single playback snapshot to Android's media session. Position
+ * updates are throttled because the system already advances the reported
+ * position while playing. State changes should pass `force`.
+ */
+export function syncNativeMediaState(force = false) {
+  const state = usePlayerStore.getState();
+  const now = Date.now();
+  if (!force && now - lastNativeSync < 900) return;
+  lastNativeSync = now;
+  try {
+    window.__auralisAndroidMediaState?.(state.current || null, state.playing, {
+      position: currentPlaybackPosition(),
+      duration: state.duration || state.current?.duration || 0,
+      buffering: state.buffering || state.loading,
+      liked: isTrackLiked(state.current),
+    });
+  } catch {
+    // The native bridge is Android-only.
+  }
+}
+
 function updateMediaSession(track: Track | undefined, playing: boolean) {
+  syncNativeMediaState(true);
   if (!('mediaSession' in navigator)) return;
   try {
     navigator.mediaSession.metadata = track
@@ -113,7 +166,8 @@ function updateMediaSession(track: Track | undefined, playing: boolean) {
   }
 }
 
-function updatePositionState() {
+function updatePositionState(force = false) {
+  syncNativeMediaState(force);
   if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
   const state = usePlayerStore.getState();
   if (!state.duration || !Number.isFinite(state.duration)) return;
@@ -146,7 +200,17 @@ function buildGraph() {
     audioContext = new Ctor();
     sourceNode = audioContext.createMediaElementSource(audio);
     preampNode = audioContext.createGain();
+    bassNode = audioContext.createBiquadFilter();
+    bassNode.type = 'lowshelf';
+    bassNode.frequency.value = 80;
+    bassNode.gain.value = 0;
     compressorNode = audioContext.createDynamicsCompressor();
+    limiterNode = audioContext.createDynamicsCompressor();
+    limiterNode.threshold.value = -1;
+    limiterNode.knee.value = 0;
+    limiterNode.ratio.value = 20;
+    limiterNode.attack.value = 0.002;
+    limiterNode.release.value = 0.08;
     masterNode = audioContext.createGain();
     eqNodes = EQ_FREQUENCIES.map((frequency) => {
       const filter = audioContext!.createBiquadFilter();
@@ -162,15 +226,19 @@ function buildGraph() {
       node.connect(filter);
       node = filter;
     }
-    node.connect(compressorNode);
-    compressorNode.connect(masterNode);
+    node.connect(bassNode);
+    bassNode.connect(compressorNode);
+    compressorNode.connect(limiterNode);
+    limiterNode.connect(masterNode);
     masterNode.connect(audioContext.destination);
     applyDsp(useAppStore.getState().settings);
   } catch {
     audioContext = null;
     sourceNode = null;
     preampNode = null;
+    bassNode = null;
     compressorNode = null;
+    limiterNode = null;
     masterNode = null;
     eqNodes = [];
   }
@@ -181,10 +249,15 @@ function applyDsp(settings: Settings) {
     preampNode.gain.setTargetAtTime(Math.pow(10, (settings.eq.enabled ? settings.eq.preamp : 0) / 20), audioContext.currentTime, 0.02);
   }
   eqNodes.forEach((filter, index) => {
-    const boost = settings.eq.bassBoost ? [6, 4.5, 3, 1.5][index] || 0 : 0;
-    const gain = settings.eq.enabled ? (settings.eq.bands[index] || 0) + boost : 0;
+    const gain = settings.eq.enabled ? settings.eq.bands[index] || 0 : 0;
     filter.gain.setTargetAtTime(Math.max(-18, Math.min(18, gain)), audioContext?.currentTime || 0, 0.03);
   });
+  if (bassNode && audioContext) {
+    const boost = settings.eq.enabled ? Math.max(0, Math.min(12, settings.eq.bassBoost ?? 0)) : 0;
+    const frequency = Math.max(40, Math.min(160, settings.eq.bassFrequency ?? 80));
+    bassNode.frequency.setTargetAtTime(frequency, audioContext.currentTime, 0.04);
+    bassNode.gain.setTargetAtTime(boost, audioContext.currentTime, 0.03);
+  }
   if (compressorNode && audioContext) {
     const enabled = settings.normalize;
     compressorNode.threshold.setTargetAtTime(enabled ? -24 : 0, audioContext.currentTime, 0.05);
@@ -192,6 +265,11 @@ function applyDsp(settings: Settings) {
     compressorNode.ratio.setTargetAtTime(enabled ? 4 : 1, audioContext.currentTime, 0.05);
     compressorNode.attack.setTargetAtTime(enabled ? 0.004 : 0.003, audioContext.currentTime, 0.05);
     compressorNode.release.setTargetAtTime(enabled ? 0.25 : 0.25, audioContext.currentTime, 0.05);
+  }
+  if (limiterNode && audioContext) {
+    const enabled = settings.eq.limiter !== false;
+    limiterNode.threshold.setTargetAtTime(enabled ? -1 : 0, audioContext.currentTime, 0.02);
+    limiterNode.ratio.setTargetAtTime(enabled ? 20 : 1, audioContext.currentTime, 0.02);
   }
 }
 
@@ -214,6 +292,7 @@ function persistNow() {
     queue: state.queue,
     index: state.index,
     position: state.position,
+    duration: state.duration,
     radio: state.radio,
     radioSeed: state.radioSeed,
     radioContinuation: state.radioContinuation,
@@ -231,6 +310,37 @@ function persistNow() {
 function schedulePersist() {
   window.clearTimeout(persistTimer);
   persistTimer = window.setTimeout(persistNow, 700);
+}
+
+function cancelPrefetch() {
+  window.clearTimeout(prefetchTimer);
+  window.clearTimeout(prefetchIdle);
+  prefetchTimer = undefined;
+  prefetchIdle = undefined;
+}
+
+function schedulePrefetch(track: Track | undefined, token: number) {
+  cancelPrefetch();
+  if (!track) return;
+  // Resolve the next song as soon as the current one is audible. yt-dlp
+  // stream URLs stay cached for 90 minutes, so starting early keeps the
+  // transition instant without changing what is downloaded.
+  prefetchTimer = window.setTimeout(() => {
+    prefetchTimer = undefined;
+    if (token !== loadToken) return;
+    const state = usePlayerStore.getState();
+    if (state.queue[state.index + 1]?.id !== track.id) return;
+    window.auralis.player.prefetch(playableTrack(track)).catch(() => {});
+    const after = state.queue[state.index + 2];
+    if (!after || after.id === track.id || after.localPath) return;
+    prefetchIdle = window.setTimeout(() => {
+      prefetchIdle = undefined;
+      const latest = usePlayerStore.getState();
+      if (token !== loadToken) return;
+      if (latest.queue[latest.index + 1]?.id !== track.id) return;
+      window.auralis.player.prefetch(playableTrack(after)).catch(() => {});
+    }, 4200);
+  }, 350);
 }
 
 function finalizePlayback(completed = false) {
@@ -274,6 +384,7 @@ function attachAudioListeners() {
       pendingSeek = 0;
     }
     usePlayerStore.setState({ loading: false });
+    updatePositionState();
     void state;
   });
   audio.addEventListener('timeupdate', () => {
@@ -285,7 +396,7 @@ function attachAudioListeners() {
       lastPositionUpdate = Date.now();
       updatePositionState();
     }
-    if (Date.now() - lastPersist > 5000) schedulePersist();
+    if (Date.now() - lastPersist > 15000) schedulePersist();
   });
   audio.addEventListener('play', () => {
     usePlayerStore.setState({ playing: true, buffering: false, error: undefined });
@@ -378,6 +489,30 @@ function setupMediaSession() {
   }
 }
 
+async function toggleLikeFromNotification(action: 'like' | 'unlike' | 'toggle', trackId?: string) {
+  const state = usePlayerStore.getState();
+  const track =
+    (trackId ? state.current?.id === trackId ? state.current : state.queue.find((item) => item.id === trackId) : undefined) ||
+    (trackId ? useAppStore.getState().library.liked.find((item) => item.id === trackId) : undefined) ||
+    state.current;
+  if (!track) return;
+  try {
+    const library = useAppStore.getState();
+    if (action === 'like') await library.likeTrack(track);
+    else if (action === 'unlike') await library.unlikeTrack(track.id);
+    else await library.toggleLike(track);
+    const liked = isTrackLiked(track);
+    useUiStore.getState().toast(
+      liked ? `Liked “${track.title}”.` : `Removed “${track.title}” from Liked Songs.`,
+      'success',
+    );
+  } catch {
+    useUiStore.getState().toast('Could not update Liked Songs. Check your connection and try again.', 'error');
+  } finally {
+    syncNativeMediaState(true);
+  }
+}
+
 function bindKeyboard() {
   window.addEventListener('keydown', (event) => {
     if (isTypingTarget(event.target) || event.altKey || event.metaKey) return;
@@ -413,6 +548,7 @@ function restoreSession() {
     queue: Track[];
     index: number;
     position: number;
+    duration?: number;
     radio: boolean;
     radioSeed?: string;
     radioContinuation?: string;
@@ -420,14 +556,17 @@ function restoreSession() {
     shuffle: boolean;
   } | null>(localStorage.getItem(STORAGE_KEY), null);
   if (!saved || !Array.isArray(saved.queue) || !saved.queue.length) return;
-  const index = Math.min(Math.max(0, saved.index || 0), saved.queue.length - 1);
-  const track = saved.queue[index];
+  const savedIndex = Math.min(Math.max(0, saved.index || 0), saved.queue.length - 1);
+  const restored = boundedQueue(saved.queue, savedIndex);
+  const index = restored.index;
+  const track = restored.queue[index];
   pendingSeek = Math.max(0, saved.position || 0);
+  const restoredDuration = Math.max(0, saved.duration || track.duration || 0);
   usePlayerStore.setState({
-    queue: saved.queue,
+    queue: restored.queue,
     index,
     current: track,
-    duration: track.duration || 0,
+    duration: restoredDuration,
     position: pendingSeek,
     radio: Boolean(saved.radio),
     radioSeed: saved.radioSeed,
@@ -451,6 +590,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     const el = ensureAudio();
     buildGraph();
+    cancelPrefetch();
     loadToken++;
     const token = loadToken;
     recorded = false;
@@ -495,7 +635,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         set({ loading: false });
       }
       const nextTrack = get().queue[get().index + 1];
-      if (nextTrack) window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 2200);
+      schedulePrefetch(nextTrack, token);
     } catch (error: any) {
       if (token !== loadToken) return;
       set({
@@ -510,7 +650,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   const radioTracksForQueue = (tracks: Track[]) => {
     // Keep the shuffle backup in sync so turning shuffle off does not drop
     // the radio tracks that were appended while shuffle was on.
-    if (shuffleBackup) shuffleBackup.queue = [...shuffleBackup.queue, ...tracks];
+    if (shuffleBackup) {
+      shuffleBackup.queue = [...shuffleBackup.queue, ...tracks].slice(-MAX_QUEUE_TRACKS);
+    }
     return get().shuffle ? shuffleArray(tracks) : tracks;
   };
 
@@ -541,15 +683,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         }
         const queue = [...get().queue, ...radioTracksForQueue(extra)];
         const nextIndex = get().index + 1;
+        const bounded = boundedQueue(queue, nextIndex);
         set({
-          queue,
-          index: nextIndex,
+          queue: bounded.queue,
+          index: bounded.index,
           radio: true,
           radioSeed: seed,
           radioContinuation: nextToken,
           radioLoading: false,
         });
-        void load(queue[nextIndex], true, 0);
+        void load(bounded.queue[bounded.index], true, 0);
         persistNow();
         return 'added';
       }
@@ -599,24 +742,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       setupMediaSession();
       bindKeyboard();
 
-      window.auralis.events.onMediaKey((key) => {
-        if (key === 'play-pause') get().toggle();
-        else if (key === 'next') get().next();
-        else if (key === 'previous') get().previous();
-        else if (key === 'stop') get().stop();
+      window.auralis.events.onMediaKey((payload) => {
+        let action = payload;
+        let positionMs: number | undefined;
+        let trackId: string | undefined;
+        if (payload && payload.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed && typeof parsed === 'object') {
+              action = String(parsed.action || '');
+              positionMs = typeof parsed.position === 'number' ? parsed.position : undefined;
+              trackId = typeof parsed.trackId === 'string' ? parsed.trackId : undefined;
+            }
+          } catch {
+            // Fall back to the legacy plain-text action.
+          }
+        }
+        if (action === 'play-pause') get().toggle();
+        else if (action === 'next') get().next();
+        else if (action === 'previous') get().previous();
+        else if (action === 'stop') get().stop();
+        else if (action === 'seek' && typeof positionMs === 'number' && Number.isFinite(positionMs)) {
+          get().seek(Math.max(0, positionMs / 1000));
+        } else if (action === 'like' || action === 'unlike') {
+          void toggleLikeFromNotification(action, trackId);
+        }
       });
 
       useAppStore.subscribe((state, previous) => {
-        if (state.settings === previous.settings) return;
-        const current = state.settings;
-        if (audio) {
-          audio.volume = current.muted ? 0 : current.volume;
-          audio.muted = current.muted;
-          audio.playbackRate = current.playbackRate || 1;
+        if (state.settings !== previous.settings) {
+          const current = state.settings;
+          if (audio) {
+            audio.volume = current.muted ? 0 : current.volume;
+            audio.muted = current.muted;
+            audio.playbackRate = current.playbackRate || 1;
+          }
+          set({ volume: current.volume, muted: current.muted, rate: current.playbackRate || 1 });
+          applyDsp(current);
+          if (state.settings.discord.enabled !== previous.settings.discord.enabled) notifyDiscord();
         }
-        set({ volume: current.volume, muted: current.muted, rate: current.playbackRate || 1 });
-        applyDsp(current);
-        if (state.settings.discord.enabled !== previous.settings.discord.enabled) notifyDiscord();
+        if (state.library.liked !== previous.library.liked) syncNativeMediaState(true);
       });
 
       window.addEventListener('beforeunload', () => {
@@ -628,9 +793,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     playQueue: (tracks, startIndex = 0, options = {}) => {
       const list = tracks.filter((track) => track && track.id);
       if (!list.length) return;
-      let queue = list;
       let index = Math.min(Math.max(0, startIndex), list.length - 1);
-      if (get().shuffle) {
+      const state = get();
+      const sameQueue =
+        state.queue.length === list.length &&
+        state.index === index &&
+        list.every((track, itemIndex) => state.queue[itemIndex]?.id === track.id);
+      if (sameQueue && !options.radio && !options.startAt) {
+        // Tapping the already loaded song should not restart it or resolve it
+        // again. This keeps repeated taps cheap and prevents native workers
+        // from piling up when the same card is tapped over and over.
+        if (!state.playing && !state.loading) get().play();
+        return;
+      }
+      let queue = list;
+      if (state.shuffle) {
         const current = list[index];
         queue = [current, ...shuffleArray(list.filter((_, itemIndex) => itemIndex !== index))];
         index = 0;
@@ -673,16 +850,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           existing.add(item.id);
           return true;
         });
+        const merged = [...get().queue, ...radioTracksForQueue(extra)];
+        const bounded = boundedQueue(merged, get().index);
         set({
-          queue: [...get().queue, ...radioTracksForQueue(extra)],
+          queue: bounded.queue,
+          index: bounded.index,
           radioContinuation: result.continuation,
           radioLoading: false,
         });
         schedulePersist();
-        const nextTrack = get().queue[get().index + 1];
-        if (nextTrack) {
-          window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 1200);
-        }
       } catch (error: any) {
         set({ radioLoading: false });
         useUiStore.getState().toast(`Radio is starting from this song only: ${error?.message || error}`, 'error');
@@ -828,7 +1004,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const target = Math.max(0, Math.min(seconds, duration || seconds));
       audio.currentTime = target;
       set({ position: target });
-      updatePositionState();
+      updatePositionState(true);
     },
 
     seekBy: (delta) => get().seek(get().position + delta),
@@ -904,7 +1080,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         get().playQueue([...state.queue, track], state.queue.length, { radio: state.radio, seed: state.radioSeed });
         return;
       }
-      set({ queue: [...state.queue, track] });
+      const bounded = boundedQueue([...state.queue, track], state.index);
+      set({ queue: bounded.queue, index: bounded.index });
       if (!quiet) useUiStore.getState().toast(`Added “${track.title}” to the queue.`, 'success');
       schedulePersist();
     },
@@ -913,8 +1090,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const state = get();
       const queue = [...state.queue];
       queue.splice(state.index + 1, 0, track);
-      if (shuffleBackup) shuffleBackup.queue = [...shuffleBackup.queue, track];
-      set({ queue });
+      const bounded = boundedQueue(queue, state.index);
+      if (shuffleBackup) {
+        shuffleBackup.queue = [...shuffleBackup.queue, track].slice(-MAX_QUEUE_TRACKS);
+      }
+      set({ queue: bounded.queue, index: bounded.index });
       if (!quiet) useUiStore.getState().toast(`“${track.title}” will play next.`, 'success');
       schedulePersist();
     },
@@ -925,6 +1105,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const removingCurrent = index === state.index;
       const queue = state.queue.filter((_, itemIndex) => itemIndex !== index);
       if (!queue.length) {
+        cancelPrefetch();
         audio?.pause();
         if (audio) audio.removeAttribute('src');
         set({
@@ -1001,6 +1182,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     clearSleepTimer: () => set({ sleepTimerEnd: undefined, sleepTimerEndOfTrack: false }),
 
     stop: () => {
+      cancelPrefetch();
       finalizePlayback(false);
       if (audio) {
         audio.pause();
