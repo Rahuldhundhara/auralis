@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage"><strong>Download AppImage</strong></a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-x86_64.AppImage"><strong>Download AppImage</strong></a>
   ·
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb"><strong>Download .deb</strong></a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-amd64.deb"><strong>Download .deb</strong></a>
   ·
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt">SHA-256 checksums</a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/SHA256SUMS-linux.txt">SHA-256 checksums</a>
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -40,7 +40,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history |
 | **Downloads** | Offline audio downloads in app-private storage with progress, pause/resume, cancel, retry, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
-| **Desktop** | Frameless window, tray icon, close-to-tray, keyboard shortcuts and platform media controls (MPRIS on Linux) |
+| **Desktop** | Frameless window, animated cold-start logo, tray icon, close-to-tray, keyboard shortcuts and platform media controls (MPRIS on Linux) |
 | **Look and feel** | Material-inspired design, dark/black/light/system themes and eight accent colours |
 
 ### Screens
@@ -60,12 +60,14 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 ## Install Auralis for Linux 1.0.2
 
 Download the Linux 1.0.2 packages from the
-[Linux release page](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux):
+[Linux release page](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux.1).
+The `.1` rebuild adds the layered animated cold-start logo; the original
+`v1.0.2-linux` release remains available for reference.
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
-| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
+| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
+| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
 
 ```bash
 chmod +x Auralis-1.0.2-x86_64.AppImage
@@ -77,7 +79,7 @@ auralis
 ```
 
 Verify the download against
-[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt):
+[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/SHA256SUMS-linux.txt):
 
 ```bash
 sha256sum -c SHA256SUMS-linux.txt
@@ -107,10 +109,10 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 - Picking a search result now starts a related-song station from that song instead of playing the other search results underneath it.
 - Albums, playlists and one-off picks keep going after their last track: Auralis seeds a radio station from the song that just ended. Radio stations follow continuation tokens, so they do not stop after the first batch.
 - Seed-based radio keeps the seed's language and scene; a Hindi song seeds Hindi recommendations, verified live against YouTube Music.
-- Supplied Auralis logo: green "A" play mark with soundwave arcs, used by the installer, window, title bar, splash, tray and README.
+- Supplied Auralis logo: green "A" play mark with soundwave arcs, used by the installer, window, title bar, animated cold-start splash, tray and README.
 - Hardened live QA: 21 end-to-end checks covering search filters, playback, related autoplay, queue editing, playlists, downloads, lyrics, settings and restart persistence.
 - Rebuilt NSIS installer and portable EXE with the 1.0.2 binaries and refreshed SHA-256 checksums.
-- Published the Linux 1.0.2 AppImage and Debian package with SHA-256 checksums.
+- Published rebuilt Linux 1.0.2 AppImage and Debian packages with the layered animated cold-start logo and refreshed SHA-256 checksums.
 
 ## Where your data lives
 
