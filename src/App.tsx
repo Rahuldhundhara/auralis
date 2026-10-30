@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
@@ -12,7 +13,6 @@ import { useNavStore } from './stores/nav';
 import { useAppStore } from './stores/app';
 import { usePlayerStore } from './stores/player';
 import { useUiStore } from './stores/ui';
-import { platformName } from './lib/platform';
 import { Button, ContextMenu, Toasts, useScrollStore } from './components/primitives';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
@@ -21,6 +21,7 @@ import { PlayerBar } from './components/PlayerBar';
 import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
 import { DialogHost } from './components/Dialogs';
+import { Splash } from './components/Splash';
 import { HomePage } from './pages/Home';
 import { ExplorePage } from './pages/Explore';
 import { SearchPage } from './pages/Search';
@@ -130,35 +131,6 @@ function routeKey(route: Route): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Splash                                                              */
-/* ------------------------------------------------------------------ */
-
-function Splash() {
-  return (
-    <div className="splash">
-      <div className="splash-glow" aria-hidden="true" />
-      <div className="splash-brand">
-        <img src="./icon.png" alt="" className="splash-logo" draggable={false} />
-        <div className="splash-word">
-          <span>Auralis</span>
-          <small>Music for {platformName()}</small>
-        </div>
-      </div>
-      <div className="splash-eq" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-      </div>
-      <p>Warming up your library…</p>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* App shell                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -171,7 +143,16 @@ export default function App() {
   const route = entries[index] || { page: 'home' as const };
   const scrollRef = useRef<HTMLDivElement>(null);
   const startApplied = useRef(false);
+  const [splashDone, setSplashDone] = useState(false);
+  const showApp = ready && splashDone;
   const key = routeKey(route);
+
+  useEffect(() => {
+    // Let the cold-start reveal finish before the library appears. The app
+    // keeps loading behind the splash, so this is a floor, not a fixed delay.
+    const timer = window.setTimeout(() => setSplashDone(true), 3300);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +244,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <TitleBar />
-      {ready ? (
+      {showApp ? (
         <div className="app-body">
           <Sidebar />
           <div className="main-frame">
@@ -285,7 +266,7 @@ export default function App() {
       ) : (
         <Splash />
       )}
-      {ready ? (
+      {showApp ? (
         <>
           <PlayerBar />
           <QueuePanel />
