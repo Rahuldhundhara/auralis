@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux"><strong>Download Auralis for Linux 1.0.2</strong></a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux.1"><strong>Download Auralis for Linux 1.0.2</strong></a>
   · AppImage · Debian package
 </p>
 
@@ -70,12 +70,14 @@ These community builds are not code-signed, so Windows SmartScreen may show "Win
 ### Linux 1.0.2
 
 Linux x64 packages are available from the
-[Linux 1.0.2 release](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux):
+[Linux 1.0.2 release](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux.1).
+The `.1` rebuild adds the layered animated cold-start logo; the original
+`v1.0.2-linux` release remains available for reference.
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
-| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
+| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
+| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
 
 ```bash
 chmod +x Auralis-1.0.2-x86_64.AppImage
@@ -87,7 +89,7 @@ auralis
 ```
 
 Verify the download against
-[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux/SHA256SUMS-linux.txt):
+[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/SHA256SUMS-linux.txt):
 
 ```bash
 sha256sum -c SHA256SUMS-linux.txt
