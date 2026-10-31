@@ -675,7 +675,9 @@ app.on('before-quit', () => {
   quitting = true;
   flushStores();
   void discord.clear();
-  globalShortcut.unregisterAll();
+  // A second instance quits before Electron is ready. Calling globalShortcut
+  // then throws and shows an error dialog instead of focusing the first window.
+  if (app.isReady()) globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
