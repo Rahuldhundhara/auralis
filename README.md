@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-x86_64.AppImage"><strong>Download AppImage</strong></a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/Auralis-1.0.2-x86_64.AppImage"><strong>Download AppImage</strong></a>
   ·
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-amd64.deb"><strong>Download .deb</strong></a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/Auralis-1.0.2-amd64.deb"><strong>Download .deb</strong></a>
   ·
-  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/SHA256SUMS-linux.txt">SHA-256 checksums</a>
+  <a href="https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/SHA256SUMS-linux.txt">SHA-256 checksums</a>
 </p>
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
@@ -60,14 +60,15 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 ## Install Auralis for Linux 1.0.2
 
 Download the Linux 1.0.2 packages from the
-[Linux release page](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux.1).
-The `.1` rebuild adds the layered animated cold-start logo; the original
-`v1.0.2-linux` release remains available for reference.
+[Linux release page](https://github.com/Rahuldhundhara/auralis/releases/tag/v1.0.2-linux.2).
+The `.2` rebuild adds the layered animated cold-start logo and the
+second-instance launch fix. The original `v1.0.2-linux` and animated `.1`
+releases remain available for reference.
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
-| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
+| AppImage | [`Auralis-1.0.2-x86_64.AppImage`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/Auralis-1.0.2-x86_64.AppImage) | You want a single portable file with no installation |
+| Debian package | [`Auralis-1.0.2-amd64.deb`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/Auralis-1.0.2-amd64.deb) | You want a desktop entry, system integration and a package-managed install |
 
 ```bash
 chmod +x Auralis-1.0.2-x86_64.AppImage
@@ -79,7 +80,7 @@ auralis
 ```
 
 Verify the download against
-[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.1/SHA256SUMS-linux.txt):
+[`SHA256SUMS-linux.txt`](https://github.com/Rahuldhundhara/auralis/releases/download/v1.0.2-linux.2/SHA256SUMS-linux.txt):
 
 ```bash
 sha256sum -c SHA256SUMS-linux.txt
@@ -113,6 +114,7 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 - Hardened live QA: 21 end-to-end checks covering search filters, playback, related autoplay, queue editing, playlists, downloads, lyrics, settings and restart persistence.
 - Rebuilt NSIS installer and portable EXE with the 1.0.2 binaries and refreshed SHA-256 checksums.
 - Published rebuilt Linux 1.0.2 AppImage and Debian packages with the layered animated cold-start logo and refreshed SHA-256 checksums.
+- Published the Linux `.2` rebuild with the second-instance launch fix and updated SHA-256 checksums.
 
 ## Where your data lives
 

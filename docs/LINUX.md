@@ -234,6 +234,13 @@ launcher already adds `--no-sandbox` when unprivileged user namespaces are
 unavailable; if it still fails, use the `.deb` or
 `--appimage-extract-and-run`.
 
+**A copied or extracted build fails with a `chrome-sandbox` error.** Copying the
+app out of the `.deb` or AppImage can drop the setuid bit from
+`chrome-sandbox`. Launch that copy with `--no-sandbox`, or restore the helper
+with `sudo chown root:root chrome-sandbox && sudo chmod 4755 chrome-sandbox` on
+systems without unprivileged user namespaces. The packaged `.deb` post-install
+script and the AppImage launcher already handle this.
+
 **No tray icon on GNOME.** Install the AppIndicator extension and restart
 Auralis. Settings will tell you when no tray host was detected. On Ubuntu the
 `ubuntu-appindicators@ubuntu.com` extension provides the host used in the QA
