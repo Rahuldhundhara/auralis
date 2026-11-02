@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>Windows 1.1.0</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
+  <strong>Windows 1.1.1</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
 </p>
 
 <p align="center">
@@ -60,8 +60,8 @@ Download the latest Windows x64 build from the [GitHub Releases page](https://gi
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| Installer | [`Auralis-Setup-1.1.0.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.0.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.1.0.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.0.exe) | You want a single executable that does not need installation |
+| Installer | [`Auralis-Setup-1.1.1.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.1.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
+| Portable | [`Auralis-Portable-1.1.1.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.1.exe) | You want a single executable that does not need installation |
 
 The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
 
@@ -109,6 +109,13 @@ for Wayland, keyring, sandbox and troubleshooting details.
 4. Start typing in the search bar, or pick something from Home.
 
 Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
+
+### What's new in 1.1.1
+
+- Playback starts in about a second instead of four. The resolver asks the Innertube player endpoint for a direct audio URL (VISIONOS first, then Android VR and iOS) instead of spawning yt-dlp per track, and keeps yt-dlp as the fallback for tracks the fast path cannot serve.
+- Resolved streams are cached per track for 90 minutes and shared between a hover prefetch and the click that follows; a failed fast path cools down for two minutes instead of retrying on every track.
+- The transport no longer flashes a spinner for starts under 900 ms, and the media proxy retries a dropped range request through Node's stack so a track switch cannot leave playback stuck.
+- Measured on Windows: resolve 292–653 ms, click → first audio 1.13–1.32 s (was 7.52 s), hover-prefetched 0.80–0.97 s. See [`docs/QA.md`](docs/QA.md).
 
 ### What's new in 1.1.0
 
