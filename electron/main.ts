@@ -720,6 +720,7 @@ function registerIpc() {
   ipcMain.handle('yt:remove-from-library', (_event, videoId: string) => ytm.removeFromLibrary(videoId));
 
   ipcMain.handle('player:resolve', (_event, track: Track) => streams.resolve(track));
+  ipcMain.handle('player:resolve-video', (_event, track: Track) => streams.resolveVideo(track));
   ipcMain.handle('player:prefetch', (_event, track: Track) => streams.prefetch(track));
   ipcMain.handle('player:download', (_event, track: Track) =>
     streams.download(track, (progress) => broadcast('download-progress', progress)),
@@ -741,7 +742,9 @@ function registerIpc() {
   ipcMain.handle('player:ffmpeg-available', () => streams.ffmpegAvailable());
   ipcMain.handle('player:ytdlp-update', () => streams.update());
 
-  ipcMain.handle('lyrics:fetch', (_event, track: Track, providers?: string[]) => lyricsService.fetch(track, providers));
+  ipcMain.handle('lyrics:fetch', (_event, track: Track, providers?: string[], force?: boolean) =>
+    lyricsService.fetch(track, providers, force),
+  );
   ipcMain.handle('lyrics:translate', (_event, lines: string[], targetLanguage?: string) =>
     lyricsService.translate(lines, targetLanguage),
   );
@@ -823,6 +826,10 @@ async function bootstrap() {
   void ensureDownloadsDir().catch((error) => {
     console.warn('[auralis] could not prepare the downloads folder', error);
   });
+  // Stage yt-dlp and warm its Python runtime in the background. Staging is a
+  // 70+ MB copy on Linux; doing it on the first song used to add seconds to
+  // the first playback after a fresh install.
+  streams.warmup();
   // On Linux the renderer's Media Session integration exposes MPRIS and
   // receives media keys. Registering global shortcuts too would double-fire.
   if (process.platform !== 'linux') registerShortcuts();

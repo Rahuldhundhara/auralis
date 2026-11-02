@@ -95,6 +95,7 @@ const api: AuralisApi = {
   },
   player: {
     resolve: (track) => invoke('player:resolve', track),
+    resolveVideo: (track) => invoke('player:resolve-video', track),
     prefetch: (track) => invoke('player:prefetch', track),
     download: (track) => invoke('player:download', track),
     cancelDownload: (id) => invoke('player:cancel-download', id),
@@ -105,7 +106,7 @@ const api: AuralisApi = {
     ytdlpUpdate: () => invoke('player:ytdlp-update'),
   },
   lyrics: {
-    fetch: (track, providers) => invoke('lyrics:fetch', track, providers),
+    fetch: (track, providers, force) => invoke('lyrics:fetch', track, providers, force),
     translate: (lines, targetLanguage) => invoke('lyrics:translate', lines, targetLanguage),
   },
   speech: {

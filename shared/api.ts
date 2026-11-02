@@ -113,6 +113,7 @@ export interface AuralisApi {
   };
   player: {
     resolve(track: Track): Promise<StreamInfo>;
+    resolveVideo(track: Track): Promise<StreamInfo>;
     prefetch(track: Track): Promise<void>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;
@@ -123,7 +124,7 @@ export interface AuralisApi {
     ytdlpUpdate(): Promise<string>;
   };
   lyrics: {
-    fetch(track: Track, providers?: string[]): Promise<LyricsResult | null>;
+    fetch(track: Track, providers?: string[], force?: boolean): Promise<LyricsResult | null>;
     translate(
       lines: string[],
       targetLanguage?: string,

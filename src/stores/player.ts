@@ -550,7 +550,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           if (current.queue[current.index + 1]?.id === nextTrack.id) {
             void window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {});
           }
-        }, 1800);
+        }, 450);
       }
     } catch (error: any) {
       if (token !== loadToken) return;

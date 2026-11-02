@@ -7,7 +7,7 @@ import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { useAsync } from '../lib/useAsync';
 import { useVoiceSearch } from '../lib/useVoiceSearch';
-import { openCard, playCard } from '../lib/actions';
+import { openCard, playCard, prefetchTrack } from '../lib/actions';
 import { formatDuration } from '../lib/format';
 import { Artwork, Button, Chips, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
@@ -44,7 +44,8 @@ function TopResult({ card }: { card: Card }) {
           aria-label={`Play ${card.title}`}
           onClick={(event) => {
             event.stopPropagation();
-            void playCard(card);
+            if (card.type === 'video' || card.track?.isVideo) openCard(card);
+            else void playCard(card);
           }}
         >
           <Play size={24} fill="currentColor" />
@@ -184,6 +185,31 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
       episodes: [...data.episodes, ...extra.episodes],
     };
   }, [data, extra]);
+
+  // Resolve the first few likely results while the user is scanning the page.
+  // The bridge deduplicates these with the click's resolve call, so the common
+  // first/second-row click starts audio without waiting for yt-dlp. Keep this
+  // small: the main process caches URLs and ignores duplicate requests.
+  useEffect(() => {
+    if (!results) return;
+    const candidates = [
+      results.top?.track,
+      ...results.songs.slice(0, 3),
+      ...results.videos.slice(0, 3),
+      ...results.episodes.slice(0, 2),
+    ].filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
+    const seen = new Set<string>();
+    const unique = [];
+    for (const track of candidates) {
+      if (seen.has(track.id)) continue;
+      seen.add(track.id);
+      unique.push(track);
+      if (unique.length === 3) break;
+    }
+    if (!unique.length) return;
+    const timers = unique.map((track, index) => window.setTimeout(() => prefetchTrack(track), 120 + index * 90));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [results]);
 
   if (!query) return <SearchLanding />;
 

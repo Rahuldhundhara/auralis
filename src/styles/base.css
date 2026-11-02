@@ -1683,6 +1683,72 @@ img.artwork {
   background: var(--surface-2);
 }
 
+/* Music video surface */
+.video-modal {
+  width: min(96vw, 1080px) !important;
+}
+
+.video-modal .modal-body {
+  padding: 0;
+  background: #050506;
+}
+
+.video-modal .modal-footer {
+  justify-content: stretch;
+}
+
+.video-player {
+  position: relative;
+  min-height: min(52vh, 520px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #050506;
+}
+
+.video-surface {
+  display: block;
+  width: 100%;
+  max-height: min(68vh, 680px);
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #050506;
+}
+
+.video-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #c8c8d0;
+  text-align: center;
+  background: rgba(5, 5, 6, 0.76);
+}
+
+.video-controls {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.video-time {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.video-seek {
+  flex: 1;
+  min-width: 80px;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Forms                                                                      */
 /* -------------------------------------------------------------------------- */

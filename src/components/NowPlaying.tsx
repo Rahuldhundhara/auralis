@@ -11,6 +11,7 @@ import {
   MicVocal,
   MoreHorizontal,
   Radio,
+  Video,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
@@ -113,6 +114,7 @@ export function NowPlaying() {
   const downloads = useAppStore((state) => state.library.downloads);
   const navigate = useNavStore((state) => state.navigate);
   const openDialog = useUiStore((state) => state.openDialog);
+  const openVideo = useUiStore((state) => state.openVideo);
   const [artLoaded, setArtLoaded] = useState(false);
   const swipeStart = useRef<number | null>(null);
 
@@ -232,6 +234,11 @@ export function NowPlaying() {
             <IconButton label="Add to playlist" size="md" onClick={() => openDialog({ type: 'add-to-playlist', track: current })}>
               <ListPlus size={21} />
             </IconButton>
+            {current.isVideo ? (
+              <IconButton label="Watch video" size="md" onClick={() => openVideo(current)}>
+                <Video size={21} />
+              </IconButton>
+            ) : null}
             <IconButton label="More options" size="md" onClick={(event) => showTrackMenu(current, event)}>
               <MoreHorizontal size={21} />
             </IconButton>

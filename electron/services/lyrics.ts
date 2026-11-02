@@ -54,8 +54,11 @@ async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T | n
 
 function cleanTitle(title: string): string {
   return title
-    .replace(/\s*[([].*?(official|video|audio|lyrics?|visuali[sz]er|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit).*?[)\]]/gi, '')
-    .replace(/\s*[-|]\s*(official|video|audio|lyrics?|visuali[sz]er).*$/gi, '')
+    // Metadata such as "(From \"Brahmastra\")" is common in YouTube Music
+    // titles but rarely part of the lyric-provider catalogue entry.
+    .replace(/\s*[\(\[]\s*(?:from|feat\.?|ft\.?|with)\b[^)\]]*[\)\]]/gi, '')
+    .replace(/\s*[\(\[]\s*(?:official|video|audio|lyrics?|visuali[sz]er|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^)\]]*[\)\]]/gi, '')
+    .replace(/\s*[-|]\s*(?:from|official|video|audio|lyrics?|visuali[sz]er)\b.*$/gi, '')
     .replace(/\s*\(feat\..*?\)/gi, '')
     .replace(/\s*\(ft\..*?\)/gi, '')
     .replace(/\s*\b(feat|ft)\.\s.*$/gi, '')
@@ -200,7 +203,7 @@ async function fromYouTube(track: Track): Promise<ProviderOutput | null> {
 }
 
 async function fromBetterLyrics(track: Track): Promise<ProviderOutput | null> {
-  const url = `https://lyrics-api.boidu.dev/getLyrics?s=${encode(track.title)}&a=${encode(primaryArtist(track))}` +
+  const url = `https://lyrics-api.boidu.dev/getLyrics?s=${encode(cleanTitle(track.title))}&a=${encode(primaryArtist(track))}` +
     (track.duration ? `&d=${track.duration}` : '') +
     (track.album?.name ? `&al=${encode(track.album.name)}` : '');
   const json = await fetchJson<any>(url);
@@ -219,7 +222,7 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
     'https://lyricsplus-seven.vercel.app',
   ];
   for (const base of bases) {
-    const url = `${base}/v2/lyrics/get?title=${encode(track.title)}&artist=${encode(primaryArtist(track))}` +
+    const url = `${base}/v2/lyrics/get?title=${encode(cleanTitle(track.title))}&artist=${encode(primaryArtist(track))}` +
       (track.duration ? `&duration=${track.duration}` : '') +
       (track.album?.name ? `&album=${encode(track.album.name)}` : '');
     const json = await fetchJson<any>(url, 12000);
@@ -328,7 +331,7 @@ async function fromZemer(track: Track): Promise<ProviderOutput | null> {
 }
 
 async function fromYouTubeSubtitle(track: Track): Promise<ProviderOutput | null> {
-  const raw = await streams.fetchSubtitles(track.id);
+  const raw = await streams.fetchSubtitles(track.id, 10_000);
   if (!raw) return null;
   const lines = parseLrc(raw);
   if (!lines.length) return null;
@@ -351,31 +354,81 @@ const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>
 export class LyricsService {
   private cache = new Map<string, { at: number; result: LyricsResult | null }>();
 
-  async fetch(track: Track, providers?: string[]): Promise<LyricsResult | null> {
+  async fetch(track: Track, providers?: string[], force = false): Promise<LyricsResult | null> {
     const configured = providers?.length
       ? providers
       : settingsStore.get().lyricsProviders;
-    const key = `${track.id}:${track.title}:${configured.join(',')}`;
+    const key = `${track.id}:${cleanTitle(track.title).toLowerCase()}:${primaryArtist(track).toLowerCase()}:${configured.join(',')}`;
     const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.at < 30 * 60_000) return cached.result;
-
-    for (const name of configured) {
-      const provider = PROVIDERS[name];
-      if (!provider) continue;
-      const result = await provider(track).catch(() => null);
-      if (result && result.lines.length) {
-        const output: LyricsResult = {
-          provider: result.provider,
-          synced: result.synced,
-          lines: result.lines,
-          raw: result.raw,
-        };
-        this.cache.set(key, { at: Date.now(), result: output });
-        return output;
-      }
+    if (!force && cached) {
+      const ttl = cached.result ? 30 * 60_000 : 2 * 60_000;
+      if (Date.now() - cached.at < ttl) return cached.result;
     }
-    this.cache.set(key, { at: Date.now(), result: null });
-    return null;
+
+    const tasks = configured
+      .map((name, rank) => {
+        const provider = PROVIDERS[name];
+        return provider ? { name, rank, task: provider(track).catch(() => null) } : undefined;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (!tasks.length) return null;
+
+    const output = await new Promise<ProviderOutput | null>((resolve) => {
+      let settled = 0;
+      let finished = false;
+      let best: { output: ProviderOutput; rank: number } | null = null;
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        if (graceTimer) clearTimeout(graceTimer);
+        clearTimeout(overallTimer);
+        resolve(best?.output ?? null);
+      };
+
+      const consider = (output: ProviderOutput | null, rank: number) => {
+        if (!output?.lines.length) return;
+        if (!best || (output.synced && !best.output.synced) || (Boolean(output.synced) === best.output.synced && rank < best.rank)) {
+          best = { output, rank };
+        }
+        // Do not make a synced provider wait behind a slower, unsynced one,
+        // but give already-in-flight providers a short window to win. LrcLib
+        // and BetterLyrics commonly need ~0.5s more than YouTube's plain
+        // lyrics, so keep the unsynced grace long enough to prefer timed
+        // lyrics while still returning quickly when none exists.
+        if (best.output.synced) {
+          if (graceTimer) clearTimeout(graceTimer);
+          graceTimer = setTimeout(finish, 220);
+        } else if (!graceTimer) {
+          graceTimer = setTimeout(finish, 1_200);
+        }
+      };
+
+      const overallTimer = setTimeout(finish, 12_000);
+      for (const entry of tasks) {
+        entry.task.then((result) => {
+          settled += 1;
+          consider(result, entry.rank);
+          if (settled === tasks.length) finish();
+        });
+      }
+    });
+
+    if (!output) {
+      this.cache.set(key, { at: Date.now(), result: null });
+      return null;
+    }
+
+    const result: LyricsResult = {
+      provider: output.provider,
+      synced: output.synced,
+      lines: output.lines,
+      raw: output.raw,
+    };
+    this.cache.set(key, { at: Date.now(), result });
+    return result;
   }
 
   async translate(lines: string[], targetLanguage?: string): Promise<TranslationResult> {

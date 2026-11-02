@@ -25,12 +25,67 @@ export function resourcesBinDir(): string {
 }
 
 let cachedYtdlpPath: string | undefined;
+let ytdlpStageTask: Promise<string> | undefined;
+
+/**
+ * Copy yt-dlp into the writable user-data directory in the background. The
+ * bundled binary is 70+ MB, so doing this synchronously inside the first
+ * playback request added several seconds to the first song after a fresh
+ * install. Playback can use the bundled copy immediately while this runs.
+ */
+export function stageYtdlp(): Promise<string> {
+  if (process.platform === 'win32') {
+    const exe = 'yt-dlp.exe';
+    const bundled = path.join(resourcesBinDir(), exe);
+    return Promise.resolve(fs.existsSync(bundled) ? bundled : exe);
+  }
+  if (cachedYtdlpPath) return Promise.resolve(cachedYtdlpPath);
+  if (ytdlpStageTask) return ytdlpStageTask;
+
+  const exe = 'yt-dlp';
+  const bundled = path.join(resourcesBinDir(), exe);
+  ytdlpStageTask = (async () => {
+    const user = path.join(app.getPath('userData'), 'bin', exe);
+    if (fs.existsSync(user)) {
+      fs.chmodSync(user, 0o755);
+      cachedYtdlpPath = user;
+      return user;
+    }
+    if (!fs.existsSync(bundled)) {
+      cachedYtdlpPath = exe;
+      return exe;
+    }
+    await fs.promises.mkdir(path.dirname(user), { recursive: true });
+    // Copy to a temporary name and rename atomically. ytdlpPath() may be
+    // called while this is in progress; it must never execute a half-written
+    // binary. Use the async FS API so the main process can keep serving the
+    // renderer while the 70+ MB binary is being copied.
+    const temporary = `${user}.${process.pid}.tmp`;
+    try {
+      await fs.promises.copyFile(bundled, temporary);
+      await fs.promises.chmod(temporary, 0o755);
+      await fs.promises.rename(temporary, user);
+      cachedYtdlpPath = user;
+      return user;
+    } catch (error) {
+      await fs.promises.rm(temporary, { force: true }).catch(() => {});
+      throw error;
+    }
+  })().catch((error) => {
+    console.warn('[auralis] could not stage yt-dlp in userData; using bundled copy', error);
+    ytdlpStageTask = undefined;
+    const fallback = fs.existsSync(bundled) ? bundled : exe;
+    cachedYtdlpPath = fallback;
+    return fallback;
+  });
+  return ytdlpStageTask;
+}
 
 /**
  * Linux packages mount the app read-only (AppImage) or install it under /opt
- * (deb). Copy yt-dlp into the writable user-data directory once so its
- * built-in `-U` update works after installation. Windows keeps using the
- * bundled executable exactly as before.
+ * (deb). Use the writable copy when it is ready, otherwise keep playback
+ * moving with the bundled executable. Windows keeps using the bundled
+ * executable exactly as before.
  */
 export function ytdlpPath(): string {
   if (process.platform === 'win32') {
@@ -44,21 +99,24 @@ export function ytdlpPath(): string {
   const bundled = path.join(resourcesBinDir(), exe);
   try {
     const user = path.join(app.getPath('userData'), 'bin', exe);
-    if (!fs.existsSync(user) && fs.existsSync(bundled)) {
-      fs.mkdirSync(path.dirname(user), { recursive: true });
-      fs.copyFileSync(bundled, user);
-    }
     if (fs.existsSync(user)) {
       fs.chmodSync(user, 0o755);
       cachedYtdlpPath = user;
       return user;
     }
   } catch (error) {
-    console.warn('[auralis] could not stage yt-dlp in userData; using bundled copy', error);
+    console.warn('[auralis] could not read staged yt-dlp; using bundled copy', error);
   }
+  return fs.existsSync(bundled) ? bundled : exe;
+}
 
-  cachedYtdlpPath = fs.existsSync(bundled) ? bundled : exe;
-  return cachedYtdlpPath;
+/** Warm the staged binary and Python runtime while the app is idle. */
+export function warmupStreams(): void {
+  void stageYtdlp()
+    .then(() => runYtdlp(['--version'], 10_000))
+    .catch(() => {
+      // Warmup is best-effort.
+    });
 }
 
 export function ffmpegPath(): string | null {
@@ -159,6 +217,10 @@ function proxyStreamUrl(url: string): string {
 }
 
 export class StreamService {
+  warmup(): void {
+    warmupStreams();
+  }
+
   async resolve(track: Track): Promise<StreamInfo> {
     if (track.localPath && fs.existsSync(track.localPath)) {
       return {
@@ -188,17 +250,32 @@ export class StreamService {
     return task;
   }
 
+  /**
+   * Resolve a video-only stream for the optional video surface. Audio keeps
+   * using the normal resolve() path, so opening a music video does not replace
+   * or restart the audio pipeline.
+   */
+  async resolveVideo(track: Track): Promise<StreamInfo> {
+    const key = `video:${track.id}`;
+    const cached = streamCache.get(key);
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
+    const pending = pendingResolve.get(key);
+    if (pending) return pending;
+
+    const task = this.resolveVideoRemote(track)
+      .then((info) => {
+        streamCache.set(key, { info, at: Date.now() });
+        return info;
+      })
+      .finally(() => {
+        pendingResolve.delete(key);
+      });
+    pendingResolve.set(key, task);
+    return task;
+  }
+
   private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
-    const args = [
-      ...commonArgs(),
-      '-f',
-      qualityFormat(quality),
-      '-g',
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
-    ];
-    const { stdout } = await runYtdlp(args, 45_000);
-    const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
-    if (!url) throw new Error('yt-dlp did not return a playable audio URL.');
+    const url = await this.extractUrl(track, qualityFormat(quality), 'audio', 30_000);
     let format = 'audio';
     try {
       const mime = new URL(url).searchParams.get('mime');
@@ -216,6 +293,74 @@ export class StreamService {
     };
   }
 
+  private async resolveVideoRemote(track: Track): Promise<StreamInfo> {
+    // The video surface is muted (the normal audio player provides sound), so
+    // prefer the higher-quality video-only streams. Fall back to muxed
+    // progressive formats for videos that only expose those.
+    const format =
+      'bestvideo[height<=720][ext=mp4]/bestvideo[height<=720]/best[height<=720][ext=mp4]/best[height<=720]/bestvideo';
+    const url = await this.extractUrl(track, format, 'video', 45_000, false);
+    let mimeFormat = 'video';
+    try {
+      const mime = new URL(url).searchParams.get('mime');
+      if (mime?.includes('/')) mimeFormat = mime.split('/')[1].split(';')[0];
+    } catch {
+      // keep generic format
+    }
+    return {
+      url: proxyStreamUrl(url),
+      format: mimeFormat,
+      title: track.title,
+      duration: track.duration,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    };
+  }
+
+  /**
+   * Ask yt-dlp for a direct URL. The Android extractor client is noticeably
+   * faster than the default web clients for audio and works without signing
+   * in, but it exposes fewer video formats; video resolution therefore uses
+   * the default client list.
+   */
+  private async extractUrl(
+    track: Track,
+    format: string,
+    kind: 'audio' | 'video',
+    timeoutMs: number,
+    preferAndroid = true,
+  ): Promise<string> {
+    const base = [
+      '--socket-timeout',
+      '10',
+      '--retries',
+      '2',
+      '--fragment-retries',
+      '2',
+      '-f',
+      format,
+      '-g',
+      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+    ];
+    let lastError: Error | undefined;
+    const attempts = preferAndroid
+      ? [['--extractor-args', 'youtube:player_client=android'], []]
+      : [[], ['--extractor-args', 'youtube:player_client=android']];
+    for (const extractorArgs of attempts) {
+      try {
+        const { stdout } = await runYtdlp([...commonArgs(), ...extractorArgs, ...base], timeoutMs);
+        const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
+        if (url) return url;
+        lastError = new Error(`yt-dlp did not return a playable ${kind} URL.`);
+      } catch (error: any) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // A genuinely unavailable/private video will not succeed with the
+        // fallback either; avoid doubling the error latency.
+        if (/video is unavailable|video unavailable|private video|removed by the uploader|account.*terminated/i.test(lastError.message)) break;
+      }
+    }
+    throw lastError || new Error(`yt-dlp did not return a playable ${kind} URL.`);
+  }
+
   async prefetch(track: Track): Promise<void> {
     try {
       await this.resolve(track);
@@ -226,7 +371,7 @@ export class StreamService {
 
   invalidate(trackId: string) {
     for (const key of streamCache.keys()) {
-      if (key.startsWith(`${trackId}:`)) streamCache.delete(key);
+      if (key.startsWith(`${trackId}:`) || key.startsWith(`video:${trackId}`)) streamCache.delete(key);
     }
   }
 
@@ -248,12 +393,13 @@ export class StreamService {
   }
 
   async update(): Promise<string> {
+    await stageYtdlp();
     const { stdout, stderr } = await runYtdlp(['-U'], 180_000);
     return (stdout || stderr).trim() || 'yt-dlp is up to date.';
   }
 
   /** Downloads auto/manual captions and converts the VTT to extended LRC. */
-  async fetchSubtitles(videoId: string): Promise<string | null> {
+  async fetchSubtitles(videoId: string, timeoutMs = 120_000): Promise<string | null> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-subs-'));
     const args = [
       ...commonArgs(),
@@ -269,7 +415,7 @@ export class StreamService {
       `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
     ];
     try {
-      await runYtdlp(args, 120_000);
+      await runYtdlp(args, timeoutMs);
       const file = fs.readdirSync(dir).find((name) => name.endsWith('.vtt'));
       if (!file) return null;
       const vtt = fs.readFileSync(path.join(dir, file), 'utf8');

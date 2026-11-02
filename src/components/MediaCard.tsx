@@ -1,7 +1,7 @@
-import { useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronLeft, ChevronRight, MoreHorizontal, Play, Podcast, Video } from 'lucide-react';
 import type { Card, Shelf as ShelfType, Track } from '@shared/types';
-import { openCard, playCard, queueForShelf, showCardMenu, tracksFromPage } from '../lib/actions';
+import { openCard, openVideoTrack, playCard, prefetchTrack, queueForShelf, showCardMenu, trackFromCard, tracksFromPage } from '../lib/actions';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { Artwork, Button, ExplicitBadge, IconButton } from './primitives';
@@ -19,8 +19,17 @@ export function MediaCard({
   variant?: 'carousel' | 'grid';
 }) {
   const [busy, setBusy] = useState(false);
+  const prefetchTimer = useRef<number | undefined>(undefined);
   const round = Boolean(card.round) || card.type === 'artist' || card.type === 'profile';
   const playable = Boolean(card.track) || ['song', 'video', 'episode', 'album', 'single', 'ep', 'playlist', 'podcast'].includes(card.type);
+
+  useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
+
+  const scheduleCardPrefetch = () => {
+    if (!card.track?.id) return;
+    window.clearTimeout(prefetchTimer.current);
+    prefetchTimer.current = window.setTimeout(() => prefetchTrack(card.track), 90);
+  };
 
   if (card.type === 'mood') {
     return (
@@ -39,6 +48,13 @@ export function MediaCard({
   }
 
   const activate = async () => {
+    if (card.track?.isVideo || card.type === 'video') {
+      const track = card.track || trackFromCard(card);
+      if (track) {
+        openVideoTrack(track, queue, index);
+        return;
+      }
+    }
     if (card.track && queue?.length) {
       usePlayerStore.getState().playQueue(queue, index);
       return;
@@ -62,6 +78,8 @@ export function MediaCard({
   return (
     <article
       className={`media-card media-card-${variant} ${round ? 'is-round' : ''}`}
+      onMouseEnter={scheduleCardPrefetch}
+      onMouseLeave={() => window.clearTimeout(prefetchTimer.current)}
       onDoubleClick={() => void activate()}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -73,6 +91,7 @@ export function MediaCard({
           type="button"
           className="card-art-button"
           onClick={() => (card.track ? void activate() : openCard(card))}
+          onPointerDown={() => prefetchTrack(card.track)}
           aria-label={card.track ? `Play ${card.title}` : `Open ${card.title}`}
           title={card.title}
         >
@@ -92,6 +111,7 @@ export function MediaCard({
             type="button"
             className={`card-play ${busy ? 'is-busy' : ''}`}
             aria-label={`Play ${card.title}`}
+            onPointerDown={() => prefetchTrack(card.track)}
             onClick={(event) => {
               event.stopPropagation();
               void activate();

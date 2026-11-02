@@ -34,7 +34,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const loadRequestRef = useRef(0);
   const translateRequestRef = useRef(0);
 
-  const load = async () => {
+  const load = async (force = false) => {
     if (!track) return;
     const requestId = ++loadRequestRef.current;
     setLoading(true);
@@ -43,7 +43,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
     setTranslations([]);
     autoTranslatedRef.current = '';
     try {
-      const data = await window.auralis.lyrics.fetch(track);
+      const data = await window.auralis.lyrics.fetch(track, undefined, force);
       if (requestId !== loadRequestRef.current) return;
       setResult(data);
       setFollow(true);
@@ -191,7 +191,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
               {translating ? 'Translating…' : translationError ? 'Retry translation' : 'Translate'}
             </Button>
           )}
-          <IconButton label="Refresh lyrics" size="sm" onClick={() => void load()} disabled={loading}>
+          <IconButton label="Refresh lyrics" size="sm" onClick={() => void load(true)} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
           </IconButton>
         </div>

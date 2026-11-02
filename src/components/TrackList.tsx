@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, MoreHorizontal, Play, Video, X } from 'lucide-react';
 import type { Track } from '@shared/types';
 import {
   openAlbum,
   openArtist,
+  openVideoTrack,
+  prefetchTrack,
   showTrackMenu,
   type TrackMenuContext,
 } from '../lib/actions';
@@ -22,6 +24,8 @@ interface TrackListProps {
   emptyText?: string;
   hideHeader?: boolean;
   radioOnPlay?: boolean;
+  /** Resolve the first row while the list is idle so the first click is fast. */
+  prefetchFirst?: boolean;
   onRemove?: (track: Track, index: number) => void;
 }
 
@@ -34,6 +38,7 @@ export function TrackList({
   compact = false,
   emptyText = 'No songs here yet.',
   radioOnPlay = false,
+  prefetchFirst = true,
   onRemove,
 }: TrackListProps) {
   const current = usePlayerStore((state) => state.current);
@@ -43,6 +48,21 @@ export function TrackList({
   const downloads = useAppStore((state) => state.library.downloads);
   const toggleLike = useAppStore((state) => state.toggleLike);
   const [hovered, setHovered] = useState<number | null>(null);
+  const prefetchTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
+
+  const firstTrackId = tracks[0]?.id;
+  useEffect(() => {
+    if (!prefetchFirst || !firstTrackId) return;
+    const timer = window.setTimeout(() => {
+      if (tracks[0]) prefetchTrack(tracks[0]);
+    }, 450);
+    return () => window.clearTimeout(timer);
+    // Only react when the first row changes; the array itself is recreated on
+    // every render by callers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstTrackId, prefetchFirst]);
 
   if (!tracks.length) {
     return <div className="track-list-empty">{emptyText}</div>;
@@ -59,8 +79,14 @@ export function TrackList({
         const downloaded = Boolean(downloadForTrack(downloads, track.id));
         const number = index + 1;
         const playRow = () => {
-          if (radioOnPlay) void usePlayerStore.getState().startRadio(track);
-          else usePlayerStore.getState().playQueue(tracks, index);
+          prefetchTrack(track);
+          if (track.isVideo || track.type === 'video') {
+            openVideoTrack(track, tracks, index);
+          } else if (radioOnPlay) {
+            void usePlayerStore.getState().startRadio(track);
+          } else {
+            usePlayerStore.getState().playQueue(tracks, index);
+          }
         };
         return (
           <div
@@ -76,8 +102,16 @@ export function TrackList({
               event.preventDefault();
               showTrackMenu(track, event, { ...context, trackIndex: index, queueIndex: isCurrent ? usePlayerStore.getState().index : undefined });
             }}
-            onMouseEnter={() => setHovered(index)}
-            onMouseLeave={() => setHovered(null)}
+            onMouseEnter={() => {
+              setHovered(index);
+              window.clearTimeout(prefetchTimer.current);
+              prefetchTimer.current = window.setTimeout(() => prefetchTrack(track), 80);
+            }}
+            onMouseLeave={() => {
+              setHovered(null);
+              window.clearTimeout(prefetchTimer.current);
+            }}
+            onPointerDown={() => prefetchTrack(track)}
             onDoubleClick={playRow}
           >
             <div className="track-index">

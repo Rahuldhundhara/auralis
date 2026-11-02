@@ -14,6 +14,7 @@ import {
   Radio,
   Trash2,
   User,
+  Video,
   X,
 } from 'lucide-react';
 import type { Card, NavEndpoint, Track } from '@shared/types';
@@ -52,6 +53,25 @@ export function queueForShelf(cards: Card[]): Track[] {
   return cards.map((card) => card.track).filter((track): track is Track => Boolean(track?.id));
 }
 
+const prefetchedAt = new Map<string, number>();
+
+/**
+ * Warm the stream URL before the user commits to a click. The main process
+ * deduplicates concurrent resolves, so a hover prefetch and the following
+ * click share one yt-dlp process instead of racing.
+ */
+export function prefetchTrack(track: Track | undefined) {
+  if (!track?.id || track.localPath) return;
+  const current = usePlayerStore.getState().current;
+  if (current?.id === track.id) return;
+  const last = prefetchedAt.get(track.id);
+  if (last && Date.now() - last < 90_000) return;
+  prefetchedAt.set(track.id, Date.now());
+  void window.auralis.player.prefetch(track).catch(() => {
+    prefetchedAt.delete(track.id);
+  });
+}
+
 export function trackFromCard(card: Card): Track | undefined {
   if (card.track) return card.track;
   if (['song', 'video', 'episode'].includes(card.type)) {
@@ -69,6 +89,13 @@ export function trackFromCard(card: Card): Track | undefined {
 }
 
 export function openCard(card: Card) {
+  if (card.track?.isVideo || card.type === 'video') {
+    const video = card.track || trackFromCard(card);
+    if (video) {
+      openVideoTrack(video);
+      return;
+    }
+  }
   if (card.track || ['song', 'video', 'episode'].includes(card.type)) {
     void playCard(card);
     return;
@@ -94,7 +121,7 @@ async function fetchPageForCard(card: Card): Promise<BrowsePage | undefined> {
   if (card.type === 'album' || card.type === 'single' || card.type === 'ep') return window.auralis.yt.album(id);
   if (card.type === 'playlist') return window.auralis.yt.playlist(id);
   if (card.type === 'artist') return window.auralis.yt.artist(id);
-  if (card.type === 'podcast') return window.auralis.yt.browse(id);
+  if (card.type === 'podcast') return window.auralis.yt.podcast(id);
   return undefined;
 }
 
@@ -117,6 +144,14 @@ export async function playCard(card: Card, queue?: Track[], index = 0) {
   } catch (error: any) {
     toast(`Could not play “${card.title}”: ${error?.message || error}`, 'error');
   }
+}
+
+/** Start a video track and open the video surface while audio keeps playing. */
+export function openVideoTrack(track: Track, queue?: Track[], index = 0) {
+  const list = queue?.length ? queue : [track];
+  const start = queue?.length ? Math.max(0, index) : 0;
+  usePlayerStore.getState().playQueue(list, start);
+  useUiStore.getState().openVideo(track);
 }
 
 export async function shuffleCard(card: Card) {
@@ -253,6 +288,9 @@ export function showTrackMenu(track: Track, event: { clientX: number; clientY: n
   const downloaded = app.library.downloads.some((item) => item.track.id === track.id && item.status === 'done');
   const items = [
     { label: 'Play now', icon: Play, onClick: () => player.playQueue([track], 0) },
+    ...(track.isVideo || track.type === 'video'
+      ? [{ label: 'Watch video', icon: Video, onClick: () => openVideoTrack(track) }]
+      : []),
     { label: 'Play next', icon: ListEnd, onClick: () => player.playNext(track) },
     { label: 'Add to queue', icon: ListPlus, onClick: () => player.addToQueue(track) },
     { label: 'Start radio', icon: Radio, onClick: () => void player.startRadio(track) },
@@ -372,6 +410,12 @@ export function showCardMenu(card: Card, event: { clientX: number; clientY: numb
   const ui = useUiStore.getState();
   const items: any[] = [
     { label: 'Play', icon: Play, onClick: () => void playCard(card) },
+    ...(card.type === 'video' && (card.track || trackFromCard(card))
+      ? [{ label: 'Watch video', icon: Video, onClick: () => {
+          const video = card.track || trackFromCard(card);
+          if (video) openVideoTrack(video);
+        } }]
+      : []),
     { label: 'Shuffle', icon: ListMusic, onClick: () => void shuffleCard(card) },
     { label: 'Play next', icon: ListEnd, onClick: () => void queueCardNext(card) },
     { separator: true },
