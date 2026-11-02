@@ -157,7 +157,12 @@ export function VideoPlayer() {
             preload="auto"
             onLoadedMetadata={() => {
               const video = videoRef.current;
-              if (video && position > 0.5) video.currentTime = position;
+              if (!video) return;
+              if (position > 0.5) video.currentTime = position;
+              if (playing) void video.play().catch(() => {});
+            }}
+            onCanPlay={() => {
+              if (playing) void videoRef.current?.play().catch(() => {});
             }}
             onError={() => setError('The video stream stopped. Audio playback is still available.')}
             onClick={toggle}

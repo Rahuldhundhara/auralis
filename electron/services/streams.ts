@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
 import { downloadsDir, ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
+import { innertube } from './innertube';
 
 const CACHE_TTL_MS = 90 * 60_000;
 const STREAM_CACHE_MAX_BYTES = 512 * 1024 * 1024;
@@ -185,6 +186,144 @@ function qualityFormat(quality: string): string {
   }
 }
 
+const FAST_PLAYER_CLIENTS = [
+  { name: 'ANDROID', version: '20.10.38', id: '3' },
+  { name: 'IOS', version: '20.10.4', id: '5' },
+] as const;
+
+function bitrateCap(quality: string): number {
+  if (quality === 'high') return 256_000;
+  if (quality === 'medium') return 192_000;
+  if (quality === 'low') return 128_000;
+  return Number.POSITIVE_INFINITY;
+}
+
+interface FastFormat {
+  itag?: number;
+  mimeType?: string;
+  bitrate?: number;
+  height?: number;
+  url?: string;
+  drmFamilies?: unknown;
+}
+
+function pickAudioFormat(adaptive: FastFormat[], formats: FastFormat[], quality: string): FastFormat | undefined {
+  const candidates = [...adaptive, ...formats].filter(
+    (format) =>
+      typeof format.url === 'string' &&
+      /^audio\//.test(format.mimeType || '') &&
+      !format.drmFamilies,
+  );
+  if (!candidates.length) return undefined;
+  const cap = bitrateCap(quality);
+  const eligible = candidates.filter((format) => (format.bitrate || 0) <= cap);
+  const pool = eligible.length ? eligible : candidates;
+  // WebM/Opus carries its headers at the start, so playback can begin from
+  // the first fast range without waiting for the file's tail.
+  const rank = (format: FastFormat) => (/audio\/webm/i.test(format.mimeType || '') ? 0 : 1);
+  return pool.sort((a, b) => rank(a) - rank(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+}
+
+function pickVideoFormat(adaptive: FastFormat[], formats: FastFormat[]): FastFormat | undefined {
+  const all = [...adaptive, ...formats].filter(
+    (format) =>
+      typeof format.url === 'string' &&
+      /^video\//.test(format.mimeType || '') &&
+      !format.drmFamilies &&
+      (format.height || 0) <= 720,
+  );
+  if (!all.length) return undefined;
+  // Prefer a video-only stream at the highest available resolution. Muxed
+  // progressive formats are only a fallback for older uploads.
+  const videoOnly = all.filter((format) => !/^audio\//.test(format.mimeType || ''));
+  const pool = videoOnly.length ? videoOnly : all;
+  const rank = (format: FastFormat) => {
+    if (/video\/webm/i.test(format.mimeType || '')) return 0;
+    if (/avc1/i.test(format.mimeType || '')) return 1;
+    return 2;
+  };
+  return pool.sort(
+    (a, b) => (b.height || 0) - (a.height || 0) || rank(a) - rank(b) || (b.bitrate || 0) - (a.bitrate || 0),
+  )[0];
+}
+
+/**
+ * YouTube's player endpoint returns signed stream URLs in a few hundred
+ * milliseconds, while spawning yt-dlp costs several seconds. Try the mobile
+ * clients in order, then fall back to yt-dlp if YouTube withholds URLs for
+ * this video or session.
+ */
+async function fastPlayerUrl(
+  videoId: string,
+  kind: 'audio' | 'video',
+  quality = 'auto',
+): Promise<{ url: string; format: string; itag?: number } | undefined> {
+  const request = async (client: (typeof FAST_PLAYER_CLIENTS)[number]) => {
+    const data = await innertube.request(
+      'player',
+      {
+        videoId,
+        playbackContext: {
+          contentPlaybackContext: {
+            signatureTimestamp: 20000,
+            html5Preference: 'HTML5_PREF_WANTS',
+          },
+        },
+        contentCheckOk: true,
+        racyCheckOk: true,
+      },
+      { login: false, client, timeoutMs: 3_500 },
+    );
+    const adaptive = (data?.streamingData?.adaptiveFormats || []) as FastFormat[];
+    const progressive = (data?.streamingData?.formats || []) as FastFormat[];
+    const format = kind === 'audio'
+      ? pickAudioFormat(adaptive, progressive, quality)
+      : pickVideoFormat(adaptive, progressive);
+    if (!format?.url) throw new Error('No direct stream URL.');
+    const mime = format.mimeType || '';
+    return {
+      url: format.url,
+      format: mime.includes('/') ? mime.split('/')[1].split(';')[0] : kind,
+      itag: format.itag,
+    };
+  };
+  // Try Android first: it exposes WebM/Opus and accepts an immediate first
+  // range. IOS is a fallback for tracks where Android's formats are withheld.
+  for (const client of FAST_PLAYER_CLIENTS) {
+    try {
+      return await request(client);
+    } catch {
+      // try the next client
+    }
+  }
+  return undefined;
+}
+
+const fallbackStreams = new Map<string, { at: number; task: Promise<string | undefined> }>();
+
+function rememberFallback(fastUrl: string, task: Promise<string | undefined>) {
+  const now = Date.now();
+  for (const [url, entry] of fallbackStreams) {
+    if (now - entry.at > CACHE_TTL_MS) fallbackStreams.delete(url);
+  }
+  fallbackStreams.set(fastUrl, { at: now, task });
+}
+
+/**
+ * Fast player URLs are useful for an instant start but some of them only
+ * permit the first bounded range. The media protocol uses the yt-dlp URL for
+ * later ranges so playback can continue for the whole track.
+ */
+export function fallbackStreamTask(fastUrl: string): Promise<string | undefined> | undefined {
+  const entry = fallbackStreams.get(fastUrl);
+  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return undefined;
+  return entry.task;
+}
+
+export async function fallbackStreamUrl(fastUrl: string): Promise<string | undefined> {
+  return fallbackStreamTask(fastUrl);
+}
+
 function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string; stderr: string }> {
   const cookie = args.includes('--cookies') ? args[args.indexOf('--cookies') + 1] : null;
   return new Promise((resolve, reject) => {
@@ -353,13 +492,30 @@ export class StreamService {
   }
 
   private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
-    const url = await this.extractUrl(track, qualityFormat(quality), 'audio', 30_000);
+    const fast = await fastPlayerUrl(track.id, 'audio', quality);
+    let url: string;
     let format = 'audio';
-    try {
-      const mime = new URL(url).searchParams.get('mime');
-      if (mime?.includes('/')) format = mime.split('/')[1].split(';')[0];
-    } catch {
-      // keep generic format
+    if (fast) {
+      // The proxy switches to this full-range URL after the first fast chunk.
+      // Ask yt-dlp for the same format so the codec/container does not change
+      // halfway through playback.
+      const slow = this.extractUrl(
+        track,
+        fast.itag ? String(fast.itag) : qualityFormat(quality),
+        'audio',
+        30_000,
+      ).catch(() => this.extractUrl(track, qualityFormat(quality), 'audio', 30_000));
+      rememberFallback(fast.url, slow.catch(() => undefined));
+      url = fast.url;
+      format = fast.format;
+    } else {
+      url = await this.extractUrl(track, qualityFormat(quality), 'audio', 30_000);
+      try {
+        const mime = new URL(url).searchParams.get('mime');
+        if (mime?.includes('/')) format = mime.split('/')[1].split(';')[0];
+      } catch {
+        // keep generic format
+      }
     }
     return {
       url: proxyStreamUrl(url),
@@ -377,13 +533,28 @@ export class StreamService {
     // progressive formats for videos that only expose those.
     const format =
       'bestvideo[height<=720][ext=mp4]/bestvideo[height<=720]/best[height<=720][ext=mp4]/best[height<=720]/bestvideo';
-    const url = await this.extractUrl(track, format, 'video', 45_000, false);
+    const fast = await fastPlayerUrl(track.id, 'video');
+    let url: string;
     let mimeFormat = 'video';
-    try {
-      const mime = new URL(url).searchParams.get('mime');
-      if (mime?.includes('/')) mimeFormat = mime.split('/')[1].split(';')[0];
-    } catch {
-      // keep generic format
+    if (fast) {
+      const slow = this.extractUrl(
+        track,
+        fast.itag ? String(fast.itag) : format,
+        'video',
+        45_000,
+        false,
+      ).catch(() => this.extractUrl(track, format, 'video', 45_000, false));
+      rememberFallback(fast.url, slow.catch(() => undefined));
+      url = fast.url;
+      mimeFormat = fast.format;
+    } else {
+      url = await this.extractUrl(track, format, 'video', 45_000, false);
+      try {
+        const mime = new URL(url).searchParams.get('mime');
+        if (mime?.includes('/')) mimeFormat = mime.split('/')[1].split(';')[0];
+      } catch {
+        // keep generic format
+      }
     }
     return {
       url: proxyStreamUrl(url),

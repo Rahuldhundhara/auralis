@@ -21,7 +21,7 @@ import { pathToFileURL } from 'node:url';
 import type { PlaylistImportResult, SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
 import { innertube } from './services/innertube';
-import { streams, streamCacheDir } from './services/streams';
+import { fallbackStreamTask, fallbackStreamUrl, streams, streamCacheDir } from './services/streams';
 import { lyricsService } from './services/lyrics';
 import { transcribeSpeech } from './services/speech';
 import { lastfm } from './services/lastfm';
@@ -325,6 +325,85 @@ function isAllowedStreamUrl(raw: string): boolean {
   }
 }
 
+function rangeTotal(response: Response): number | undefined {
+  const value = response.headers.get('content-range') || '';
+  const match = /\/(\d+)$/.exec(value);
+  return match ? Number(match[1]) : undefined;
+}
+
+async function streamFastThenFallback(
+  remote: string,
+  headers: Record<string, string>,
+  fallback: Promise<string | undefined>,
+): Promise<Response> {
+  const firstHeaders = { ...headers, Range: 'bytes=0-1048575' };
+  const first = await net.fetch(remote, { headers: firstHeaders, method: 'GET' });
+  if (!first.ok || !first.body) {
+    const fallbackUrl = await fallback;
+    if (!fallbackUrl) return withCors(first);
+    const response = await net.fetch(fallbackUrl, { headers, method: 'GET' });
+    return withCors(response);
+  }
+  if (first.status === 200) return withCors(first);
+  const total = rangeTotal(first);
+  const contentType = first.headers.get('content-type') || 'audio/webm';
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        let sent = 0;
+        const reader = first.body!.getReader();
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value?.byteLength) {
+            sent += value.byteLength;
+            controller.enqueue(value);
+          }
+        }
+        if (cancelled) return;
+        const fallbackUrl = await fallback;
+        if (cancelled) return;
+        if (!fallbackUrl) {
+          controller.close();
+          return;
+        }
+        const rest = await net.fetch(fallbackUrl, {
+          headers: { ...headers, Range: `bytes=${sent}-` },
+          method: 'GET',
+        });
+        if (!rest.ok || !rest.body) {
+          throw new Error(`Stream continuation failed (${rest.status})`);
+        }
+        const restReader = rest.body.getReader();
+        while (!cancelled) {
+          const { done, value } = await restReader.read();
+          if (done) break;
+          if (value?.byteLength) controller.enqueue(value);
+        }
+        if (!cancelled) controller.close();
+      } catch (error) {
+        if (!cancelled) {
+          try {
+            controller.error(error);
+          } catch {
+            // The response was cancelled while the error was being reported.
+          }
+        }
+      }
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const outputHeaders = new Headers({
+    'Content-Type': contentType,
+    'Accept-Ranges': 'bytes',
+  });
+  if (total) outputHeaders.set('Content-Length', String(total));
+  return withCors(new Response(stream, { status: 200, headers: outputHeaders }));
+}
+
 function registerMediaProtocol() {
   protocol.handle('auralis-media', async (request) => {
     try {
@@ -348,8 +427,21 @@ function registerMediaProtocol() {
           Origin: 'https://music.youtube.com',
         };
         const range = request.headers.get('range');
+        const rangeMatch = range ? /^bytes=(\d+)-/i.exec(range.trim()) : null;
+        const start = rangeMatch ? Number(rangeMatch[1]) : 0;
+        const suffixRange = range ? /^bytes=-\d+$/i.test(range.trim()) : false;
+        const fallback = start === 0 && !suffixRange ? fallbackStreamTask(remote) : undefined;
+        if (fallback) {
+          // A fast player URL only supports its first range. Deliver a
+          // continuous response (fast first chunk followed by the full-range
+          // yt-dlp stream) so the media element never sees a false EOF.
+          return streamFastThenFallback(remote, headers, fallback);
+        }
+        // Fast Innertube URLs only accept their first range. Later requests
+        // (seeks) use the full-range yt-dlp URL, which accepts any range.
+        const target = start > 0 ? (await fallbackStreamUrl(remote)) || remote : remote;
         if (range) headers.Range = range;
-        const response = await net.fetch(remote, { headers, method: 'GET' });
+        const response = await net.fetch(target, { headers, method: 'GET' });
         return withCors(response);
       }
       return new Response('Not found', { status: 404 });
