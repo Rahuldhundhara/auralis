@@ -80,7 +80,6 @@ export function MediaCard({
       className={`media-card media-card-${variant} ${round ? 'is-round' : ''}`}
       onMouseEnter={scheduleCardPrefetch}
       onMouseLeave={() => window.clearTimeout(prefetchTimer.current)}
-      onDoubleClick={() => void activate()}
       onContextMenu={(event) => {
         event.preventDefault();
         showCardMenu(card, event);

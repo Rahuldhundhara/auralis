@@ -121,6 +121,7 @@ export class YtmService {
       return parseBrowseContinuation(raw);
     }
     if (endpoint.browseId) return this.browsePage(endpoint.browseId, endpoint.params);
+    if (endpoint.params) return this.browsePage(undefined, endpoint.params);
     if (endpoint.playlistId) return this.playlist(endpoint.playlistId);
     if (endpoint.videoId) {
       const next = await this.next(endpoint);

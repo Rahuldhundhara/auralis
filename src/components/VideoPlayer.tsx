@@ -52,6 +52,20 @@ export function VideoPlayer() {
 
   useEffect(() => {
     if (!track) return;
+    // Escape exits fullscreen first; it should not also close the dialog in
+    // the same key press.
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !document.fullscreenElement) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void document.exitFullscreen().catch(() => {});
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [track?.id]);
+
+  useEffect(() => {
+    if (!track) return;
     if (current?.id !== track.id) close();
     // The video surface follows the audio queue. Closing it when the queue
     // moves on avoids showing a stale frame beside a different song.

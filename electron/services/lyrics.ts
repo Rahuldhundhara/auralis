@@ -353,6 +353,7 @@ const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>
 
 export class LyricsService {
   private cache = new Map<string, { at: number; result: LyricsResult | null }>();
+  private pending = new Map<string, Promise<LyricsResult | null>>();
 
   async fetch(track: Track, providers?: string[], force = false): Promise<LyricsResult | null> {
     const configured = providers?.length
@@ -364,7 +365,24 @@ export class LyricsService {
       const ttl = cached.result ? 30 * 60_000 : 2 * 60_000;
       if (Date.now() - cached.at < ttl) return cached.result;
     }
+    // Background prefetch and an immediately opened lyrics panel share one
+    // request instead of hitting every provider twice.
+    const running = this.pending.get(key);
+    if (running) return running;
+    const task = this.fetchUncached(track, configured, key);
+    this.pending.set(key, task);
+    try {
+      return await task;
+    } finally {
+      this.pending.delete(key);
+    }
+  }
 
+  private async fetchUncached(
+    track: Track,
+    configured: string[],
+    key: string,
+  ): Promise<LyricsResult | null> {
     const tasks = configured
       .map((name, rank) => {
         const provider = PROVIDERS[name];

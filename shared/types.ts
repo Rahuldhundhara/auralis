@@ -116,12 +116,20 @@ export interface NavEndpoint {
   continuation?: string;
 }
 
+export interface Chip {
+  title: string;
+  endpoint?: NavEndpoint;
+  selected?: boolean;
+  /** Some chips (for example a podcast's "Latest" sort) open a menu instead of reloading directly. */
+  menu?: { title: string; endpoint?: NavEndpoint; selected?: boolean }[];
+}
+
 export interface BrowsePage {
   header?: PageHeader;
   shelves: Shelf[];
   continuation?: string;
   /** chips for explore/library */
-  chips?: { title: string; endpoint?: NavEndpoint; selected?: boolean }[];
+  chips?: Chip[];
 }
 
 export interface SearchResults {

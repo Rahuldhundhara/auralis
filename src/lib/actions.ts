@@ -154,6 +154,19 @@ export function openVideoTrack(track: Track, queue?: Track[], index = 0) {
   useUiStore.getState().openVideo(track);
 }
 
+/**
+ * Open the video surface for the current song without restarting its audio.
+ * YouTube Music song ids and official video ids are the same upload, so the
+ * muted video can follow the already-playing audio stream.
+ */
+export function watchMusicVideo(track: Track) {
+  const player = usePlayerStore.getState();
+  if (player.current?.id !== track.id) {
+    player.playQueue([track], 0);
+  }
+  useUiStore.getState().openVideo(track);
+}
+
 export async function shuffleCard(card: Card) {
   const direct = trackFromCard(card);
   if (direct) {
@@ -288,8 +301,14 @@ export function showTrackMenu(track: Track, event: { clientX: number; clientY: n
   const downloaded = app.library.downloads.some((item) => item.track.id === track.id && item.status === 'done');
   const items = [
     { label: 'Play now', icon: Play, onClick: () => player.playQueue([track], 0) },
-    ...(track.isVideo || track.type === 'video'
-      ? [{ label: 'Watch video', icon: Video, onClick: () => openVideoTrack(track) }]
+    ...(track.type !== 'episode'
+      ? [
+          {
+            label: track.isVideo || track.type === 'video' ? 'Watch video' : 'Watch music video',
+            icon: Video,
+            onClick: () => watchMusicVideo(track),
+          },
+        ]
       : []),
     { label: 'Play next', icon: ListEnd, onClick: () => player.playNext(track) },
     { label: 'Add to queue', icon: ListPlus, onClick: () => player.addToQueue(track) },
@@ -410,11 +429,15 @@ export function showCardMenu(card: Card, event: { clientX: number; clientY: numb
   const ui = useUiStore.getState();
   const items: any[] = [
     { label: 'Play', icon: Play, onClick: () => void playCard(card) },
-    ...(card.type === 'video' && (card.track || trackFromCard(card))
-      ? [{ label: 'Watch video', icon: Video, onClick: () => {
-          const video = card.track || trackFromCard(card);
-          if (video) openVideoTrack(video);
-        } }]
+    ...(['song', 'video'].includes(card.type) && (card.track || trackFromCard(card))
+      ? [{
+          label: card.type === 'video' ? 'Watch video' : 'Watch music video',
+          icon: Video,
+          onClick: () => {
+            const video = card.track || trackFromCard(card);
+            if (video) watchMusicVideo(video);
+          },
+        }]
       : []),
     { label: 'Shuffle', icon: ListMusic, onClick: () => void shuffleCard(card) },
     { label: 'Play next', icon: ListEnd, onClick: () => void queueCardNext(card) },

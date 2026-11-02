@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Languages, LocateFixed, RefreshCw, Search } from 'lucide-react';
 import type { LyricsLine, LyricsResult, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
-import { usePlayerStore } from '../stores/player';
+import { getAudioPosition, usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
+import { fetchLyrics, peekLyrics } from '../lib/lyricsCache';
 import { Button, EmptyState, IconButton, Spinner } from './primitives';
 
 function activeLineIndex(lines: LyricsLine[], position: number): number {
@@ -19,9 +20,12 @@ function activeLineIndex(lines: LyricsLine[], position: number): number {
 
 export function LyricsPanel({ track, active = true }: { track?: Track; active?: boolean }) {
   const position = usePlayerStore((state) => state.position);
+  const playing = usePlayerStore((state) => state.playing);
   const settings = useAppStore((state) => state.settings);
-  const [result, setResult] = useState<LyricsResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const initialCache = peekLyrics(track);
+  const [result, setResult] = useState<LyricsResult | null>(initialCache?.result ?? null);
+  const [smoothPosition, setSmoothPosition] = useState(position);
+  const [loading, setLoading] = useState(!initialCache);
   const [error, setError] = useState<string | undefined>();
   const [translations, setTranslations] = useState<string[]>([]);
   const [translating, setTranslating] = useState(false);
@@ -37,13 +41,23 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const load = async (force = false) => {
     if (!track) return;
     const requestId = ++loadRequestRef.current;
+    if (!force) {
+      const cached = peekLyrics(track);
+      if (cached) {
+        setResult(cached.result);
+        setError(undefined);
+        setLoading(false);
+        setFollow(true);
+        return;
+      }
+    }
     setLoading(true);
     setError(undefined);
     setTranslationError(undefined);
     setTranslations([]);
     autoTranslatedRef.current = '';
     try {
-      const data = await window.auralis.lyrics.fetch(track, undefined, force);
+      const data = await fetchLyrics(track, force);
       if (requestId !== loadRequestRef.current) return;
       setResult(data);
       setFollow(true);
@@ -57,12 +71,46 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
 
   useEffect(() => {
     if (!active || !track) return;
+    loadRequestRef.current += 1;
+    const cached = peekLyrics(track);
+    setError(undefined);
+    setTranslations([]);
+    setTranslationError(undefined);
+    autoTranslatedRef.current = '';
+    if (cached) {
+      setResult(cached.result);
+      setLoading(false);
+      setFollow(true);
+      return;
+    }
     setResult(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, track?.id, track?.title]);
 
-  const index = useMemo(() => (result ? activeLineIndex(result.lines, position) : -1), [result, position]);
+  useEffect(() => {
+    if (!active || !playing) {
+      setSmoothPosition(position);
+      return;
+    }
+    let frame = 0;
+    let last = 0;
+    const tick = (time: number) => {
+      if (time - last >= 50) {
+        last = time;
+        setSmoothPosition(getAudioPosition());
+      }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, playing, position]);
+
+  const playbackPosition = active && playing ? smoothPosition : position;
+  const index = useMemo(
+    () => (result ? activeLineIndex(result.lines, playbackPosition) : -1),
+    [result, playbackPosition],
+  );
   const synced = Boolean(result?.synced);
 
   useEffect(() => {
@@ -263,9 +311,9 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
                           <span
                             key={`${word.text}-${wordIndex}`}
                             className={
-                              word.start <= position && word.end >= position
+                              word.start <= playbackPosition && word.end >= playbackPosition
                                 ? 'lyric-word is-active'
-                                : word.end < position
+                                : word.end < playbackPosition
                                   ? 'lyric-word is-sung'
                                   : 'lyric-word'
                             }

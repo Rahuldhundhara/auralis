@@ -8,6 +8,9 @@ import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../sh
 import { downloadsDir, ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
+const STREAM_CACHE_MAX_BYTES = 512 * 1024 * 1024;
+const STREAM_CACHE_MAX_FILES = 120;
+const STREAM_CACHE_MAX_AGE = 30 * 24 * 60 * 60_000;
 
 interface CachedStream {
   info: StreamInfo;
@@ -16,8 +19,14 @@ interface CachedStream {
 
 const streamCache = new Map<string, CachedStream>();
 const pendingResolve = new Map<string, Promise<StreamInfo>>();
+const cacheTasks = new Map<string, Promise<string | null>>();
 const active = new Map<string, ReturnType<typeof spawn>>();
 const pausedDownloads = new Set<string>();
+
+/** Private, disposable audio cache used to make next-track starts local. */
+export function streamCacheDir(): string {
+  return path.join(app.getPath('userData'), 'stream-cache');
+}
 
 export function resourcesBinDir(): string {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'bin');
@@ -200,6 +209,65 @@ function safeFileBase(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120) || 'track';
 }
 
+function cachedAudioFile(trackId: string): string | undefined {
+  try {
+    const dir = streamCacheDir();
+    const base = safeFileBase(trackId);
+    const files = fs
+      .readdirSync(dir)
+      .filter((name) => name.startsWith(`${base}.`) && !name.endsWith('.part'))
+      .map((name) => {
+        const file = path.join(dir, name);
+        try {
+          const stat = fs.statSync(file);
+          return stat.size > 0 ? { file, mtime: stat.mtimeMs } : undefined;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((entry): entry is { file: string; mtime: number } => Boolean(entry))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files[0]?.file;
+  } catch {
+    return undefined;
+  }
+}
+
+async function trimStreamCache(): Promise<void> {
+  try {
+    const dir = streamCacheDir();
+    const names = await fs.promises.readdir(dir);
+    const now = Date.now();
+    const entries: { file: string; size: number; mtime: number }[] = [];
+    for (const name of names) {
+      const file = path.join(dir, name);
+      try {
+        const stat = await fs.promises.stat(file);
+        const age = now - stat.mtimeMs;
+        if ((name.endsWith('.part') && age > 60 * 60_000) || age > STREAM_CACHE_MAX_AGE) {
+          await fs.promises.rm(file, { force: true });
+          continue;
+        }
+        if (!name.endsWith('.part')) entries.push({ file, size: stat.size, mtime: stat.mtimeMs });
+      } catch {
+        // A file can disappear while the cache is being pruned.
+      }
+    }
+    entries.sort((a, b) => b.mtime - a.mtime);
+    let total = 0;
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (index >= STREAM_CACHE_MAX_FILES || total + entry.size > STREAM_CACHE_MAX_BYTES) {
+        await fs.promises.rm(entry.file, { force: true });
+      } else {
+        total += entry.size;
+      }
+    }
+  } catch {
+    // Cache pruning is best-effort.
+  }
+}
+
 function removePartialFiles(trackId: string) {
   try {
     const dir = downloadsDir();
@@ -229,6 +297,16 @@ export class StreamService {
         title: track.title,
         duration: track.duration,
         localPath: track.localPath,
+      };
+    }
+    const cachedFile = cachedAudioFile(track.id);
+    if (cachedFile) {
+      return {
+        url: `auralis-media://local/${encodeURIComponent(cachedFile)}`,
+        format: path.extname(cachedFile).replace('.', '') || 'audio',
+        title: track.title,
+        duration: track.duration,
+        quality: settingsStore.get().audioQuality,
       };
     }
     const quality = settingsStore.get().audioQuality;
@@ -367,6 +445,69 @@ export class StreamService {
     } catch {
       // Prefetch failures are silent; playback will surface a real error.
     }
+  }
+
+  async prefetchVideo(track: Track): Promise<void> {
+    try {
+      await this.resolveVideo(track);
+    } catch {
+      // The video button can still report a useful error when clicked.
+    }
+  }
+
+  /**
+   * Download the next queue item into the private stream cache. The current
+   * track keeps streaming immediately; by the time the next track starts its
+   * bytes are already local, so track transitions do not expose a network
+   * buffering gap. Downloads are deliberately rate-limited so they do not
+   * starve the currently playing stream on a slow connection.
+   */
+  async cache(track: Track): Promise<string | null> {
+    if (!track.id || track.localPath) return null;
+    const existing = cachedAudioFile(track.id);
+    if (existing) return existing;
+    const pending = cacheTasks.get(track.id);
+    if (pending) return pending;
+
+    const task = (async () => {
+      try {
+        const dir = streamCacheDir();
+        await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+        const base = safeFileBase(track.id);
+        const output = path.join(dir, `${base}.%(ext)s`);
+        const args = [
+          ...commonArgs(),
+          '--socket-timeout',
+          '10',
+          '--retries',
+          '2',
+          '--fragment-retries',
+          '2',
+          '--no-progress',
+          '--limit-rate',
+          '320K',
+          '-f',
+          qualityFormat(settingsStore.get().audioQuality),
+          '-o',
+          output,
+          `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+        ];
+        await runYtdlp(args, 180_000);
+        const file = cachedAudioFile(track.id);
+        if (file && process.platform !== 'win32') {
+          fs.chmodSync(file, 0o600);
+        }
+        void trimStreamCache();
+        return file || null;
+      } catch {
+        // A cache miss is harmless: resolve() falls back to the live stream.
+        return null;
+      } finally {
+        cacheTasks.delete(track.id);
+      }
+    })();
+    cacheTasks.set(track.id, task);
+    return task;
   }
 
   invalidate(trackId: string) {

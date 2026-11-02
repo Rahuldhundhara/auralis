@@ -121,7 +121,7 @@ export function NowPlaying() {
   useEffect(() => {
     if (!open) return;
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape' && !useUiStore.getState().videoTrack) setOpen(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -130,6 +130,16 @@ export function NowPlaying() {
   useEffect(() => {
     setArtLoaded(false);
   }, [current?.id]);
+
+  useEffect(() => {
+    if (!open || !current || current.type === 'episode') return;
+    // Resolving the video URL takes a few seconds. Warm it while the user is
+    // looking at Now Playing so the Watch button opens quickly.
+    const timer = window.setTimeout(() => {
+      void window.auralis.player.prefetchVideo(current).catch(() => {});
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [open, current?.id, current?.type]);
 
   if (!open || !current) return null;
   const downloaded = downloads.some((item) => item.track.id === current.id && item.status === 'done');
@@ -234,8 +244,14 @@ export function NowPlaying() {
             <IconButton label="Add to playlist" size="md" onClick={() => openDialog({ type: 'add-to-playlist', track: current })}>
               <ListPlus size={21} />
             </IconButton>
-            {current.isVideo ? (
-              <IconButton label="Watch video" size="md" onClick={() => openVideo(current)}>
+            {current.type !== 'episode' ? (
+              <IconButton
+                label={current.isVideo ? 'Watch video' : 'Watch music video'}
+                size="md"
+                onClick={() => openVideo(current)}
+                onPointerEnter={() => void window.auralis.player.prefetchVideo(current).catch(() => {})}
+                onFocus={() => void window.auralis.player.prefetchVideo(current).catch(() => {})}
+              >
                 <Video size={21} />
               </IconButton>
             ) : null}

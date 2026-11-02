@@ -3,6 +3,7 @@ import type { Settings, Track } from '@shared/types';
 import { useAppStore } from './app';
 import { useUiStore } from './ui';
 import { isTypingTarget, safeJson, shuffleArray } from '../lib/format';
+import { prefetchLyrics } from '../lib/lyricsCache';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -79,6 +80,9 @@ let initialized = false;
 let loadToken = 0;
 let activeSrc = '';
 let prefetchTimer: number | undefined;
+let lyricsTimer: number | undefined;
+let bufferWatchTimer: number | undefined;
+let bufferRetries = 0;
 let retryCurrent: (() => void) | undefined;
 let pendingSeek = 0;
 let recorded = false;
@@ -141,6 +145,12 @@ function ensureAudio(): HTMLAudioElement {
   audio.setAttribute('playsinline', 'true');
   attachAudioListeners();
   return audio;
+}
+
+/** The media element advances at ~60 Hz; lyric highlighting can read it directly. */
+export function getAudioPosition(): number {
+  const value = audio?.currentTime;
+  return Number.isFinite(value) ? (value as number) : 0;
 }
 
 function buildGraph() {
@@ -291,6 +301,31 @@ function notifyDiscord() {
   }, 900);
 }
 
+function clearBufferWatch() {
+  window.clearTimeout(bufferWatchTimer);
+  bufferWatchTimer = undefined;
+}
+
+function armBufferWatch() {
+  clearBufferWatch();
+  bufferWatchTimer = window.setTimeout(() => {
+    bufferWatchTimer = undefined;
+    const state = usePlayerStore.getState();
+    // Ignore the short wait that happens while the initial stream is being
+    // opened. Only recover when playback has actually stalled.
+    if (!state.buffering || !state.playing || !state.current || !audio || audio.paused) return;
+    if (bufferRetries >= 2) return;
+    bufferRetries += 1;
+    const position = Math.max(0, audio.currentTime || state.position);
+    console.warn('[auralis] playback stalled; retrying the stream', {
+      trackId: state.current.id,
+      position,
+      attempt: bufferRetries,
+    });
+    retryCurrent?.();
+  }, 6_000);
+}
+
 function attachAudioListeners() {
   if (!audio) return;
   audio.addEventListener('loadedmetadata', () => {
@@ -339,19 +374,35 @@ function attachAudioListeners() {
     notifyDiscord();
   });
   audio.addEventListener('pause', () => {
+    clearBufferWatch();
     usePlayerStore.setState({ playing: false, buffering: false });
     updateMediaSession(usePlayerStore.getState().current, false);
     updatePositionState();
     notifyDiscord();
   });
   audio.addEventListener('seeked', () => updatePositionState());
-  audio.addEventListener('waiting', () => usePlayerStore.setState({ buffering: true }));
+  audio.addEventListener('waiting', () => {
+    usePlayerStore.setState({ buffering: true });
+    armBufferWatch();
+  });
+  audio.addEventListener('stalled', () => {
+    const state = usePlayerStore.getState();
+    if (!state.playing) return;
+    usePlayerStore.setState({ buffering: true });
+    armBufferWatch();
+  });
   audio.addEventListener('playing', () => {
+    clearBufferWatch();
+    bufferRetries = 0;
     usePlayerStore.setState({ buffering: false, loading: false, playing: true });
     updatePositionState();
   });
-  audio.addEventListener('canplay', () => usePlayerStore.setState({ loading: false, buffering: false }));
+  audio.addEventListener('canplay', () => {
+    clearBufferWatch();
+    usePlayerStore.setState({ loading: false, buffering: false });
+  });
   audio.addEventListener('ended', () => {
+    clearBufferWatch();
     const state = usePlayerStore.getState();
     finalizePlayback(true);
     if (state.sleepTimerEndOfTrack) {
@@ -371,6 +422,7 @@ function attachAudioListeners() {
     state.next(true);
   });
   audio.addEventListener('error', () => {
+    clearBufferWatch();
     if (!audio || !audio.src) return;
     if (!activeSrc || audio.src !== activeSrc) return;
     const state = usePlayerStore.getState();
@@ -487,9 +539,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     startAt = 0,
     isRetry = false,
   ) => {
+    clearBufferWatch();
+    window.clearTimeout(lyricsTimer);
+    lyricsTimer = undefined;
     if (!isRetry) {
       finalizePlayback(false);
       errorRetries = 0;
+      bufferRetries = 0;
     }
     const el = ensureAudio();
     const playable = playableTrack(track);
@@ -524,6 +580,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     notifyDiscord();
     try {
+      // A stalled stream URL is often already expired or throttled. Drop it
+      // before resolving again so the retry does not receive the same URL.
+      if (isRetry) await window.auralis.player.invalidate(track.id).catch(() => {});
       const stream = await window.auralis.player.resolve(playable);
       if (token !== loadToken || get().current?.id !== track.id) return;
       audioContext?.resume().catch(() => {});
@@ -542,13 +601,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       } else {
         set({ loading: false });
       }
+      lyricsTimer = window.setTimeout(() => {
+        const current = usePlayerStore.getState();
+        if (current.current?.id === track.id) void prefetchLyrics(playable);
+      }, 700);
       const nextIndex = get().index + 1;
       const nextTrack = get().queue[nextIndex];
       if (nextTrack) {
         prefetchTimer = window.setTimeout(() => {
           const current = usePlayerStore.getState();
           if (current.queue[current.index + 1]?.id === nextTrack.id) {
-            void window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {});
+            const next = playableTrack(nextTrack);
+            // Resolve the URL for a fast fallback and, in parallel, place the
+            // complete track in the local stream cache. If the cache wins, the
+            // next transition never touches the network at all.
+            void window.auralis.player.prefetch(next).catch(() => {});
+            void window.auralis.player.cache(next).catch(() => {});
           }
         }, 450);
       }
@@ -753,7 +821,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         schedulePersist();
         const nextTrack = get().queue[get().index + 1];
         if (nextTrack) {
-          window.setTimeout(() => window.auralis.player.prefetch(playableTrack(nextTrack)).catch(() => {}), 1200);
+          window.setTimeout(() => {
+            const next = playableTrack(nextTrack);
+            void window.auralis.player.prefetch(next).catch(() => {});
+            void window.auralis.player.cache(next).catch(() => {});
+          }, 1200);
         }
       } catch (error: any) {
         set({ radioLoading: false });
@@ -774,7 +846,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (state.loading) {
         loadToken++;
         activeSrc = '';
-        set({ loading: false, playing: false });
+        clearBufferWatch();
+        set({ loading: false, playing: false, buffering: false });
         return;
       }
       if (state.playing) {
@@ -1059,6 +1132,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     clearSleepTimer: () => set({ sleepTimerEnd: undefined, sleepTimerEndOfTrack: false }),
 
     stop: () => {
+      clearBufferWatch();
       finalizePlayback(false);
       if (audio) {
         audio.pause();

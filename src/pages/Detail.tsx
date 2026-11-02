@@ -18,7 +18,7 @@ import {
   UserCheck,
   UserPlus,
 } from 'lucide-react';
-import type { BrowsePage, Card, PageHeader, Shelf as ShelfType, Track } from '@shared/types';
+import type { BrowsePage, Card, NavEndpoint, PageHeader, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
@@ -96,6 +96,7 @@ export function DetailPage({
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
   const [extraShelves, setExtraShelves] = useState<ShelfType[]>([]);
+  const [chipLoading, setChipLoading] = useState(false);
   const [downloading, setDownloading] = useState<string | undefined>();
   const [savedCopy, setSavedCopy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -223,6 +224,53 @@ export function DetailPage({
       toast(`Could not load more: ${err?.message || err}`, 'error');
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  const applyChip = async (endpoint: NavEndpoint | undefined, title: string) => {
+    if (!endpoint || chipLoading) return;
+    if (endpoint.query) {
+      navigate({ page: 'search', q: endpoint.query });
+      return;
+    }
+    // Chips that navigate to a different page keep the normal navigation
+    // behaviour. Podcast episode filters instead use a section-list reload
+    // continuation and must update this page in place.
+    if (!endpoint.continuation && !endpoint.params && (endpoint.browseId || endpoint.playlistId || endpoint.videoId)) {
+      navigateEndpoint(endpoint, title);
+      return;
+    }
+    setChipLoading(true);
+    try {
+      let page: BrowsePage;
+      if (endpoint.continuation) {
+        page = await window.auralis.yt.browseEndpoint(endpoint);
+      } else {
+        const target = endpoint.browseId || header?.browseId || header?.id || id;
+        if (!target && !endpoint.params) return;
+        page = await window.auralis.yt.browse(target || '', endpoint.params);
+      }
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              header: current.header || page.header,
+              shelves: page.shelves,
+              chips: page.chips?.length ? page.chips : current.chips,
+              continuation: page.continuation,
+            }
+          : page,
+      );
+      setExtraTracks([]);
+      setExtraShelves([]);
+      setContinuation(page.continuation);
+      if (!page.shelves.some(isTrackShelf)) {
+        toast(`No items in “${title}” yet.`, 'info');
+      }
+    } catch (err: any) {
+      toast(`Could not apply this filter: ${err?.message || err}`, 'error');
+    } finally {
+      setChipLoading(false);
     }
   };
 
@@ -562,10 +610,24 @@ export function DetailPage({
             <button
               type="button"
               key={`${chip.title}-${index}`}
-              className={`genre-chip ${chip.selected ? 'is-selected' : ''}`}
-              onClick={() => chip.endpoint && navigateEndpoint(chip.endpoint, chip.title)}
+              className={`genre-chip ${chip.selected ? 'is-selected' : ''} ${chipLoading ? 'is-loading' : ''}`}
+              disabled={chipLoading}
+              aria-busy={chipLoading || undefined}
+              onClick={(event) => {
+                if (chip.menu?.length) {
+                  const items = chip.menu.map((option) => ({
+                    label: option.title,
+                    checked: option.selected,
+                    onClick: () => void applyChip(option.endpoint, option.title),
+                  }));
+                  useUiStore.getState().openMenu(event.clientX, event.clientY, items);
+                  return;
+                }
+                void applyChip(chip.endpoint, chip.title);
+              }}
             >
               {chip.title}
+              {chip.menu?.length ? <span className="chip-caret" aria-hidden="true">▾</span> : null}
             </button>
           ))}
         </div>

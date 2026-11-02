@@ -112,7 +112,6 @@ export function TrackList({
               window.clearTimeout(prefetchTimer.current);
             }}
             onPointerDown={() => prefetchTrack(track)}
-            onDoubleClick={playRow}
           >
             <div className="track-index">
               {isPlaying ? (

@@ -49,6 +49,12 @@ export function endpointOf(value: Raw): NavEndpoint | undefined {
   if (watchPlaylist?.playlistId) {
     return { playlistId: watchPlaylist.playlistId, params: watchPlaylist.params || undefined };
   }
+  const reload = value.browseSectionListReloadEndpoint;
+  const reloadContinuation =
+    reload?.continuation?.reloadContinuationData?.continuation ||
+    reload?.continuation?.nextContinuationData?.continuation ||
+    reload?.continuation?.continuation;
+  if (reloadContinuation) return { continuation: reloadContinuation };
   const search = value.searchEndpoint;
   if (search?.query) return { query: search.query };
   return undefined;
@@ -138,8 +144,11 @@ function typeFromPageType(pageType?: string, fallback: ItemType = 'playlist'): I
     case 'MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE':
       return 'podcast';
     case 'MUSIC_PAGE_TYPE_PODCAST_EPISODE':
-    case 'MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE':
       return 'episode';
+    // User-uploaded audio tracks (including many official song uploads) use
+    // this page type. They are songs, not podcast episodes.
+    case 'MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE':
+      return 'song';
     case 'MUSIC_PAGE_TYPE_USER_CHANNEL':
       return 'profile';
     case 'MUSIC_PAGE_TYPE_TRACK_LYRICS':
@@ -581,16 +590,36 @@ function collectSectionContents(json: Raw): { contents: Raw[]; chips: Raw[]; con
 function parseChips(chips: Raw[]): BrowsePage['chips'] {
   const out: NonNullable<BrowsePage['chips']> = [];
   for (const chip of chips || []) {
-    const text = textOf(chip?.chipCloudChipRenderer?.text).trim();
+    const renderer = chip?.chipCloudChipRenderer;
+    const text = textOf(renderer?.text).trim();
     if (!text) continue;
-    const nav =
-      chip?.chipCloudChipRenderer?.navigationEndpoint ||
-      chip?.chipCloudChipRenderer?.onTap?.navigationEndpoint || {};
-    const endpoint = endpointOf(nav);
+    const nav = renderer?.navigationEndpoint || renderer?.onTap?.navigationEndpoint || {};
+    const endpoint = endpointOf(nav) || (nav?.browseEndpoint?.params ? { params: nav.browseEndpoint.params } : undefined);
+    const popupItems = nav?.openPopupAction?.popup?.menuPopupRenderer?.items || [];
+    const menu = popupItems
+      .map((item: Raw) => {
+        const entry = item?.menuNavigationItemRenderer;
+        const title = textOf(entry?.text).trim();
+        if (!title) return undefined;
+        const entryNav = entry?.navigationEndpoint || {};
+        return {
+          title,
+          endpoint:
+            endpointOf(entryNav) ||
+            (entryNav?.browseEndpoint?.params ? { params: entryNav.browseEndpoint.params } : undefined),
+          selected:
+            entry?.icon?.iconType === 'CHECK' ||
+            /(?:^|,\s*)selected$/i.test(String(entry?.accessibility?.accessibilityData?.label || '').trim()),
+        };
+      })
+      .filter((item: { title: string } | undefined): item is { title: string; endpoint?: NavEndpoint; selected: boolean } =>
+        Boolean(item?.title),
+      );
     out.push({
       title: text,
-      endpoint: endpoint || (nav?.browseEndpoint?.params ? { params: nav.browseEndpoint.params } : undefined),
-      selected: Boolean(chip?.chipCloudChipRenderer?.isSelected),
+      endpoint,
+      selected: Boolean(renderer?.isSelected ?? renderer?.selected ?? menu.some((item: { selected: boolean }) => item.selected)),
+      ...(menu.length ? { menu } : {}),
     });
   }
   return out;
@@ -779,7 +808,10 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
   const subtitle = textOf(renderer?.subtitle).trim();
   const thumbnail = thumbnailsOf(renderer?.thumbnailRenderer || renderer?.thumbnail);
   const parsedSubtitle = parseSubtitleRuns(renderer?.subtitle?.runs || []);
-  const videoId = type === 'episode' && id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
+  // MPED pages are non-music audio tracks/podcast episodes. Their browse id
+  // wraps the real playable video id; expose that track directly so cards can
+  // play it instead of trying to browse a synthetic id.
+  const trackId = id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
   return {
     type,
     id,
@@ -788,10 +820,10 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
     thumbnail,
     round: type === 'artist',
     browseId: id.startsWith('MPED') ? id : undefined,
-    track: videoId
+    track: trackId
       ? {
-          id: videoId,
-          type: 'episode',
+          id: trackId,
+          type: type === 'episode' ? 'episode' : 'song',
           title,
           artists: parsedSubtitle.artists,
           duration: parsedSubtitle.duration,
@@ -1088,41 +1120,76 @@ export function summarize(json: Raw) {
 
 /** Continuation responses use `continuationContents` instead of `contents`. */
 export function parseBrowseContinuation(json: Raw): BrowsePage {
-  const sectionList =
-    json?.continuationContents?.sectionListContinuation ||
-    json?.continuationContents?.gridContinuation ||
-    json?.continuationContents?.musicShelfContinuation;
-  if (!sectionList) return { shelves: [] };
+  // A filtered podcast response can contain both a sectionListContinuation
+  // (which carries the filter chips) and a musicShelfContinuation (which
+  // carries the actual episodes). Reading only the first key made every
+  // podcast filter look empty.
+  const parts = [
+    json?.continuationContents?.musicShelfContinuation,
+    json?.continuationContents?.sectionListContinuation,
+    json?.continuationContents?.gridContinuation,
+  ].filter(Boolean);
+  if (!parts.length) return { shelves: [] };
   const shelves: Shelf[] = [];
-  const contents = sectionList?.contents || sectionList?.items || [];
-  for (const node of contents) {
-    if (node?.musicCarouselShelfRenderer) {
-      const shelf = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
-      if (shelf) shelves.push(shelf);
-    } else if (node?.musicTwoRowItemRenderer) {
-      const card = parseTwoRowItem(node.musicTwoRowItemRenderer);
-      if (card) {
-        if (shelves.length) shelves[0].items.push(card);
-        else shelves.push({ items: [card], style: 'grid' });
-      }
-    } else if (node?.musicShelfRenderer) {
-      const shelf = parseShelf(node.musicShelfRenderer, 'list');
-      if (shelf) shelves.push(shelf);
-    } else if (node?.musicResponsiveListItemRenderer) {
-      const track = parseResponsiveItem(node.musicResponsiveListItemRenderer);
-      if (track) {
-        const items = [{ type: track.type, id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track } as Card];
-        if (shelves.length) shelves[0].items.push(...items);
-        else shelves.push({ items, style: 'list' });
+  const seenTracks = new Set<string>();
+  let continuation: string | undefined;
+  const chipList: Raw[] = [];
+  for (const part of parts) {
+    continuation ||= continuationOf(part);
+    chipList.push(...(part?.header?.chipCloudRenderer?.chips || []));
+    const contents = part?.contents || part?.items || [];
+    for (const node of contents) {
+      if (node?.musicCarouselShelfRenderer) {
+        const shelf = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
+        if (shelf) shelves.push(shelf);
+      } else if (node?.musicTwoRowItemRenderer) {
+        const card = parseTwoRowItem(node.musicTwoRowItemRenderer);
+        if (card && !seenTracks.has(card.id)) {
+          seenTracks.add(card.id);
+          if (shelves.length) shelves[0].items.push(card);
+          else shelves.push({ items: [card], style: 'grid' });
+        }
+      } else if (node?.musicShelfRenderer) {
+        const shelf = parseShelf(node.musicShelfRenderer, 'list');
+        if (shelf) shelves.push(shelf);
+      } else if (node?.musicResponsiveListItemRenderer) {
+        const track = parseResponsiveItem(node.musicResponsiveListItemRenderer);
+        if (track && !seenTracks.has(track.id)) {
+          seenTracks.add(track.id);
+          const items = [{ type: track.type, id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track } as Card];
+          if (shelves.length) shelves[0].items.push(...items);
+          else shelves.push({ items, style: 'list' });
+        }
+      } else if (node?.musicMultiRowListItemRenderer) {
+        // Podcast episodes in a continuation response use this renderer,
+        // unlike regular song rows.
+        const track = parseMultiRowItem(node.musicMultiRowListItemRenderer);
+        if (track && !seenTracks.has(track.id)) {
+          seenTracks.add(track.id);
+          const items = [{
+            type: 'episode',
+            id: track.id,
+            title: track.title,
+            subtitle: textOf(node.musicMultiRowListItemRenderer.subtitle).trim(),
+            thumbnail: track.thumbnail,
+            track,
+            artists: [],
+          } as Card];
+          if (shelves.length) shelves[0].items.push(...items);
+          else shelves.push({ items, style: 'list' });
+        }
       }
     }
   }
+  const chipsByTitle = new Map<string, NonNullable<BrowsePage['chips']>[number]>();
+  for (const chip of parseChips(chipList) || []) {
+    const existing = chipsByTitle.get(chip.title);
+    if (!existing || (chip.selected && !existing.selected)) chipsByTitle.set(chip.title, chip);
+  }
   return {
     shelves,
-    continuation: continuationOf(sectionList),
-    chips: parseChips(
-      sectionList?.header?.chipCloudRenderer?.chips || json?.continuationContents?.sectionListContinuation?.header?.chipCloudRenderer?.chips || [],
-    ),
+    continuation,
+    chips: chipsByTitle.size ? [...chipsByTitle.values()] : undefined,
   };
 }
 

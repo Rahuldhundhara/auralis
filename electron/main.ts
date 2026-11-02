@@ -21,7 +21,7 @@ import { pathToFileURL } from 'node:url';
 import type { PlaylistImportResult, SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
 import { innertube } from './services/innertube';
-import { streams } from './services/streams';
+import { streams, streamCacheDir } from './services/streams';
 import { lyricsService } from './services/lyrics';
 import { transcribeSpeech } from './services/speech';
 import { lastfm } from './services/lastfm';
@@ -295,6 +295,14 @@ function readWindowSessionCookies(): string {
 function isAllowedLocalMedia(filePath: string): boolean {
   try {
     const resolved = fs.realpathSync(filePath);
+    // Check the private cache first. The downloads folder may not exist yet
+    // on a fresh profile, and realpathSync on it would otherwise reject valid
+    // cached playback before we get here.
+    const cacheRoot = streamCacheDir();
+    if (fs.existsSync(cacheRoot)) {
+      const cache = fs.realpathSync(cacheRoot);
+      if (resolved === cache || resolved.startsWith(`${cache}${path.sep}`)) return true;
+    }
     const root = fs.realpathSync(downloadsDir());
     if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return true;
     return libraryStore
@@ -722,6 +730,8 @@ function registerIpc() {
   ipcMain.handle('player:resolve', (_event, track: Track) => streams.resolve(track));
   ipcMain.handle('player:resolve-video', (_event, track: Track) => streams.resolveVideo(track));
   ipcMain.handle('player:prefetch', (_event, track: Track) => streams.prefetch(track));
+  ipcMain.handle('player:cache', (_event, track: Track) => streams.cache(track));
+  ipcMain.handle('player:prefetch-video', (_event, track: Track) => streams.prefetchVideo(track));
   ipcMain.handle('player:download', (_event, track: Track) =>
     streams.download(track, (progress) => broadcast('download-progress', progress)),
   );
