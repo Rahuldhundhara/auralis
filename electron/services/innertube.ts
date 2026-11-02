@@ -10,6 +10,43 @@ const CLIENT_VERSION = '1.20260707.12.00';
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
+/**
+ * Player clients that expose direct, un-ciphered audio URLs without an
+ * `n` transform. Tested in order; all are faster than spawning yt-dlp.
+ */
+const MEDIA_PLAYER_CLIENTS = [
+  {
+    // VISIONOS is what yt-dlp itself uses for music playback. Unlike the
+    // Android/iOS clients it returns full, un-capped audio URLs when the
+    // request carries the session's visitorData, and it needs no PO token.
+    client: {
+      name: 'VISIONOS',
+      version: '1.02',
+      id: '101',
+      context: {
+        deviceMake: 'Apple',
+        deviceModel: 'RealityDevice17,1',
+        osName: 'visionOS',
+        osVersion: '26.5.23O471',
+      },
+    },
+    apiKey: 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+  },
+  {
+    client: { name: 'ANDROID_VR', version: '1.62.27', id: '28' },
+    apiKey: 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI',
+    userAgent:
+      'com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1) gzip',
+  },
+  {
+    client: { name: 'IOS', version: '20.10.4', id: '5' },
+    apiKey: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
+    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+  },
+] as const;
+
 export class InnertubeError extends Error {
   constructor(
     message: string,
@@ -35,7 +72,9 @@ export interface RequestOptions {
   /** Overrides the public API key for endpoints that use a different one. */
   apiKey?: string;
   /** Override the Innertube client profile for a single request. */
-  client?: { name: string; version: string; id: string };
+  client?: { name: string; version: string; id: string; context?: Record<string, string> };
+  /** Override the User-Agent sent with the request. */
+  userAgent?: string;
 }
 
 function sha1(input: string): string {
@@ -117,6 +156,7 @@ export class Innertube {
         gl: this.locale.gl,
         hl: this.locale.hl,
         visitorData: this.visitorData,
+        ...(client?.context || {}),
       },
       request: {
         internalExperimentFlags: [],
@@ -139,7 +179,7 @@ export class Innertube {
       'Content-Type': 'application/json',
       Accept: '*/*',
       'Accept-Language': `${this.locale.hl},en;q=0.8`,
-      'User-Agent': USER_AGENT,
+      'User-Agent': options.userAgent || USER_AGENT,
       Origin: ORIGIN,
       'X-Origin': ORIGIN,
       Referer: `${ORIGIN}/`,
@@ -288,6 +328,77 @@ export class Innertube {
       contentCheckOk: true,
       racyCheckOk: true,
     }, { login: false });
+  }
+
+  /**
+   * Fast playback resolve. The WEB_REMIX player endpoint answers "Video
+   * unavailable" for playback on this client, and yt-dlp costs 4+ seconds per
+   * track because every call spawns a new process. The mobile clients below
+   * return direct audio URLs in roughly 300-500 ms and are what Spotify-style
+   * clients use for instant start. yt-dlp stays as the fallback for tracks the
+   * mobile clients refuse (age gates, region locks, future API changes).
+   */
+  async playerMedia(videoId: string, playlistId?: string): Promise<any> {
+    // VISIONOS only returns full playback URLs when the request carries a
+    // visitorData value. Home normally supplies it; fetch the anonymous
+    // session from the music homepage if the app started on another page.
+    if (!this.visitorData) await this.ensureVisitorData();
+    let lastError: unknown;
+    for (const profile of MEDIA_PLAYER_CLIENTS) {
+      try {
+        const payload = await this.request('player', {
+          videoId,
+          playlistId,
+          playbackContext: {
+            contentPlaybackContext: {
+              signatureTimestamp: 20000,
+              html5Preference: 'HTML5_PREF_WANTS',
+            },
+          },
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }, {
+          login: false,
+          client: profile.client,
+          apiKey: profile.apiKey,
+          userAgent: profile.userAgent,
+          timeoutMs: 7000,
+        });
+        // Some bot-flagged responses still carry streamingData with URLs that
+        // answer 403. Only an explicit OK status is safe to use.
+        if (payload?.playabilityStatus?.status !== 'OK') {
+          throw new InnertubeError(
+            payload?.playabilityStatus?.reason || payload?.playabilityStatus?.status || 'Playback is unavailable.',
+          );
+        }
+        return payload;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new InnertubeError('Could not resolve a playable audio URL.');
+  }
+
+  private async ensureVisitorData(): Promise<void> {
+    try {
+      const response = await fetch(`${ORIGIN}/`, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept-Language': `${this.locale.hl},en;q=0.8`,
+        },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!response.ok) return;
+      const html = await response.text();
+      const match = html.match(/"visitorData":"([^"]+)"/);
+      const visitor = match?.[1]?.replace(/\\u003d/g, '=').replace(/\\u0026/g, '&');
+      if (visitor && findVisitorData(visitor)) {
+        this.visitorData = visitor;
+        sessionStore.visitorData = visitor;
+      }
+    } catch {
+      // Playback will still try the remaining clients and yt-dlp.
+    }
   }
 
   lyrics(endpoint: NavEndpoint): Promise<any> {

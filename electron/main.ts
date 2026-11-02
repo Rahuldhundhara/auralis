@@ -308,11 +308,50 @@ function registerMediaProtocol() {
         };
         const range = request.headers.get('range');
         if (range) headers.Range = range;
-        const response = await net.fetch(remote, { headers, method: 'GET' });
+        let response: Response;
+        const started = Date.now();
+        try {
+          response = await net.fetch(remote, { headers, method: 'GET' });
+        } catch (error: any) {
+          // Chromium's network stack occasionally fails a range request right
+          // after the media element cancels the previous one. Node's stack is
+          // a separate connection to the same host, so retrying there keeps
+          // playback alive instead of leaving the track on a spinner.
+          if (process.env.AURALIS_DEBUG_STREAM) {
+            console.log('[media] net.fetch failed', error?.message || error, range || 'no-range', `${Date.now() - started}ms`);
+          }
+          try {
+            response = await fetch(remote, { headers, method: 'GET' });
+          } catch (fallbackError: any) {
+            if (process.env.AURALIS_DEBUG_STREAM) {
+              console.log('[media] failed', fallbackError?.message || fallbackError, range || 'no-range');
+            }
+            return new Response(fallbackError?.message || 'Media request failed', { status: 502 });
+          }
+        }
+        if (process.env.AURALIS_DEBUG_STREAM) {
+          const params = new URL(remote).searchParams;
+          console.log(
+            '[media]',
+            response.status,
+            range || 'no-range',
+            `itag=${params.get('itag')}`,
+            `c=${params.get('c')}`,
+            `n=${params.get('n') ? 'yes' : 'no'}`,
+            remote.slice(0, 60),
+          );
+          if (response.status >= 400) {
+            const body = await response.clone().text().catch(() => '');
+            console.log('[media] body', body.slice(0, 300));
+          }
+        }
         return withCors(response);
       }
       return new Response('Not found', { status: 404 });
     } catch (error: any) {
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[media] failed', error?.message || error);
+      }
       return new Response(error?.message || 'Media request failed', { status: 502 });
     }
   });

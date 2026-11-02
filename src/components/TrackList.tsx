@@ -8,7 +8,7 @@ import {
   type TrackMenuContext,
 } from '../lib/actions';
 import { useAppStore, downloadForTrack } from '../stores/app';
-import { usePlayerStore } from '../stores/player';
+import { prefetchTrackSoon, usePlayerStore } from '../stores/player';
 import { Artwork, ExplicitBadge, IconButton } from './primitives';
 import { formatDuration } from '../lib/format';
 
@@ -66,6 +66,7 @@ export function TrackList({
           <div
             key={`${track.id}-${index}`}
             className={`track-row ${isCurrent ? 'is-current' : ''} ${loading && isCurrent ? 'is-loading' : ''}`}
+            data-track-id={track.id}
             role="button"
             tabIndex={0}
             onClick={playRow}
@@ -76,7 +77,10 @@ export function TrackList({
               event.preventDefault();
               showTrackMenu(track, event, { ...context, trackIndex: index, queueIndex: isCurrent ? usePlayerStore.getState().index : undefined });
             }}
-            onMouseEnter={() => setHovered(index)}
+            onMouseEnter={() => {
+              setHovered(index);
+              prefetchTrackSoon(track);
+            }}
             onMouseLeave={() => setHovered(null)}
             onDoubleClick={playRow}
           >

@@ -26,6 +26,7 @@ import { usePlayerStore, currentPlaybackPosition } from '../stores/player';
 import { useUiStore, type MenuItem } from '../stores/ui';
 import { artistsLine, formatDuration } from '../lib/format';
 import { isAndroidShell } from '../lib/platform';
+import { useDelayedFlag } from '../lib/useDelayedFlag';
 import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton, Range } from './primitives';
 
@@ -95,6 +96,12 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
   const repeat = usePlayerStore((state) => state.repeat);
   const hasQueue = usePlayerStore((state) => state.queue.length > 0);
   const big = size === 'lg';
+  const busy = loading || buffering;
+  // The fast path resolves in a few hundred milliseconds. Showing a spinner
+  // the instant a row is clicked makes playback look slower than it is, so
+  // hold it back; a real stall (slow yt-dlp fallback, buffering mid-song)
+  // still gets a spinner once the wait is long enough to need feedback.
+  const showSpinner = useDelayedFlag(busy, 900);
 
   return (
     <div className={`transport transport-${size}`}>
@@ -114,9 +121,12 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         type="button"
         className={`play-button ${big ? 'is-large' : ''}`}
         aria-label={playing ? 'Pause' : 'Play'}
+        aria-busy={busy}
+        data-playing={playing ? 'true' : 'false'}
+        data-loading={loading ? 'true' : 'false'}
         onClick={() => usePlayerStore.getState().toggle()}
       >
-        {loading || buffering ? (
+        {showSpinner ? (
           <Loader2 size={big ? 30 : 22} className="spin" />
         ) : playing ? (
           <Pause size={big ? 30 : 22} fill="currentColor" />
@@ -263,7 +273,7 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
       </button>
       <div className="player-track-text">
         <div className="player-title-line">
-          <span className="player-title" title={track.title}>
+          <span className="player-title" data-track-id={track.id} title={track.title}>
             {track.title}
           </span>
         </div>
@@ -418,6 +428,8 @@ function MobilePlayerControls() {
   const loading = usePlayerStore((state) => state.loading);
   const buffering = usePlayerStore((state) => state.buffering);
   const hasQueue = usePlayerStore((state) => state.queue.length > 0);
+  const busy = loading || buffering;
+  const showSpinner = useDelayedFlag(busy, 900);
 
   return (
     <div className="player-mobile-actions">
@@ -433,9 +445,12 @@ function MobilePlayerControls() {
         type="button"
         className="player-mobile-play"
         aria-label={playing ? 'Pause' : 'Play'}
+        aria-busy={busy}
+        data-playing={playing ? 'true' : 'false'}
+        data-loading={loading ? 'true' : 'false'}
         onClick={() => usePlayerStore.getState().toggle()}
       >
-        {loading || buffering ? (
+        {showSpinner ? (
           <Loader2 size={20} className="spin" />
         ) : playing ? (
           <Pause size={20} fill="currentColor" />

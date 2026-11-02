@@ -343,6 +343,32 @@ function schedulePrefetch(track: Track | undefined, token: number) {
   }, 350);
 }
 
+let hoverPrefetchTimer: number | undefined;
+const prefetchedAt = new Map<string, number>();
+const PREFETCH_REUSE_MS = 4 * 60_000;
+
+/**
+ * Resolves a track after the pointer rests on it. The Innertube fast path
+ * answers in a few hundred milliseconds, so hovering the song you are about
+ * to click removes the wait from the click itself.
+ */
+export function prefetchTrackSoon(track: Track): void {
+  window.clearTimeout(hoverPrefetchTimer);
+  hoverPrefetchTimer = window.setTimeout(() => {
+    hoverPrefetchTimer = undefined;
+    const last = prefetchedAt.get(track.id);
+    if (last !== undefined && Date.now() - last < PREFETCH_REUSE_MS) return;
+    prefetchedAt.set(track.id, Date.now());
+    if (prefetchedAt.size > 300) {
+      const cutoff = Date.now() - PREFETCH_REUSE_MS;
+      for (const [id, at] of prefetchedAt) {
+        if (at < cutoff) prefetchedAt.delete(id);
+      }
+    }
+    window.auralis.player.prefetch(playableTrack(track)).catch(() => {});
+  }, 110);
+}
+
 function finalizePlayback(completed = false) {
   const state = usePlayerStore.getState();
   if (!state.current || recorded) return;
@@ -623,8 +649,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       el.playbackRate = settings.playbackRate || 1;
       el.volume = settings.muted ? 0 : settings.volume;
       el.muted = settings.muted;
-      el.load();
       set({ streamFormat: stream.format });
+      // Start resolving the next track now instead of waiting for play() to
+      // settle; a slow first buffer should never delay the next-song prefetch.
+      const nextTrack = get().queue[get().index + 1];
+      schedulePrefetch(nextTrack, token);
       if (autoplay) {
         try {
           await el.play();
@@ -634,8 +663,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       } else {
         set({ loading: false });
       }
-      const nextTrack = get().queue[get().index + 1];
-      schedulePrefetch(nextTrack, token);
     } catch (error: any) {
       if (token !== loadToken) return;
       set({
@@ -889,6 +916,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     toggle: () => {
       const state = get();
+      if (state.loading) {
+        // A newly picked track is still resolving. Calling play() here would
+        // start the previous track's src, so treat the press as a cancel.
+        loadToken++;
+        if (audio) {
+          audio.pause();
+          audio.removeAttribute('src');
+        }
+        set({ loading: false, playing: false, buffering: false });
+        return;
+      }
       if (state.playing) {
         get().pause();
         return;

@@ -5,18 +5,36 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
+import { innertube } from './innertube';
 import { ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
+const FAST_FAILURE_TTL_MS = 10 * 60_000;
+const FAST_COOLDOWN_MS = 2 * 60_000;
+const FAST_MIN_GAP_MS = 250;
+const MEDIA_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 interface CachedStream {
   info: StreamInfo;
   at: number;
 }
 
+interface MediaFormat {
+  url: string;
+  bitrate: number;
+  ext: string;
+  mimeType: string;
+}
+
 const streamCache = new Map<string, CachedStream>();
+const inFlight = new Map<string, Promise<StreamInfo>>();
+const fastFailures = new Map<string, number>();
 const active = new Map<string, ReturnType<typeof spawn>>();
 const issuedStreams = new Set<string>();
+let fastCooldownUntil = 0;
+let fastFailureStreak = 0;
+let fastLastRequestAt = 0;
 
 export function resourcesBinDir(): string {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'bin');
@@ -76,6 +94,55 @@ function qualityFormat(quality: string): string {
   }
 }
 
+function qualityBitrateCap(quality: string): number {
+  switch (quality) {
+    case 'low':
+      return 128_000;
+    case 'medium':
+      return 192_000;
+    case 'high':
+      return 256_000;
+    default:
+      return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * Picks the same kind of stream yt-dlp would: the best audio track below the
+ * configured quality cap, preferring AAC/M4A for the widest decoder support.
+ */
+function pickMediaFormat(payload: any, quality: string): MediaFormat | null {
+  const formats = Array.isArray(payload?.streamingData?.adaptiveFormats)
+    ? payload.streamingData.adaptiveFormats
+    : [];
+  const audio = formats.filter(
+    (format: any) =>
+      typeof format?.url === 'string' &&
+      /^https:\/\//i.test(format.url) &&
+      typeof format.mimeType === 'string' &&
+      format.mimeType.startsWith('audio/'),
+  );
+  if (!audio.length) return null;
+  const cap = qualityBitrateCap(quality);
+  const allowed = audio.filter((format: any) => (Number(format.bitrate) || 0) <= cap);
+  const pool = allowed.length ? allowed : audio;
+  pool.sort((a: any, b: any) => {
+    const aM4a = /mp4/i.test(a.mimeType) ? 0 : 1;
+    const bM4a = /mp4/i.test(b.mimeType) ? 0 : 1;
+    if (aM4a !== bM4a) return aM4a - bM4a;
+    return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+  });
+  const best = pool[0];
+  const mimeType = String(best.mimeType);
+  const ext = /mp4/i.test(mimeType) ? 'm4a' : /webm/i.test(mimeType) ? 'webm' : 'audio';
+  return {
+    url: String(best.url),
+    bitrate: Number(best.bitrate) || 0,
+    ext,
+    mimeType,
+  };
+}
+
 function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string; stderr: string }> {
   const cookie = args.includes('--cookies') ? args[args.indexOf('--cookies') + 1] : null;
   return new Promise((resolve, reject) => {
@@ -129,7 +196,37 @@ export class StreamService {
     const quality = settingsStore.get().audioQuality;
     const key = `${track.id}:${quality}`;
     const cached = streamCache.get(key);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      if (process.env.AURALIS_DEBUG_STREAM) console.log('[streams] cached', track.id);
+      return cached.info;
+    }
+
+    // A hover prefetch and a click can race for the same track. Share one
+    // resolution instead of firing two player requests or two yt-dlp processes.
+    const pending = inFlight.get(key);
+    if (pending) {
+      if (process.env.AURALIS_DEBUG_STREAM) console.log('[streams] joined in-flight', track.id);
+      return pending;
+    }
+    const task = this.resolveStream(track, quality, key).finally(() => {
+      if (inFlight.get(key) === task) inFlight.delete(key);
+    });
+    inFlight.set(key, task);
+    return task;
+  }
+
+  private async resolveStream(track: Track, quality: string, key: string): Promise<StreamInfo> {
+    const failedAt = fastFailures.get(track.id);
+    const skipFast = failedAt !== undefined && Date.now() - failedAt < FAST_FAILURE_TTL_MS;
+    if (!skipFast) {
+      const fast = await this.resolveFast(track, quality);
+      if (fast) {
+        streamCache.set(key, { info: fast, at: Date.now() });
+        return fast;
+      }
+      this.markFastFailure(track.id);
+    }
+
     const args = [
       ...commonArgs(),
       '-f',
@@ -152,6 +249,113 @@ export class StreamService {
     return info;
   }
 
+  /**
+   * yt-dlp spawns a fresh Python process for every resolve (measured at
+   * 4.1-4.3 s on Windows). The Innertube player endpoint answers in
+   * 300-500 ms and returns direct audio URLs, so playback starts immediately.
+   * Any failure falls through to yt-dlp for reliability.
+   */
+  private async resolveFast(track: Track, quality: string): Promise<StreamInfo | null> {
+    if (Date.now() < fastCooldownUntil) return null;
+    const gap = fastLastRequestAt + FAST_MIN_GAP_MS - Date.now();
+    if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
+    fastLastRequestAt = Date.now();
+    try {
+      const payload = await innertube.playerMedia(track.id);
+      const format = pickMediaFormat(payload, quality);
+      if (!format) {
+        if (process.env.AURALIS_DEBUG_STREAM) {
+          console.log('[streams] fast path had no audio formats', track.id, payload?.playabilityStatus?.status);
+        }
+        this.noteFastFailure();
+        return null;
+      }
+      // Validate the URL with the same open-ended range the audio element
+      // sends. Some bot-flagged YouTube responses answer a tiny 2-byte range
+      // but reject "bytes=0-" with 403, so a 2-byte probe gives a false
+      // positive and playback fails a second later. Cancel the body after the
+      // headers arrive so the track is not downloaded twice.
+      if (!(await this.streamIsPlayable(format.url))) {
+        if (process.env.AURALIS_DEBUG_STREAM) {
+          console.log('[streams] fast path URL rejected', track.id, format.ext, format.bitrate);
+        }
+        this.noteFastFailure();
+        return null;
+      }
+      fastFailureStreak = 0;
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path', track.id, format.ext, format.bitrate);
+      }
+      return {
+        url: proxyStreamUrl(format.url),
+        format: format.ext,
+        quality,
+        title: track.title,
+        duration: track.duration,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      };
+    } catch (error: any) {
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path failed', track.id, error?.message || error);
+      }
+      this.noteFastFailure();
+      return null;
+    }
+  }
+
+  private async streamIsPlayable(url: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      // Probe with the exact range shape the audio element uses. Some
+      // bot-flagged URLs happily answer a tiny 2-byte range but reject an
+      // open-ended "bytes=0-" request with 403, so probing 0-1 gives a false
+      // positive and playback would fail a second later. Read only the
+      // headers, then cancel the body: this validates the stream without
+      // downloading the track twice.
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': MEDIA_USER_AGENT,
+          Referer: 'https://music.youtube.com/',
+          Origin: 'https://music.youtube.com',
+          Range: 'bytes=0-',
+        },
+        signal: controller.signal,
+      });
+      void response.body?.cancel().catch(() => {});
+      return response.status === 200 || response.status === 206;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
+  private noteFastFailure() {
+    fastFailureStreak += 1;
+    // Three failures in a row means YouTube is refusing the mobile clients
+    // (usually a bot check on a signed-out visitor). Back off instead of
+    // hammering the API and stretching the flag; yt-dlp still resolves.
+    if (fastFailureStreak >= 3) {
+      fastCooldownUntil = Date.now() + FAST_COOLDOWN_MS;
+      fastFailureStreak = 0;
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path cooling down for 2 minutes');
+      }
+    }
+  }
+
+  private markFastFailure(trackId: string) {
+    fastFailures.set(trackId, Date.now());
+    if (fastFailures.size > 400) {
+      const cutoff = Date.now() - FAST_FAILURE_TTL_MS;
+      for (const [id, at] of fastFailures) {
+        if (at < cutoff) fastFailures.delete(id);
+      }
+    }
+  }
+
   async prefetch(track: Track): Promise<void> {
     try {
       await this.resolve(track);
@@ -161,6 +365,9 @@ export class StreamService {
   }
 
   invalidate(trackId: string) {
+    // A failed playback URL is usually a dead/blocked fast-path stream. Let
+    // the retry use yt-dlp directly instead of handing back the same URL.
+    this.markFastFailure(trackId);
     for (const key of streamCache.keys()) {
       if (key.startsWith(`${trackId}:`)) streamCache.delete(key);
     }

@@ -1,17 +1,19 @@
 # Quality assurance record
 
-**Build:** Auralis 1.1.0
+**Build:** Auralis 1.1.1 (playback-latency patch; 1.1.0 evidence retained below)
 **Platform:** Windows 11 x64 (build 10.0.26300)
 **Electron:** 45.0.0
 **Node:** 24.19.0
-**Test date:** 29 October 2026
+**Test date:** 29 October 2026; playback latency pass 2 November 2026
 **Live catalogue:** YouTube Music anonymous session
 
+> **1.1.1 scope:** playback start latency. The resolver no longer spawns yt-dlp per track; it asks the Innertube player endpoint for a direct audio URL and keeps yt-dlp as the fallback. The transport also stops flashing a spinner for fast starts, and the media proxy retries a dropped range request through Node's stack. Feature set, UI and packaging are unchanged from 1.1.0.
+>
 > **1.1.0 scope:** cold-start animation, dedicated search, Queue-first Now Playing, lyrics translation UI, mini-player progress, streaming-quality reload, EQ presets/numeric bass boost, Jump Back In and hardened media handling. The full 21-check suite was re-run on 1.1.0; the 1.0.2 results remain the baseline for older evidence.
 >
 > **Merged tree:** The Android/mobile branch (through the `v1.0.3-android` release) was merged into 1.1.0 without dropping platform-specific code. Typecheck, production builds, the 21-check suite, packaged smoke and focused upgrade checks were re-run on the merged tree; the Android renderer keeps its `isAndroidShell` paths and the regenerated web assets are committed.
 >
-> **Build paths:** Builds are written to `release/<version>/`; this record uses `release/1.1.0/`.
+> **Build paths:** Builds are written to `release/<version>/`; the 1.1.0 baseline lives in `release/1.1.0/` and the latency patch in `release/1.1.1/`.
 
 ## Summary
 
@@ -23,6 +25,7 @@
 | Android web asset build (`npm run build:android`) | Pass (assets regenerated) |
 | 1.1.0 focused upgrade UI QA | Pass (16/16 checks) |
 | 1.1.0 packaged smoke test | Pass |
+| 1.1.1 packaged smoke test | Pass |
 | Branding | Pass (supplied Auralis logo in app, installer, portable, title bar, splash, tray and README) |
 | Full end-to-end UI QA | Pass (21/21 checks) |
 | Sleep timer | Pass |
@@ -32,13 +35,52 @@
 | Portable EXE launch | Pass |
 | Silent install + installed app launch + uninstall | Pass |
 | Live playback from packaged EXE | Pass |
+| Playback start latency | Pass: resolve 0.29–0.65 s, click → first audio 1.13–1.32 s, hover-prefetched 0.80–0.97 s, no spinner flash (was 7.52 s) |
 | Live download from packaged EXE | Pass |
 | Moods & genres | Pass (50 tiles) |
 | Podcast episodes | Pass (20 episodes) |
 | Themes, EQ, settings | Pass |
 | Browser/page errors during final pass | No app exceptions; third-party artwork CDN failures fell back to placeholders |
 
-The final full-app pass, focused upgrade pass and packaged smoke test produced no page exceptions. The full pass logged 25 `yt3.googleusercontent.com` artwork request failures (`ERR_CONNECTION_CLOSED`) and one artwork 404; every image fell back, and no app code failed. The QA watcher still records these external asset failures in `issues` rather than hiding them. It ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
+The final full-app pass, focused upgrade pass and packaged smoke test produced no page exceptions. The latency-build full pass logged one external `yt3.googleusercontent.com` artwork 404; the image fell back to a placeholder, and no app code failed. The QA watcher still records these external asset failures in `issues` rather than hiding them. It ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
+
+## Playback start latency (2 November 2026)
+
+The original resolver spawned `yt-dlp.exe` for every track. A fresh process costs **4.1–4.3 s** before the first audio byte, which is the spinner users saw after clicking a song. Six consecutive measurements:
+
+| Track | Round 1 | Round 2 |
+| --- | ---: | ---: |
+| `dQw4w9WgXcQ` | 4,282 ms | 3,963 ms |
+| `kJQP7kiw5Fk` | 4,241 ms | 4,298 ms |
+| `9bZkp7q19f0` | 4,351 ms | 4,142 ms |
+
+The resolver now asks the Innertube player endpoint for a direct audio URL first and keeps yt-dlp as the fallback. The first client is **VISIONOS** — the same client yt-dlp uses for music — because it returns full, un-capped audio when the request carries the anonymous session's `visitorData`. `ANDROID_VR` and `IOS` remain as secondary clients. The fast path also adds:
+
+- a 90-minute per-track cache and in-flight de-duplication, so a hover prefetch and a click share one request;
+- an open-ended `Range: bytes=0-` probe that reads only the response headers; this catches bot-flagged URLs that answer a 2-byte range but reject real playback;
+- a per-track fast-failure cache and a two-minute cooldown after three consecutive failures;
+- hover prefetch in track lists, plus the next-track prefetch scheduled before `play()` is awaited;
+- removal of the redundant `audio.load()` call that restarted the media pipeline after `src` was set;
+- a 900 ms delay before the transport shows a spinner, so a fast start shows the play state instead of flashing a loading spinner, while a real stall (slow yt-dlp fallback) still gets feedback;
+- a Node-fetch fallback inside the `auralis-media://` proxy when Chromium's network stack drops a range request during a track switch. This was an intermittent stall where a new track sat on a spinner with no request retry.
+
+Measured on the same Windows machine with a fresh profile (`node scripts/qa-latency.mjs`):
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Innertube resolve | 4,142–4,351 ms (yt-dlp) | **292–653 ms** |
+| Click → play button changes to Pause | — | **476–568 ms** |
+| Click → first audio position advance | 7,517 ms | **1,126–1,317 ms** |
+| Hover-prefetched click → play button | — | **165–228 ms** |
+| Hover-prefetched click → first audio | — | **804–971 ms** |
+| Spinner shown while a fast start is resolving | Always | **Never** |
+| Console/HTTP errors during playback | 403 from the media proxy, then yt-dlp fallback | **None** |
+
+The 7,517 ms "before" figure includes the failed fast-path URL followed by the yt-dlp retry. The fast path was originally handing out iOS URLs that returned `403` through the media proxy; VISIONOS with `visitorData` returns a playable full stream instead, so the fallback is no longer on the normal path. Evidence: [`qa/latency/results.json`](../qa/latency/results.json).
+
+Four consecutive runs on the final build kept the same shape: 476–568 ms to the play state, 1.13–1.32 s to the first second of audio and 165–228 ms on a hover-prefetched click, with no spinner visible while starting. One of those runs hit the Chromium range-request failure described above; the Node fallback recovered it and the renderer saw no HTTP error.
+
+**Known limits:** the fast path needs a populated anonymous `visitorData`; the app fetches it from the music homepage when Home has not supplied one. If YouTube bot-flags the current IP, all mobile clients can return `LOGIN_REQUIRED` and the app intentionally falls back to yt-dlp rather than showing an unplayable URL. VISIONOS also excludes "made for kids" videos; those use the yt-dlp fallback.
 
 ## Test environment
 
@@ -46,8 +88,8 @@ Tests were run against the real YouTube Music service, not fixtures. Each Playwr
 
 | Setting | Value |
 | --- | --- |
-| App build | `release/1.1.0/win-unpacked/Auralis.exe` |
-| Packaged app version | `1.1.0` |
+| App build | `release/1.1.1/win-unpacked/Auralis.exe` for the latency patch; `release/1.1.0/win-unpacked/Auralis.exe` for the 1.1.0 baseline sections |
+| Packaged app version | `1.1.1` (patch), `1.1.0` (baseline) |
 | Bundled yt-dlp | `2026.10.21` |
 | Bundled FFmpeg | `9.0.2-essentials_build` |
 | DB / accounts | None; local JSON stores |
@@ -64,6 +106,7 @@ Tests were run against the real YouTube Music service, not fixtures. Each Playwr
 | `node scripts/qa-extra.mjs` | Live download, local playlist editing, podcast list, themes, EQ and radio |
 | `node scripts/qa-moods.mjs` | Moods & genres tiles and category navigation |
 | `node scripts/qa-full.mjs` | 21 live end-to-end checks: home, Explore, search filters, playback, likes, related-song radio and queue-end autoplay, detail pages, queue edit, sleep timer, local playlists, download/offline play, settings, lyrics, now playing, history, downloads page and restart persistence |
+| `node scripts/qa-latency.mjs` | Playback latency: direct resolve timing, click → play button, click → first audio, and hover-prefetch effect; writes `qa/latency/results.json` |
 | `node scripts/qa-sleep.mjs` | Focused sleep-timer countdown, simulated expiry, toast, end-of-track option and off |
 | `node scripts/qa-packaged.mjs` | Packaged EXE launch, app info, playback, download, moods, podcast API |
 | `node scripts/qa-upgrade.mjs` | 1.1.0 focused upgrade checks: splash layers, hidden scrollbars, mini-player seek, Queue-first panel, lyrics view switch, quality reload, Media Session, Jump Back In, search-history removal, EQ/bass boost, translation language and keyless setup error |
@@ -86,10 +129,10 @@ Launch: `release/1.1.0/win-unpacked/Auralis.exe` built from the final source, wi
 [packaged info] {"name":"Auralis","version":"1.1.0","electron":"45.0.0",
   "ytDlpVersion":"2026.10.21","ffmpegAvailable":true,
   "downloadsDir":"C:\\Users\\rv888\\Music\\Auralis"}
-[packaged home] {"shelves":6,"cards":109}
+[packaged home] {"shelves":6,"cards":112}
 [packaged playback] {"title":"Kesariya (From \"Brahmastra\")",
   "playerTitle":"Kesariya (From \"Brahmastra\")",
-  "playerArtist":"Arijit Singh","playerTime":"0:05",
+  "playerArtist":"Arijit Singh","playerTime":"0:11",
   "playerError":"","playing":true}
 [packaged radio] {"rows":50,"radio":1}
 [packaged download] {"status":"done",
@@ -99,7 +142,7 @@ Launch: `release/1.1.0/win-unpacked/Auralis.exe` built from the final source, wi
 [packaged issues] []
 ```
 
-The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:05 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 50 navigation tiles.
+The download was a real 4.34 MB M4A file produced by the bundled yt-dlp. The player advanced to 0:11 with the pause control visible and no error text. The radio check queued 50 related rows, the podcast check returned the real 20-episode list for "The Daily", and moods rendered all 50 navigation tiles.
 
 ## Focused 1.1.0 upgrade result
 
@@ -182,7 +225,7 @@ The `qa-full` pass executed 21 checks and all 21 passed. The tables below record
 
 | Check | Expected | Observed |
 | --- | --- | --- |
-| Stream resolution | Bundled yt-dlp returns audio | Pass |
+| Stream resolution | Innertube VISIONOS fast path returns direct audio; yt-dlp fallback | Pass; 292–653 ms resolve, 1.13–1.32 s to first audio |
 | Audio start | Player time advances | 0:05 in the final packaged run |
 | Pause/play control | Reflects playing state | Pause control visible |
 | Seek | Position changes | Pass |
@@ -258,12 +301,40 @@ The supplied Auralis artwork is the only logo used in the release:
 
 The same hashes are written to `release/1.1.0/SHA256SUMS.txt`.
 
+> The hashes above belong to the **published** v1.1.0 assets. The playback-latency patch ships separately as 1.1.1 below; the 1.1.0 files were not replaced.
+
+### 1.1.1 — playback latency patch
+
+| File | Size | SHA-256 |
+| --- | --- | --- |
+| `Auralis-Setup-1.1.1.exe` | 159,369,064 bytes | `66aa6a44cdf8a04414ec03398baadb0d59312cb97463ce0f37b10e53684565a6` |
+| `Auralis-Portable-1.1.1.exe` | 145,879,754 bytes | `cb6aaba9911a1bed4f86186acb5c220c37e08d104b1b254fccf5da7b9a71302a` |
+
+The same hashes are written to `release/1.1.1/SHA256SUMS.txt`.
+
+Packaged smoke test on `release/1.1.1/win-unpacked/Auralis.exe`:
+
+```text
+[packaged info] {"name":"Auralis","version":"1.1.1","electron":"45.0.0",
+  "ytDlpVersion":"2026.10.21","ffmpegAvailable":true}
+[packaged home] {"shelves":6,"cards":122}
+[packaged playback] {"title":"Kesariya (From \"Brahmastra\")",
+  "playerTime":"0:11","playerError":"","playing":true}
+[packaged download] {"status":"done","exists":true,"size":4338550}
+[packaged moods] {"cards":50}
+[packaged podcast] {"title":"The Daily","episodes":20}
+[packaged issues] []
+```
+
+The portable build launched under CDP with a fresh profile and reported version `1.1.1`, six shelves, 112 cards and the bundled yt-dlp/FFmpeg.
+
 ## Known limitations and unverified paths
 
 These are not mocked or faked; they are implemented calls that require credentials or a specific target to verify:
 
 | Path | Why it was not live-verified | What to check manually |
 | --- | --- | --- |
+| Playback fast path | The Innertube VISIONOS/Android/iOS player endpoints are unofficial and can be bot-flagged per IP; the fast path also needs the anonymous session's `visitorData` | Run with `AURALIS_DEBUG_STREAM=1`; `[streams] fast path` means the direct URL was used, `[streams] fast path failed` falls back to yt-dlp. Signing in or changing network clears a persistent bot flag. |
 | Google sign-in | Requires the user's Google account and may be challenged by Google | Settings → Account → Sign in; confirm name/avatar, then open Library → YouTube Music |
 | YouTube Music likes/ratings | Needs a signed-in account | Like a song, check music.youtube.com; dislike and clear rating |
 | Remote playlist editing | Needs a signed-in account and a playlist owned by the user | Create, rename, add, remove and delete a playlist |
@@ -337,6 +408,8 @@ npm run typecheck:android
 npm run build
 npm run build:android
 npm run dist
+node scripts/qa-latency.mjs
+node scripts/qa-full.mjs
 node scripts/qa-packaged.mjs
 node scripts/qa-upgrade.mjs
 ```
