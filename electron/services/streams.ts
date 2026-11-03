@@ -202,7 +202,6 @@ interface FastFormat {
   itag?: number;
   mimeType?: string;
   bitrate?: number;
-  height?: number;
   url?: string;
   drmFamilies?: unknown;
 }
@@ -224,29 +223,6 @@ function pickAudioFormat(adaptive: FastFormat[], formats: FastFormat[], quality:
   return pool.sort((a, b) => rank(a) - rank(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
 }
 
-function pickVideoFormat(adaptive: FastFormat[], formats: FastFormat[]): FastFormat | undefined {
-  const all = [...adaptive, ...formats].filter(
-    (format) =>
-      typeof format.url === 'string' &&
-      /^video\//.test(format.mimeType || '') &&
-      !format.drmFamilies &&
-      (format.height || 0) <= 720,
-  );
-  if (!all.length) return undefined;
-  // Prefer a video-only stream at the highest available resolution. Muxed
-  // progressive formats are only a fallback for older uploads.
-  const videoOnly = all.filter((format) => !/^audio\//.test(format.mimeType || ''));
-  const pool = videoOnly.length ? videoOnly : all;
-  const rank = (format: FastFormat) => {
-    if (/video\/webm/i.test(format.mimeType || '')) return 0;
-    if (/avc1/i.test(format.mimeType || '')) return 1;
-    return 2;
-  };
-  return pool.sort(
-    (a, b) => (b.height || 0) - (a.height || 0) || rank(a) - rank(b) || (b.bitrate || 0) - (a.bitrate || 0),
-  )[0];
-}
-
 /**
  * YouTube's player endpoint returns signed stream URLs in a few hundred
  * milliseconds, while spawning yt-dlp costs several seconds. Try the mobile
@@ -255,7 +231,6 @@ function pickVideoFormat(adaptive: FastFormat[], formats: FastFormat[]): FastFor
  */
 async function fastPlayerUrl(
   videoId: string,
-  kind: 'audio' | 'video',
   quality = 'auto',
 ): Promise<{ url: string; format: string; itag?: number } | undefined> {
   const request = async (client: (typeof FAST_PLAYER_CLIENTS)[number]) => {
@@ -276,14 +251,12 @@ async function fastPlayerUrl(
     );
     const adaptive = (data?.streamingData?.adaptiveFormats || []) as FastFormat[];
     const progressive = (data?.streamingData?.formats || []) as FastFormat[];
-    const format = kind === 'audio'
-      ? pickAudioFormat(adaptive, progressive, quality)
-      : pickVideoFormat(adaptive, progressive);
+    const format = pickAudioFormat(adaptive, progressive, quality);
     if (!format?.url) throw new Error('No direct stream URL.');
     const mime = format.mimeType || '';
     return {
       url: format.url,
-      format: mime.includes('/') ? mime.split('/')[1].split(';')[0] : kind,
+      format: mime.includes('/') ? mime.split('/')[1].split(';')[0] : 'audio',
       itag: format.itag,
     };
   };
@@ -467,32 +440,8 @@ export class StreamService {
     return task;
   }
 
-  /**
-   * Resolve a video-only stream for the optional video surface. Audio keeps
-   * using the normal resolve() path, so opening a music video does not replace
-   * or restart the audio pipeline.
-   */
-  async resolveVideo(track: Track): Promise<StreamInfo> {
-    const key = `video:${track.id}`;
-    const cached = streamCache.get(key);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
-    const pending = pendingResolve.get(key);
-    if (pending) return pending;
-
-    const task = this.resolveVideoRemote(track)
-      .then((info) => {
-        streamCache.set(key, { info, at: Date.now() });
-        return info;
-      })
-      .finally(() => {
-        pendingResolve.delete(key);
-      });
-    pendingResolve.set(key, task);
-    return task;
-  }
-
   private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
-    const fast = await fastPlayerUrl(track.id, 'audio', quality);
+    const fast = await fastPlayerUrl(track.id, quality);
     let url: string;
     let format = 'audio';
     if (fast) {
@@ -502,14 +451,13 @@ export class StreamService {
       const slow = this.extractUrl(
         track,
         fast.itag ? String(fast.itag) : qualityFormat(quality),
-        'audio',
         30_000,
-      ).catch(() => this.extractUrl(track, qualityFormat(quality), 'audio', 30_000));
+      ).catch(() => this.extractUrl(track, qualityFormat(quality), 30_000));
       rememberFallback(fast.url, slow.catch(() => undefined));
       url = fast.url;
       format = fast.format;
     } else {
-      url = await this.extractUrl(track, qualityFormat(quality), 'audio', 30_000);
+      url = await this.extractUrl(track, qualityFormat(quality), 30_000);
       try {
         const mime = new URL(url).searchParams.get('mime');
         if (mime?.includes('/')) format = mime.split('/')[1].split(';')[0];
@@ -527,56 +475,11 @@ export class StreamService {
     };
   }
 
-  private async resolveVideoRemote(track: Track): Promise<StreamInfo> {
-    // The video surface is muted (the normal audio player provides sound), so
-    // prefer the higher-quality video-only streams. Fall back to muxed
-    // progressive formats for videos that only expose those.
-    const format =
-      'bestvideo[height<=720][ext=mp4]/bestvideo[height<=720]/best[height<=720][ext=mp4]/best[height<=720]/bestvideo';
-    const fast = await fastPlayerUrl(track.id, 'video');
-    let url: string;
-    let mimeFormat = 'video';
-    if (fast) {
-      const slow = this.extractUrl(
-        track,
-        fast.itag ? String(fast.itag) : format,
-        'video',
-        45_000,
-        false,
-      ).catch(() => this.extractUrl(track, format, 'video', 45_000, false));
-      rememberFallback(fast.url, slow.catch(() => undefined));
-      url = fast.url;
-      mimeFormat = fast.format;
-    } else {
-      url = await this.extractUrl(track, format, 'video', 45_000, false);
-      try {
-        const mime = new URL(url).searchParams.get('mime');
-        if (mime?.includes('/')) mimeFormat = mime.split('/')[1].split(';')[0];
-      } catch {
-        // keep generic format
-      }
-    }
-    return {
-      url: proxyStreamUrl(url),
-      format: mimeFormat,
-      title: track.title,
-      duration: track.duration,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    };
-  }
-
-  /**
-   * Ask yt-dlp for a direct URL. The Android extractor client is noticeably
-   * faster than the default web clients for audio and works without signing
-   * in, but it exposes fewer video formats; video resolution therefore uses
-   * the default client list.
-   */
+  /** Ask yt-dlp for a direct audio URL. */
   private async extractUrl(
     track: Track,
     format: string,
-    kind: 'audio' | 'video',
     timeoutMs: number,
-    preferAndroid = true,
   ): Promise<string> {
     const base = [
       '--socket-timeout',
@@ -591,15 +494,16 @@ export class StreamService {
       `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
     ];
     let lastError: Error | undefined;
-    const attempts = preferAndroid
-      ? [['--extractor-args', 'youtube:player_client=android'], []]
-      : [[], ['--extractor-args', 'youtube:player_client=android']];
+    // The default client honours the explicit itag from the fast path. The
+    // Android client often omits that format and spends several seconds
+    // failing before we retry, which used to delay seek/fallback playback.
+    const attempts = [[], ['--extractor-args', 'youtube:player_client=android']];
     for (const extractorArgs of attempts) {
       try {
         const { stdout } = await runYtdlp([...commonArgs(), ...extractorArgs, ...base], timeoutMs);
         const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
         if (url) return url;
-        lastError = new Error(`yt-dlp did not return a playable ${kind} URL.`);
+        lastError = new Error('yt-dlp did not return a playable audio URL.');
       } catch (error: any) {
         lastError = error instanceof Error ? error : new Error(String(error));
         // A genuinely unavailable/private video will not succeed with the
@@ -607,7 +511,7 @@ export class StreamService {
         if (/video is unavailable|video unavailable|private video|removed by the uploader|account.*terminated/i.test(lastError.message)) break;
       }
     }
-    throw lastError || new Error(`yt-dlp did not return a playable ${kind} URL.`);
+    throw lastError || new Error('yt-dlp did not return a playable audio URL.');
   }
 
   async prefetch(track: Track): Promise<void> {
@@ -615,14 +519,6 @@ export class StreamService {
       await this.resolve(track);
     } catch {
       // Prefetch failures are silent; playback will surface a real error.
-    }
-  }
-
-  async prefetchVideo(track: Track): Promise<void> {
-    try {
-      await this.resolveVideo(track);
-    } catch {
-      // The video button can still report a useful error when clicked.
     }
   }
 

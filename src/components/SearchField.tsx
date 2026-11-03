@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock3, Mic, Search, Square, X } from 'lucide-react';
+import { Clock3, Search, X } from 'lucide-react';
 import type { SearchSuggestion } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { toast } from '../stores/ui';
-import { useVoiceSearch } from '../lib/useVoiceSearch';
 import { IconButton, Spinner } from './primitives';
 
 export function SearchField({
@@ -30,12 +28,6 @@ export function SearchField({
   const [activeIndex, setActiveIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const voice = useVoiceSearch((text) => {
-    setValue(text);
-    setOpen(true);
-    setActiveIndex(-1);
-    inputRef.current?.focus();
-  });
 
   useEffect(() => {
     if (route.page === 'search') setValue(route.q || '');
@@ -64,18 +56,6 @@ export function SearchField({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
-
-  useEffect(() => {
-    if (!voice.error) return;
-    toast(voice.error, 'error');
-    voice.clearError();
-  }, [voice.error, voice.clearError]);
-
-  useEffect(() => {
-    // Leaving the search surface must never leave the microphone open.
-    voice.stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.page === 'search' ? route.q : null]);
 
   useEffect(() => {
     const query = value.trim();
@@ -163,25 +143,6 @@ export function SearchField({
         aria-label="Search"
       />
       {loading ? <Spinner size={16} className="search-spinner" /> : null}
-      <IconButton
-        label={
-          voice.transcribing
-            ? 'Transcribing voice search'
-            : voice.recording
-              ? 'Stop voice search'
-              : 'Search with your voice'
-        }
-        size="xs"
-        className={`search-mic ${voice.recording ? 'is-recording' : ''}`}
-        disabled={voice.transcribing}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (voice.recording) voice.stop();
-          else void voice.start();
-        }}
-      >
-        {voice.transcribing ? <Spinner size={15} /> : voice.recording ? <Square size={13} fill="currentColor" /> : <Mic size={15} />}
-      </IconButton>
       {value ? (
         <IconButton
           label="Clear search"

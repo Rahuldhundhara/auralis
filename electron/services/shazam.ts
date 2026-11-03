@@ -206,8 +206,11 @@ export function generateSignature(pcm: Buffer): { uri: string; sampleMs: number 
       }
       const step = Buffer.alloc(5);
       step.writeUInt8(peak.fftPassNumber - previous, 0);
-      step.writeInt16LE(peak.peakMagnitude, 1);
-      step.writeInt16LE(peak.correctedPeakFrequencyBin, 3);
+      // The Shazam signature stores both fields as unsigned 16-bit values.
+      // Loud or clipped recordings can push the magnitude past 32767, so
+      // clamping (and encoding them as unsigned) keeps the fingerprint valid.
+      step.writeUInt16LE(Math.max(0, Math.min(0xffff, peak.peakMagnitude)), 1);
+      step.writeUInt16LE(Math.max(0, Math.min(0xffff, peak.correctedPeakFrequencyBin)), 3);
       peakChunks.push(step);
       previous = peak.fftPassNumber;
     }

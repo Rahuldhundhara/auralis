@@ -276,7 +276,7 @@ export function DetailPage({
 
   const playAll = (shuffle = false) => {
     if (!tracks.length) {
-      toast('No playable songs on this page.', 'error');
+      toast(kind === 'podcast' ? 'No playable episodes on this page.' : 'No playable songs on this page.', 'error');
       return;
     }
     usePlayerStore.getState().playQueue(shuffle ? shuffleArray(tracks) : tracks, 0);
@@ -305,10 +305,14 @@ export function DetailPage({
       }
       setDownloading(undefined);
       await refreshLibrary();
+      const itemLabel =
+        kind === 'podcast'
+          ? completed === 1 ? 'episode' : 'episodes'
+          : completed === 1 ? 'song' : 'songs';
       toast(
         failed
-          ? `Downloaded ${completed} songs; ${failed} failed.`
-          : `Downloaded ${completed} ${completed === 1 ? 'song' : 'songs'}.`,
+          ? `Downloaded ${completed} ${kind === 'podcast' ? 'episodes' : 'songs'}; ${failed} failed.`
+          : `Downloaded ${completed} ${itemLabel}.`,
         failed ? 'error' : 'success',
       );
     };
@@ -652,6 +656,7 @@ export function DetailPage({
               showArt={kind === 'playlist' || kind === 'podcast'}
               showAlbum={kind === 'playlist'}
               showIndex
+              emptyText={kind === 'podcast' ? 'No episodes here yet.' : undefined}
               context={{
                 albumId: kind === 'album' ? header?.browseId || header?.id || id : undefined,
                 playlistId: kind === 'playlist' ? playlistId : undefined,
@@ -661,7 +666,7 @@ export function DetailPage({
           {hasContinuation ? (
             <div className="load-more-row">
               <Button variant="outline" onClick={() => void loadMoreTracks()} disabled={loadingMore}>
-                {loadingMore ? 'Loading more…' : 'Show all songs'}
+                {loadingMore ? 'Loading more…' : kind === 'podcast' ? 'Show all episodes' : 'Show all songs'}
               </Button>
             </div>
           ) : null}
@@ -669,7 +674,9 @@ export function DetailPage({
       ) : null}
 
       {kind !== 'browse' && !tracks.length && primaryShelf && !loading ? (
-        <div className="detail-empty-note">This release does not have any playable songs.</div>
+        <div className="detail-empty-note">
+          {kind === 'podcast' ? 'This podcast does not have any playable episodes.' : 'This release does not have any playable songs.'}
+        </div>
       ) : null}
 
       {kind === 'browse' ? (

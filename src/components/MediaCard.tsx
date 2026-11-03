@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft, ChevronRight, MoreHorizontal, Play, Podcast, Video } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Play, Podcast } from 'lucide-react';
 import type { Card, Shelf as ShelfType, Track } from '@shared/types';
-import { openCard, openVideoTrack, playCard, prefetchTrack, queueForShelf, showCardMenu, trackFromCard, tracksFromPage } from '../lib/actions';
+import { openCard, playCard, prefetchTrack, queueForShelf, showCardMenu, tracksFromPage } from '../lib/actions';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { Artwork, Button, ExplicitBadge, IconButton } from './primitives';
@@ -48,13 +48,6 @@ export function MediaCard({
   }
 
   const activate = async () => {
-    if (card.track?.isVideo || card.type === 'video') {
-      const track = card.track || trackFromCard(card);
-      if (track) {
-        openVideoTrack(track, queue, index);
-        return;
-      }
-    }
     if (card.track && queue?.length) {
       usePlayerStore.getState().playQueue(queue, index);
       return;
@@ -95,11 +88,7 @@ export function MediaCard({
           title={card.title}
         >
           <Artwork src={card.thumbnail} alt={card.title} round={round} className="card-art" />
-          {card.type === 'video' ? (
-            <span className="card-kind" title="Video">
-              <Video size={13} />
-            </span>
-          ) : card.type === 'podcast' ? (
+          {card.type === 'podcast' ? (
             <span className="card-kind" title="Podcast">
               <Podcast size={13} />
             </span>

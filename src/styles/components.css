@@ -1767,34 +1767,6 @@
   flex-direction: column;
 }
 
-.recognition-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 11px;
-  background: var(--surface-2);
-}
-
-.recognition-tabs button {
-  flex: 1;
-  height: 33px;
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  transition: background var(--fast), color var(--fast);
-}
-
-.recognition-tabs button:hover {
-  color: var(--text);
-}
-
-.recognition-tabs button.is-active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-}
-
 .recognition-stage {
   display: flex;
   align-items: center;
@@ -1838,34 +1810,34 @@
   height: 15px;
 }
 
-.mic-bars span {
+.mic-bars i {
   width: 2px;
   border-radius: 2px;
   background: var(--accent);
   animation: eq-bounce 0.75s ease-in-out infinite;
 }
 
-.mic-bars span:nth-child(1) {
+.mic-bars i:nth-child(1) {
   height: 5px;
   animation-delay: -0.2s;
 }
 
-.mic-bars span:nth-child(2) {
+.mic-bars i:nth-child(2) {
   height: 11px;
   animation-delay: -0.45s;
 }
 
-.mic-bars span:nth-child(3) {
+.mic-bars i:nth-child(3) {
   height: 8px;
   animation-delay: -0.1s;
 }
 
-.mic-bars span:nth-child(4) {
+.mic-bars i:nth-child(4) {
   height: 13px;
   animation-delay: -0.35s;
 }
 
-.mic-bars span:nth-child(5) {
+.mic-bars i:nth-child(5) {
   height: 6px;
   animation-delay: -0.55s;
 }

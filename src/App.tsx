@@ -20,7 +20,6 @@ import { TopBar } from './components/TopBar';
 import { PlayerBar } from './components/PlayerBar';
 import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
-import { VideoPlayer } from './components/VideoPlayer';
 import { DialogHost } from './components/Dialogs';
 import { Splash } from './components/Splash';
 import { HomePage } from './pages/Home';
@@ -272,7 +271,6 @@ export default function App() {
           <PlayerBar />
           <QueuePanel />
           <NowPlaying />
-          <VideoPlayer />
         </>
       ) : null}
       <DialogHost />

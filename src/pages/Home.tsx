@@ -4,9 +4,8 @@ import type { Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
-import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
-import { greeting, shuffleArray } from '../lib/format';
+import { greeting, homeTagline, shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
 import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
@@ -119,7 +118,6 @@ export function HomePage() {
   const navigate = useNavStore((state) => state.navigate);
   const liked = useAppStore((state) => state.library.liked);
   const recent = useAppStore((state) => state.library.recent);
-  const openDialog = useUiStore((state) => state.openDialog);
 
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
@@ -160,7 +158,8 @@ export function HomePage() {
             <Sparkles size={14} /> Made for {new Date().toLocaleDateString(undefined, { weekday: 'long' })}
           </span>
           <h1>{greeting()}</h1>
-          <p>Your music, your mood. Pick up where you left off or let Auralis find something new.</p>
+          <p className="home-tagline">{homeTagline}</p>
+          <p className="home-hero-subline">Your music, your mood. Pick up where you left off or let Auralis find something new.</p>
           <div className="home-hero-actions">
             <Button variant="primary" icon={<Play size={17} fill="currentColor" />} onClick={shuffleLibrary}>
               Shuffle my library
@@ -201,9 +200,6 @@ export function HomePage() {
       <QuickAccess />
 
       <div className="quick-actions-row">
-        <button type="button" className="pill-action" onClick={() => openDialog({ type: 'recognition' })}>
-          <Sparkles size={15} /> Identify a song
-        </button>
         <button type="button" className="pill-action" onClick={() => navigate({ page: 'library', tab: 'youtube' })}>
           <Play size={15} /> Your YouTube library
         </button>

@@ -48,9 +48,6 @@ interface UiState {
   setNowPlayingOpen: (value: boolean, tab?: 'lyrics' | 'queue' | 'about') => void;
   nowPlayingTab: 'lyrics' | 'queue' | 'about';
   setNowPlayingTab: (tab: 'lyrics' | 'queue' | 'about') => void;
-  videoTrack: Track | null;
-  openVideo: (track: Track) => void;
-  closeVideo: () => void;
 
   toasts: Toast[];
   toast: (message: string, kind?: Toast['kind'], action?: Toast['action']) => void;
@@ -77,9 +74,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   setNowPlayingOpen: (value, tab) => set(tab ? { nowPlayingOpen: value, nowPlayingTab: tab } : { nowPlayingOpen: value }),
   nowPlayingTab: 'queue',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
-  videoTrack: null,
-  openVideo: (track) => set({ videoTrack: track }),
-  closeVideo: () => set({ videoTrack: null }),
 
   toasts: [],
   toast: (message, kind = 'info', action) => {

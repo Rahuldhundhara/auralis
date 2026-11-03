@@ -113,10 +113,8 @@ export interface AuralisApi {
   };
   player: {
     resolve(track: Track): Promise<StreamInfo>;
-    resolveVideo(track: Track): Promise<StreamInfo>;
     prefetch(track: Track): Promise<void>;
     cache(track: Track): Promise<string | null>;
-    prefetchVideo(track: Track): Promise<void>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;
     pauseDownload(id: string): Promise<void>;

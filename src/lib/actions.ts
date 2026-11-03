@@ -14,7 +14,6 @@ import {
   Radio,
   Trash2,
   User,
-  Video,
   X,
 } from 'lucide-react';
 import type { Card, NavEndpoint, Track } from '@shared/types';
@@ -77,25 +76,18 @@ export function trackFromCard(card: Card): Track | undefined {
   if (['song', 'video', 'episode'].includes(card.type)) {
     return {
       id: card.id,
-      type: card.type === 'video' ? 'video' : card.type === 'episode' ? 'episode' : 'song',
+      type: card.type === 'episode' ? 'episode' : 'song',
       title: card.title,
       artists: card.artists || (card.subtitle ? [{ name: card.subtitle.split('•')[0].trim() }] : []),
       thumbnail: card.thumbnail,
       duration: 0,
-      isVideo: card.type === 'video',
+      isVideo: false,
     };
   }
   return undefined;
 }
 
 export function openCard(card: Card) {
-  if (card.track?.isVideo || card.type === 'video') {
-    const video = card.track || trackFromCard(card);
-    if (video) {
-      openVideoTrack(video);
-      return;
-    }
-  }
   if (card.track || ['song', 'video', 'episode'].includes(card.type)) {
     void playCard(card);
     return;
@@ -144,27 +136,6 @@ export async function playCard(card: Card, queue?: Track[], index = 0) {
   } catch (error: any) {
     toast(`Could not play “${card.title}”: ${error?.message || error}`, 'error');
   }
-}
-
-/** Start a video track and open the video surface while audio keeps playing. */
-export function openVideoTrack(track: Track, queue?: Track[], index = 0) {
-  const list = queue?.length ? queue : [track];
-  const start = queue?.length ? Math.max(0, index) : 0;
-  usePlayerStore.getState().playQueue(list, start);
-  useUiStore.getState().openVideo(track);
-}
-
-/**
- * Open the video surface for the current song without restarting its audio.
- * YouTube Music song ids and official video ids are the same upload, so the
- * muted video can follow the already-playing audio stream.
- */
-export function watchMusicVideo(track: Track) {
-  const player = usePlayerStore.getState();
-  if (player.current?.id !== track.id) {
-    player.playQueue([track], 0);
-  }
-  useUiStore.getState().openVideo(track);
 }
 
 export async function shuffleCard(card: Card) {
@@ -301,15 +272,6 @@ export function showTrackMenu(track: Track, event: { clientX: number; clientY: n
   const downloaded = app.library.downloads.some((item) => item.track.id === track.id && item.status === 'done');
   const items = [
     { label: 'Play now', icon: Play, onClick: () => player.playQueue([track], 0) },
-    ...(track.type !== 'episode'
-      ? [
-          {
-            label: track.isVideo || track.type === 'video' ? 'Watch video' : 'Watch music video',
-            icon: Video,
-            onClick: () => watchMusicVideo(track),
-          },
-        ]
-      : []),
     { label: 'Play next', icon: ListEnd, onClick: () => player.playNext(track) },
     { label: 'Add to queue', icon: ListPlus, onClick: () => player.addToQueue(track) },
     { label: 'Start radio', icon: Radio, onClick: () => void player.startRadio(track) },
@@ -429,16 +391,6 @@ export function showCardMenu(card: Card, event: { clientX: number; clientY: numb
   const ui = useUiStore.getState();
   const items: any[] = [
     { label: 'Play', icon: Play, onClick: () => void playCard(card) },
-    ...(['song', 'video'].includes(card.type) && (card.track || trackFromCard(card))
-      ? [{
-          label: card.type === 'video' ? 'Watch video' : 'Watch music video',
-          icon: Video,
-          onClick: () => {
-            const video = card.track || trackFromCard(card);
-            if (video) watchMusicVideo(video);
-          },
-        }]
-      : []),
     { label: 'Shuffle', icon: ListMusic, onClick: () => void shuffleCard(card) },
     { label: 'Play next', icon: ListEnd, onClick: () => void queueCardNext(card) },
     { separator: true },

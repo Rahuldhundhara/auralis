@@ -95,10 +95,8 @@ const api: AuralisApi = {
   },
   player: {
     resolve: (track) => invoke('player:resolve', track),
-    resolveVideo: (track) => invoke('player:resolve-video', track),
     prefetch: (track) => invoke('player:prefetch', track),
     cache: (track) => invoke('player:cache', track),
-    prefetchVideo: (track) => invoke('player:prefetch-video', track),
     download: (track) => invoke('player:download', track),
     cancelDownload: (id) => invoke('player:cancel-download', id),
     pauseDownload: (id) => invoke('player:pause-download', id),

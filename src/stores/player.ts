@@ -85,6 +85,7 @@ let bufferWatchTimer: number | undefined;
 let bufferRetries = 0;
 let retryCurrent: (() => void) | undefined;
 let pendingSeek = 0;
+let lastSeekAt = 0;
 let recorded = false;
 let playbackStartedAt = 0;
 let lastPositionUpdate = 0;
@@ -314,6 +315,13 @@ function armBufferWatch() {
     // Ignore the short wait that happens while the initial stream is being
     // opened. Only recover when playback has actually stalled.
     if (!state.buffering || !state.playing || !state.current || !audio || audio.paused) return;
+    // A long seek may have to wait for the full-range fallback URL. Restarting
+    // the whole track during that wait is what made seeks appear to reset to
+    // zero, so give the seek up to 30 seconds to resolve first.
+    if (audio.seeking && lastSeekAt && Date.now() - lastSeekAt < 30_000) {
+      armBufferWatch();
+      return;
+    }
     if (bufferRetries >= 2) return;
     bufferRetries += 1;
     const position = Math.max(0, audio.currentTime || state.position);
@@ -380,7 +388,13 @@ function attachAudioListeners() {
     updatePositionState();
     notifyDiscord();
   });
-  audio.addEventListener('seeked', () => updatePositionState());
+  audio.addEventListener('seeking', () => {
+    lastSeekAt = Date.now();
+  });
+  audio.addEventListener('seeked', () => {
+    lastSeekAt = 0;
+    updatePositionState();
+  });
   audio.addEventListener('waiting', () => {
     usePlayerStore.setState({ buffering: true });
     armBufferWatch();
@@ -557,6 +571,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     recorded = false;
     playbackStartedAt = Date.now();
     pendingSeek = startAt;
+    lastSeekAt = 0;
     activeSrc = '';
     el.pause();
     set({
@@ -957,6 +972,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (!audio) return;
       const duration = get().duration || audio.duration || 0;
       const target = Math.max(0, Math.min(seconds, duration || seconds));
+      lastSeekAt = Date.now();
       audio.currentTime = target;
       set({ position: target });
       updatePositionState();

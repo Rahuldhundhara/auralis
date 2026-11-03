@@ -711,7 +711,9 @@ a {
   height: var(--topbar-h);
   flex: 0 0 var(--topbar-h);
   padding: 0 clamp(18px, 2.4vw, 30px);
-  background: color-mix(in srgb, var(--bg) 76%, transparent);
+  background:
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.035), transparent 38%),
+    color-mix(in srgb, var(--bg) 76%, transparent);
   border-bottom: 1px solid var(--divider);
   backdrop-filter: blur(18px);
   z-index: 40;
@@ -724,7 +726,49 @@ a {
 
 .top-search {
   flex: 1;
-  max-width: 540px;
+  max-width: 580px;
+}
+
+.identify-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  flex: 0 0 auto;
+  padding: 0 15px 0 13px;
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.045)),
+    var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: border-color var(--fast), background var(--fast), color var(--fast), transform var(--fast), box-shadow var(--fast);
+}
+
+.identify-pill svg {
+  color: var(--accent);
+}
+
+.identify-pill:hover {
+  border-color: rgba(var(--accent-rgb), 0.58);
+  background:
+    linear-gradient(135deg, rgba(var(--accent-rgb), 0.24), rgba(var(--accent-rgb), 0.08)),
+    var(--surface);
+  box-shadow: 0 8px 24px -14px rgba(var(--accent-rgb), 0.8);
+  transform: translateY(-1px);
+}
+
+.identify-pill:active {
+  transform: translateY(0);
+}
+
+.identify-pill:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.7);
+  outline-offset: 2px;
 }
 
 .top-actions {
@@ -732,27 +776,6 @@ a {
   align-items: center;
   gap: 10px;
   margin-left: auto;
-}
-
-.recognize-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 36px;
-  padding: 0 15px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  transition: background var(--fast), border-color var(--fast), color var(--fast);
-}
-
-.recognize-pill:hover {
-  border-color: rgba(var(--accent-rgb), 0.42);
-  background: rgba(var(--accent-rgb), 0.1);
-  color: var(--accent);
 }
 
 .account-chip {
@@ -860,26 +883,8 @@ a {
   color: var(--accent);
 }
 
-.search-clear,
-.search-mic {
+.search-clear {
   flex: 0 0 auto;
-}
-
-.search-mic.is-recording {
-  color: var(--accent-contrast);
-  background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.18);
-  animation: voice-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes voice-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
-  }
-  50% {
-    box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0.04);
-  }
 }
 
 .search-popover {
@@ -1681,72 +1686,6 @@ img.artwork {
   padding: 15px 24px;
   border-top: 1px solid var(--divider);
   background: var(--surface-2);
-}
-
-/* Music video surface */
-.video-modal {
-  width: min(96vw, 1080px) !important;
-}
-
-.video-modal .modal-body {
-  padding: 0;
-  background: #050506;
-}
-
-.video-modal .modal-footer {
-  justify-content: stretch;
-}
-
-.video-player {
-  position: relative;
-  min-height: min(52vh, 520px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #050506;
-}
-
-.video-surface {
-  display: block;
-  width: 100%;
-  max-height: min(68vh, 680px);
-  aspect-ratio: 16 / 9;
-  object-fit: contain;
-  background: #050506;
-}
-
-.video-message {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 24px;
-  color: #c8c8d0;
-  text-align: center;
-  background: rgba(5, 5, 6, 0.76);
-}
-
-.video-controls {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.video-time {
-  color: var(--muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.video-seek {
-  flex: 1;
-  min-width: 80px;
 }
 
 /* -------------------------------------------------------------------------- */

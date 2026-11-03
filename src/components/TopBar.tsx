@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
+import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
 import { Artwork, IconButton } from './primitives';
 import { SearchField } from './SearchField';
@@ -13,6 +14,7 @@ export function TopBar() {
   const navigate = useNavStore((state) => state.navigate);
   const route = useNavStore((state) => state.entries[state.index]);
   const session = useAppStore((state) => state.session);
+  const openDialog = useUiStore((state) => state.openDialog);
 
   return (
     <header className="top-bar">
@@ -30,6 +32,15 @@ export function TopBar() {
           onActivate={() => navigate({ page: 'search' })}
         />
       </div>
+      <button
+        type="button"
+        className="identify-pill"
+        onClick={() => openDialog({ type: 'recognition' })}
+        title="Identify a song by singing, humming or playing it"
+      >
+        <AudioLines size={16} />
+        <span>Identify your song</span>
+      </button>
       <div className="top-actions">
         <button
           type="button"

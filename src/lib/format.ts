@@ -54,6 +54,61 @@ export function greeting(): string {
   return 'Good evening';
 }
 
+const HERO_TAGLINES = [
+  'Your playlist called — it wants a rematch.',
+  'Warning: may cause spontaneous kitchen dancing.',
+  'Today’s forecast: a 100% chance of earworms.',
+  'Headphones on. World off.',
+  'One more song. We both know how that ends.',
+  'Now auditioning: your next favourite song.',
+  'Turn it up — your neighbour’s taste needs help.',
+  'No skips, no stress, just good noise.',
+  'Music: cheaper than therapy, louder too.',
+  'Warning: chorus ahead.',
+  'Today’s mood: lo-fi and unbothered.',
+  'Your queue is judging your dance moves.',
+  'Less scrolling, more humming.',
+  'Auralis: now with 100% more spontaneous singing.',
+  'The beat is not going to drop itself.',
+  'Queue up. Zone out. Repeat.',
+  'Your next earworm starts here.',
+  'Side effects may include humming in public.',
+  'Good music, questionable dance moves.',
+  'Press play. Regret nothing.',
+  'Today’s special: one banger after another.',
+  'Your speakers have been waiting for this.',
+  'All killer, no filler.',
+  'Let the bass handle the paperwork.',
+  'This is your sign to turn it up.',
+  'A tiny concert, exclusively for your ears.',
+  'Wrong lyrics, right energy.',
+  'Music first. Adulting later.',
+  'The soundtrack to absolutely nothing important.',
+  'Your ears called. They’re ready.',
+];
+
+function pickHomeTagline(): string {
+  let previous = -1;
+  try {
+    previous = Number(localStorage.getItem('auralis.home.tagline'));
+  } catch {
+    // Storage is unavailable in some test environments.
+  }
+  let index = Math.floor(Math.random() * HERO_TAGLINES.length);
+  if (HERO_TAGLINES.length > 1 && index === previous) {
+    index = (index + 1) % HERO_TAGLINES.length;
+  }
+  try {
+    localStorage.setItem('auralis.home.tagline', String(index));
+  } catch {
+    // The tagline is still random when storage is unavailable.
+  }
+  return HERO_TAGLINES[index];
+}
+
+/** Chosen once per app launch, so the greeting feels fresh without changing mid-session. */
+export const homeTagline = pickHomeTagline();
+
 export function artistsLine(artists?: { name: string }[]): string {
   return (artists || []).map((artist) => artist.name).filter(Boolean).join(', ');
 }

@@ -3,13 +3,11 @@ import {
   AudioLines,
   Check,
   CheckCircle2,
-  FileAudio,
   Link2,
   Loader2,
   LogIn,
   Mic,
   MicOff,
-  Music2,
   Plus,
   Search,
   Sparkles,
@@ -444,9 +442,15 @@ async function pcmFromAudio(arrayBuffer: ArrayBuffer): Promise<Int16Array> {
   }
 }
 
+function recognitionMessage(error: any, fallback: string): string {
+  const message = String(error?.message || error || '')
+    .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+    .trim();
+  return message || fallback;
+}
+
 function RecognitionDialog({ onClose }: { onClose: () => void }) {
-  const current = usePlayerStore((state) => state.current);
-  const [mode, setMode] = useState<'mic' | 'file' | 'current'>('mic');
   const [stage, setStage] = useState<'idle' | 'recording' | 'processing' | 'result' | 'error'>('idle');
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState('');
@@ -456,7 +460,6 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavStore((state) => state.navigate);
 
   const cleanupRecording = () => {
@@ -477,7 +480,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
       setResult(match);
       setStage('result');
     } catch (err: any) {
-      setError(err?.message || 'No match found.');
+      setError(recognitionMessage(err, 'No match found. Try a longer or clearer clip.'));
       setStage('error');
     }
   };
@@ -504,7 +507,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
           const pcm = await pcmFromAudio(await blob.arrayBuffer());
           await recognizePcm(pcm);
         } catch (err: any) {
-          setError(err?.message || 'Could not read the recording.');
+          setError(recognitionMessage(err, 'Could not read the recording.'));
           setStage('error');
         }
       };
@@ -525,7 +528,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
       setError(
         err?.name === 'NotAllowedError'
           ? `Microphone access was denied. Allow microphone access in ${platformName()} settings and try again.`
-          : err?.message || 'Could not start the microphone.',
+          : recognitionMessage(err, 'Could not start the microphone.'),
       );
       setStage('error');
     }
@@ -533,34 +536,6 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
 
   const stopMic = () => {
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-  };
-
-  const handleFile = async (file: File) => {
-    setError('');
-    setResult(null);
-    setStage('processing');
-    try {
-      const pcm = await pcmFromAudio(await file.arrayBuffer());
-      await recognizePcm(pcm);
-    } catch (err: any) {
-      setError(err?.message || 'Could not read that audio file.');
-      setStage('error');
-    }
-  };
-
-  const recognizeCurrent = async () => {
-    if (!current) return;
-    setError('');
-    setResult(null);
-    setStage('processing');
-    try {
-      const match = await window.auralis.recognize.fromVideoId(current.id);
-      setResult(match);
-      setStage('result');
-    } catch (err: any) {
-      setError(err?.message || 'No match found.');
-      setStage('error');
-    }
   };
 
   const playResult = async () => {
@@ -590,7 +565,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
         toast('No matching song was found on YouTube Music.', 'error');
       }
     } catch (err: any) {
-      toast(`Could not play the match: ${err?.message || err}`, 'error');
+      toast(`Could not play the match: ${recognitionMessage(err, 'unknown error')}`, 'error');
     } finally {
       setPlaying(false);
     }
@@ -603,24 +578,12 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
         cleanupRecording();
         onClose();
       }}
-      title="Identify music"
-      subtitle="Auralis fingerprints a short clip right on this PC, then asks Shazam what it is."
-      width={620}
+      title="Identify your song"
+      subtitle="Sing, hum or play the song nearby. Auralis fingerprints the clip on this PC, then asks Shazam what it is."
+      width={600}
       className="recognition-modal"
     >
       <div className="recognition-dialog">
-        <div className="recognition-tabs" role="tablist">
-          <button type="button" className={mode === 'mic' ? 'is-active' : ''} onClick={() => { setMode('mic'); setStage('idle'); }}>
-            <Mic size={16} /> Microphone
-          </button>
-          <button type="button" className={mode === 'file' ? 'is-active' : ''} onClick={() => { setMode('file'); setStage('idle'); }}>
-            <FileAudio size={16} /> Audio file
-          </button>
-          <button type="button" className={mode === 'current' ? 'is-active' : ''} onClick={() => { setMode('current'); setStage('idle'); }}>
-            <Music2 size={16} /> Now playing
-          </button>
-        </div>
-
         {stage === 'result' && result ? (
           <div className="recognize-result">
             <Artwork src={result.coverArt} alt={result.title} className="recognize-art" />
@@ -659,98 +622,60 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <div className="recognition-stage">
-            {mode === 'mic' ? (
-              <>
-                <div className={`mic-orb ${stage === 'recording' ? 'is-recording' : ''}`}>
-                  {stage === 'recording' ? (
-                    <div className="mic-bars">
-                      {Array.from({ length: 5 }).map((_, index) => (
-                        <i key={index} style={{ animationDelay: `${index * 0.11}s` }} />
-                      ))}
-                    </div>
-                  ) : stage === 'processing' ? (
-                    <Loader2 size={40} className="spin" />
-                  ) : (
-                    <Mic size={40} />
-                  )}
+            <div className={`mic-orb ${stage === 'recording' ? 'is-recording' : ''}`}>
+              {stage === 'recording' ? (
+                <div className="mic-bars">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <i key={index} style={{ animationDelay: `${index * 0.11}s` }} />
+                  ))}
                 </div>
-                <h3>
-                  {stage === 'recording' ? `Listening… ${seconds}s` : stage === 'processing' ? 'Identifying…' : 'Tap to listen'}
-                </h3>
-                <p>
-                  {stage === 'recording'
-                    ? 'Hold your phone or speaker near the microphone. Recording stops after 12 seconds.'
-                    : stage === 'processing'
-                      ? 'Fingerprinting the clip and asking Shazam.'
-                      : 'Play the song nearby and let Auralis listen for up to 12 seconds.'}
-                </p>
-                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
-                <div className="recognize-controls">
-                  {stage === 'recording' ? (
-                    <Button variant="danger" size="lg" icon={<Square size={16} />} onClick={stopMic}>
-                      Stop and identify
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      size="lg"
-                      icon={<AudioLines size={18} />}
-                      disabled={stage === 'processing'}
-                      onClick={() => void startMic()}
-                    >
-                      Start listening
-                    </Button>
-                  )}
-                </div>
-                {stage === 'idle' ? (
-                  <p className="privacy-note">
-                    <MicOff size={13} /> Audio is processed locally into a fingerprint; the original recording is never uploaded.
-                  </p>
-                ) : null}
-              </>
-            ) : mode === 'file' ? (
-              <>
-                <div className="mic-orb">
-                  <FileAudio size={40} />
-                </div>
-                <h3>{stage === 'processing' ? 'Identifying…' : 'Choose an audio clip'}</h3>
-                <p>Pick a song or recording. Auralis analyses the first 12 seconds that contain audio.</p>
-                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="audio/*,video/*"
-                  hidden
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void handleFile(file);
-                    event.target.value = '';
-                  }}
-                />
-                <div className="recognize-controls">
-                  <Button variant="primary" icon={<FileAudio size={17} />} onClick={() => fileRef.current?.click()} disabled={stage === 'processing'}>
-                    Choose file
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="mic-orb">
-                  {stage === 'processing' ? <Loader2 size={40} className="spin" /> : <Music2 size={40} />}
-                </div>
-                <h3>{stage === 'processing' ? 'Listening to the current track…' : 'Identify the current track'}</h3>
-                <p>{current ? `“${current.title}” by ${current.artists.map((artist) => artist.name).join(', ')}` : 'Nothing is playing right now.'}</p>
-                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
-                <div className="recognize-controls">
-                  <Button variant="primary" icon={<AudioLines size={17} />} disabled={!current || stage === 'processing'} onClick={() => void recognizeCurrent()}>
-                    Identify this song
-                  </Button>
-                </div>
-                <p className="privacy-note">
-                  <FileAudio size={13} /> Downloads a short clip with yt-dlp. This can take a moment.
-                </p>
-              </>
-            )}
+              ) : stage === 'processing' ? (
+                <Loader2 size={40} className="spin" />
+              ) : (
+                <Mic size={40} />
+              )}
+            </div>
+            <h3>
+              {stage === 'recording'
+                ? `Listening… ${seconds}s`
+                : stage === 'processing'
+                  ? 'Identifying…'
+                  : stage === 'error'
+                    ? 'No match this time'
+                    : 'Ready when you are'}
+            </h3>
+            <p>
+              {stage === 'recording'
+                ? 'Sing, hum or hold your speaker near the microphone. Recording stops after 12 seconds.'
+                : stage === 'processing'
+                  ? 'Fingerprinting the clip and asking Shazam.'
+                  : stage === 'error'
+                    ? 'Try a little closer to the microphone, or use a longer, clearer part of the song.'
+                    : 'Sing or hum the tune stuck in your head, or play the original nearby. Auralis listens for up to 12 seconds.'}
+            </p>
+            {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
+            <div className="recognize-controls">
+              {stage === 'recording' ? (
+                <Button variant="danger" size="lg" icon={<Square size={16} />} onClick={stopMic}>
+                  Stop and identify
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="lg"
+                  icon={<AudioLines size={18} />}
+                  disabled={stage === 'processing'}
+                  onClick={() => void startMic()}
+                >
+                  {stage === 'error' ? 'Try listening again' : 'Start listening'}
+                </Button>
+              )}
+            </div>
+            {stage === 'idle' ? (
+              <p className="privacy-note">
+                <MicOff size={13} /> Audio is processed locally into a fingerprint; the original recording is never uploaded.
+              </p>
+            ) : null}
           </div>
         )}
 

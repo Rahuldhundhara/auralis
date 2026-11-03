@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, MoreHorizontal, Play, Video, X } from 'lucide-react';
+import { Download, MoreHorizontal, Play, X } from 'lucide-react';
 import type { Track } from '@shared/types';
 import {
   openAlbum,
   openArtist,
-  openVideoTrack,
   prefetchTrack,
   showTrackMenu,
   type TrackMenuContext,
@@ -80,9 +79,7 @@ export function TrackList({
         const number = index + 1;
         const playRow = () => {
           prefetchTrack(track);
-          if (track.isVideo || track.type === 'video') {
-            openVideoTrack(track, tracks, index);
-          } else if (radioOnPlay) {
+          if (radioOnPlay) {
             void usePlayerStore.getState().startRadio(track);
           } else {
             usePlayerStore.getState().playQueue(tracks, index);
@@ -135,11 +132,6 @@ export function TrackList({
                   {track.title}
                 </span>
                 {track.explicit ? <ExplicitBadge /> : null}
-                {track.isVideo ? (
-                  <span className="track-flag" title="Video">
-                    <Video size={12} />
-                  </span>
-                ) : null}
                 {downloaded ? (
                   <span className="track-flag" title="Downloaded">
                     <Download size={12} />

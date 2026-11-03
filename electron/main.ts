@@ -331,16 +331,31 @@ function rangeTotal(response: Response): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+const FIRST_STREAM_CHUNK = 999_999;
+
 async function streamFastThenFallback(
   remote: string,
   headers: Record<string, string>,
   fallback: Promise<string | undefined>,
 ): Promise<Response> {
-  const firstHeaders = { ...headers, Range: 'bytes=0-1048575' };
-  const first = await net.fetch(remote, { headers: firstHeaders, method: 'GET' });
-  if (!first.ok || !first.body) {
+  // googlevideo rejects ranges larger than roughly one megabyte on some
+  // clients (notably podcast episodes) with a 403. Stay just below that
+  // limit and retry smaller chunks before paying the yt-dlp fallback latency.
+  let first: Response | null = null;
+  for (const size of [FIRST_STREAM_CHUNK, 524_287]) {
+    const attempt = await net.fetch(remote, {
+      headers: { ...headers, Range: `bytes=0-${size}` },
+      method: 'GET',
+    }).catch(() => null);
+    if (attempt?.ok && attempt.body) {
+      first = attempt;
+      break;
+    }
+    await attempt?.body?.cancel().catch(() => {});
+  }
+  if (!first) {
     const fallbackUrl = await fallback;
-    if (!fallbackUrl) return withCors(first);
+    if (!fallbackUrl) return new Response('Media request failed', { status: 502 });
     const response = await net.fetch(fallbackUrl, { headers, method: 'GET' });
     return withCors(response);
   }
@@ -438,8 +453,12 @@ function registerMediaProtocol() {
           return streamFastThenFallback(remote, headers, fallback);
         }
         // Fast Innertube URLs only accept their first range. Later requests
-        // (seeks) use the full-range yt-dlp URL, which accepts any range.
-        const target = start > 0 ? (await fallbackStreamUrl(remote)) || remote : remote;
+        // (seeks and container suffixes) use the full-range yt-dlp URL,
+        // which accepts any range.
+        const target =
+          start > 0 || suffixRange
+            ? (await fallbackStreamUrl(remote)) || remote
+            : remote;
         if (range) headers.Range = range;
         const response = await net.fetch(target, { headers, method: 'GET' });
         return withCors(response);
@@ -820,10 +839,8 @@ function registerIpc() {
   ipcMain.handle('yt:remove-from-library', (_event, videoId: string) => ytm.removeFromLibrary(videoId));
 
   ipcMain.handle('player:resolve', (_event, track: Track) => streams.resolve(track));
-  ipcMain.handle('player:resolve-video', (_event, track: Track) => streams.resolveVideo(track));
   ipcMain.handle('player:prefetch', (_event, track: Track) => streams.prefetch(track));
   ipcMain.handle('player:cache', (_event, track: Track) => streams.cache(track));
-  ipcMain.handle('player:prefetch-video', (_event, track: Track) => streams.prefetchVideo(track));
   ipcMain.handle('player:download', (_event, track: Track) =>
     streams.download(track, (progress) => broadcast('download-progress', progress)),
   );

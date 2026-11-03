@@ -103,12 +103,12 @@
     max-width: none;
   }
 
-  .recognize-pill span {
+  .identify-pill span {
     display: none;
   }
 
-  .recognize-pill {
-    width: 36px;
+  .identify-pill {
+    width: 42px;
     justify-content: center;
     padding: 0;
   }
@@ -371,7 +371,11 @@
   }
 
   .home-hero-copy > p {
-    font-size: 12.5px;
+    font-size: 13.5px;
+  }
+
+  .home-hero-copy > .home-tagline {
+    font-size: 15px;
   }
 
   .home-hero-actions .btn {

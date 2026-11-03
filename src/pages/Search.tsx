@@ -1,24 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AudioLines, Clock3, Loader2, Mic, Play, Search, Sparkles, Square, X } from 'lucide-react';
+import { Clock3, Play, Search, Sparkles, X } from 'lucide-react';
 import type { Card, SearchResults } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { useAsync } from '../lib/useAsync';
-import { useVoiceSearch } from '../lib/useVoiceSearch';
 import { openCard, playCard, prefetchTrack } from '../lib/actions';
 import { formatDuration } from '../lib/format';
-import { Artwork, Button, Chips, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
+import { Artwork, Button, Chips, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 import { SearchField } from '../components/SearchField';
 
-const FILTERS = ['All', 'Songs', 'Videos', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
+const FILTERS = ['All', 'Songs', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
 const FILTER_KEYS: Record<string, string | undefined> = {
   All: undefined,
   Songs: 'songs',
-  Videos: 'videos',
   Albums: 'albums',
   Artists: 'artists',
   Playlists: 'playlists',
@@ -27,7 +24,7 @@ const FILTER_KEYS: Record<string, string | undefined> = {
 
 function TopResult({ card }: { card: Card }) {
   const round = card.type === 'artist';
-  const playable = Boolean(card.track) || ['song', 'video', 'album', 'playlist', 'episode'].includes(card.type);
+  const playable = Boolean(card.track) || ['song', 'album', 'playlist', 'episode'].includes(card.type);
   return (
     <div className="top-result" onClick={() => openCard(card)} role="button" tabIndex={0}>
       <Artwork src={card.thumbnail} alt={card.title} round={round} className="top-result-art" />
@@ -44,8 +41,7 @@ function TopResult({ card }: { card: Card }) {
           aria-label={`Play ${card.title}`}
           onClick={(event) => {
             event.stopPropagation();
-            if (card.type === 'video' || card.track?.isVideo) openCard(card);
-            else void playCard(card);
+            void playCard(card);
           }}
         >
           <Play size={24} fill="currentColor" />
@@ -60,14 +56,6 @@ function SearchLanding() {
   const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
   const removeSearchHistory = useAppStore((state) => state.removeSearchHistory);
   const navigate = useNavStore((state) => state.navigate);
-  const openDialog = useUiStore((state) => state.openDialog);
-  const voice = useVoiceSearch((text) => navigate({ page: 'search', q: text }));
-
-  useEffect(() => {
-    if (!voice.error) return;
-    toast(voice.error, 'error');
-    voice.clearError();
-  }, [voice.error, voice.clearError]);
 
   return (
     <div className="search-landing">
@@ -78,33 +66,7 @@ function SearchLanding() {
         <h1>What do you want to hear?</h1>
         <p>Songs, albums, artists, playlists and podcasts from YouTube Music.</p>
         <SearchField large />
-        <div className="search-landing-actions">
-          <Button
-            variant={voice.recording ? 'primary' : 'outline'}
-            size="sm"
-            icon={
-              voice.transcribing ? (
-                <Loader2 size={15} className="spin" />
-              ) : voice.recording ? (
-                <Square size={13} fill="currentColor" />
-              ) : (
-                <Mic size={15} />
-              )
-            }
-            disabled={voice.transcribing}
-            onClick={() => (voice.recording ? voice.stop() : void voice.start())}
-          >
-            {voice.transcribing ? 'Transcribing…' : voice.recording ? 'Stop listening' : 'Voice search'}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<AudioLines size={15} />}
-            onClick={() => openDialog({ type: 'recognition' })}
-          >
-            Identify a song
-          </Button>
-        </div>
+        <p className="search-landing-hint">Use “Identify your song” beside the search bar to name a tune by singing, humming or playing it.</p>
       </div>
       {history.length ? (
         <section className="search-history-section">
@@ -195,7 +157,6 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
     const candidates = [
       results.top?.track,
       ...results.songs.slice(0, 3),
-      ...results.videos.slice(0, 3),
       ...results.episodes.slice(0, 2),
     ].filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
     const seen = new Set<string>();
@@ -240,16 +201,17 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
     }
   };
 
-  const hasAny = results
-    ? results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length > 0
-    : false;
+  const resultCount = results
+    ? results.songs.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length
+    : 0;
+  const hasAny = resultCount > 0;
 
   return (
     <div className="page search-page">
       <header className="page-hero search-hero">
         <span className="eyebrow">Search results</span>
         <h1>{query}</h1>
-        <p>{results ? `${results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length} results` : 'Searching YouTube Music…'}</p>
+        <p>{results ? `${resultCount} ${resultCount === 1 ? 'result' : 'results'}` : 'Searching YouTube Music…'}</p>
       </header>
 
       <Chips items={[...FILTERS]} selected={filter} onSelect={setFilter} />
@@ -289,12 +251,6 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
             <div className="shelf-list-card">
               <TrackList tracks={results.songs} showArt showAlbum radioOnPlay />
             </div>
-          ) : null}
-
-          {filter === 'All' || filter === 'Videos' ? (
-            results.videos.length ? (
-              <Shelf shelf={{ title: 'Videos', items: results.videos.map((track) => ({ type: 'video', id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track: { ...track, isVideo: true } })) }} />
-            ) : null
           ) : null}
 
           {filter === 'All' || filter === 'Albums' ? (
