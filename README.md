@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>Windows 1.1.1</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
+  <strong>Windows 1.1.2</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
 </p>
 
 <p align="center">
@@ -60,8 +60,8 @@ Download the latest Windows x64 build from the [GitHub Releases page](https://gi
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| Installer | [`Auralis-Setup-1.1.1.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.1.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.1.1.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.1.exe) | You want a single executable that does not need installation |
+| Installer | [`Auralis-Setup-1.1.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.2.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
+| Portable | [`Auralis-Portable-1.1.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.2.exe) | You want a single executable that does not need installation |
 
 The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
 
@@ -109,6 +109,12 @@ for Wayland, keyring, sandbox and troubleshooting details.
 4. Start typing in the search bar, or pick something from Home.
 
 Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
+
+### What's new in 1.1.2
+
+- Podcast episode filters now work: **In progress**, **Unplayed** and **Played** reload the episode list in place through YouTube Music's continuation tokens, with a real empty state when nothing matches. Clicking the active chip clears the filter.
+- The **Latest** chip opens the real sort menu (Latest, Oldest, Popular, Creator provided) and preserves the selected played-state filter.
+- **Identify music** no longer throws `ERR_OUT_OF_RANGE`. Shazam fingerprints store peak magnitude and frequency bin as unsigned 16-bit values; the code was writing them as signed. Live checks matched “Never Gonna Give You Up” in 6.9 s and “Despacito” in 5.8 s from the Now Playing dialog.
 
 ### What's new in 1.1.1
 

@@ -82,10 +82,9 @@ function writeUInt32LE(value: number): Buffer {
   return buffer;
 }
 
-function writeInt32LE(value: number): Buffer {
-  const buffer = Buffer.alloc(4);
-  buffer.writeInt32LE(value | 0, 0);
-  return buffer;
+function clampUInt16(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(0xffff, Math.trunc(value)));
 }
 
 /**
@@ -134,7 +133,7 @@ export function generateSignature(pcm: Buffer): { uri: string; sampleMs: number 
     const otherOffsets = [-53, -45, 165, 172, 179, 186, 193, 200, 214, 221, 228, 235, 242, 249];
     for (let binPos = 10; binPos < FFT_OUTPUT_SIZE - 8; binPos++) {
       const fftValue = fftMinus46[binPos];
-      if (fftValue < 1 / 64 || fftValue < spreadMinus49[binPos]) continue;
+      if (fftValue < 1 / 64 || fftValue < spreadMinus49[binPos - 1]) continue;
       let maxNeighbor = 0;
       for (const offset of [-10, -7, -4, -3, 1, 2, 5, 8]) {
         const value = spreadMinus49[binPos + offset];
@@ -201,13 +200,17 @@ export function generateSignature(pcm: Buffer): { uri: string; sampleMs: number 
     for (const peak of peaks) {
       const diff = peak.fftPassNumber - previous;
       if (diff >= 255) {
-        peakChunks.push(Buffer.from([0xff]), writeInt32LE(peak.fftPassNumber));
+        peakChunks.push(Buffer.from([0xff]), writeUInt32LE(peak.fftPassNumber));
         previous = peak.fftPassNumber;
       }
       const step = Buffer.alloc(5);
       step.writeUInt8(peak.fftPassNumber - previous, 0);
-      step.writeInt16LE(peak.peakMagnitude, 1);
-      step.writeInt16LE(peak.correctedPeakFrequencyBin, 3);
+      // Shazam stores both values as unsigned little-endian 16-bit integers.
+      // The corrected bin for anything above ~4 kHz is larger than 32767, so
+      // writing them as signed threw ERR_OUT_OF_RANGE and every recognition
+      // failed before the request was sent.
+      step.writeUInt16LE(clampUInt16(peak.peakMagnitude), 1);
+      step.writeUInt16LE(clampUInt16(peak.correctedPeakFrequencyBin), 3);
       peakChunks.push(step);
       previous = peak.fftPassNumber;
     }

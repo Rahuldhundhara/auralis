@@ -1,19 +1,21 @@
 # Quality assurance record
 
-**Build:** Auralis 1.1.1 (playback-latency patch; 1.1.0 evidence retained below)
+**Build:** Auralis 1.1.2 (podcast filters + Identify fix; 1.1.1 evidence retained below)
 **Platform:** Windows 11 x64 (build 10.0.26300)
 **Electron:** 45.0.0
 **Node:** 24.19.0
-**Test date:** 29 October 2026; playback latency pass 2 November 2026
+**Test date:** 29 October 2026; playback latency pass 2 November 2026; podcast/Identify pass 4 November 2026
 **Live catalogue:** YouTube Music anonymous session
 
+> **1.1.2 scope:** podcast episode filters and Identify music. The filter chips now use YouTube Music's `browseSectionListReloadEndpoint` continuation instead of a browse-navigation endpoint, and the “Latest” chip exposes the real sort menu. Identify was failing before its request was sent because Shazam fingerprint fields were written as signed 16-bit integers.
+>
 > **1.1.1 scope:** playback start latency. The resolver no longer spawns yt-dlp per track; it asks the Innertube player endpoint for a direct audio URL and keeps yt-dlp as the fallback. The transport also stops flashing a spinner for fast starts, and the media proxy retries a dropped range request through Node's stack. Feature set, UI and packaging are unchanged from 1.1.0.
 >
 > **1.1.0 scope:** cold-start animation, dedicated search, Queue-first Now Playing, lyrics translation UI, mini-player progress, streaming-quality reload, EQ presets/numeric bass boost, Jump Back In and hardened media handling. The full 21-check suite was re-run on 1.1.0; the 1.0.2 results remain the baseline for older evidence.
 >
 > **Merged tree:** The Android/mobile branch (through the `v1.0.3-android` release) was merged into 1.1.0 without dropping platform-specific code. Typecheck, production builds, the 21-check suite, packaged smoke and focused upgrade checks were re-run on the merged tree; the Android renderer keeps its `isAndroidShell` paths and the regenerated web assets are committed.
 >
-> **Build paths:** Builds are written to `release/<version>/`; the 1.1.0 baseline lives in `release/1.1.0/` and the latency patch in `release/1.1.1/`.
+> **Build paths:** Builds are written to `release/<version>/`; the 1.1.0 baseline lives in `release/1.1.0/`, the latency patch in `release/1.1.1/` and this patch in `release/1.1.2/`.
 
 ## Summary
 
@@ -24,10 +26,16 @@
 | Production renderer build | Pass |
 | Android web asset build (`npm run build:android`) | Pass (assets regenerated) |
 | 1.1.0 focused upgrade UI QA | Pass (16/16 checks) |
+| 1.1.1 focused upgrade UI QA | Pass (16/16 checks) |
+| 1.1.2 focused upgrade UI QA | Pass (16/16 checks) |
 | 1.1.0 packaged smoke test | Pass |
 | 1.1.1 packaged smoke test | Pass |
+| 1.1.2 packaged smoke test | Pass |
+| 1.1.2 portable EXE launch | Pass (CDP, version 1.1.2) |
 | Branding | Pass (supplied Auralis logo in app, installer, portable, title bar, splash, tray and README) |
 | Full end-to-end UI QA | Pass (21/21 checks) |
+| Podcast filters | Pass (In progress, Unplayed, Played, clear-on-second-click, Latest sort menu) |
+| Identify music | Pass (2 live matches plus the Now Playing dialog) |
 | Sleep timer | Pass |
 | NSIS installer build | Pass |
 | Portable build | Pass |
@@ -43,6 +51,56 @@
 | Browser/page errors during final pass | No app exceptions; third-party artwork CDN failures fell back to placeholders |
 
 The final full-app pass, focused upgrade pass and packaged smoke test produced no page exceptions. The latency-build full pass logged one external `yt3.googleusercontent.com` artwork 404; the image fell back to a placeholder, and no app code failed. The QA watcher still records these external asset failures in `issues` rather than hiding them. It ignores the expected `ERR_ABORTED` reported when the media proxy cancels the previous track's range request during a track switch.
+
+## Podcast filters and Identify (4 November 2026)
+
+### Podcast filters
+
+The chips looked clickable but did nothing because YouTube Music returns them with `browseSectionListReloadEndpoint.continuation.reloadContinuationData.continuation`, not a `browseEndpoint`. The parser discarded that token and the click handler called a navigation function that had no continuation branch. The **Latest** chip is also different: it opens an `openPopupAction` menu instead of filtering directly.
+
+The fix keeps the current detail page mounted and:
+
+- parses the reload continuation into `NavEndpoint.continuation` and the popup options into `BrowseChip.options`;
+- reloads the section list in place through `yt.browseEndpoint({ continuation })`;
+- replaces the episode list with the returned `musicMultiRowListItemRenderer` rows;
+- reads `messageRenderer` as the real empty state;
+- updates the chip cloud from each response, so sort and played-state filters combine;
+- restores the original list when the active chip is clicked again, and keeps a non-default sort when clearing a played-state filter;
+- hides the “Show all episodes” continuation while a filter view is active.
+
+Verified with `node scripts/podcast-filter-qa.mjs` on *Good Mythical Morning with Rhett & Link* (`MPSPPLJ49NV73ttrvdqf3b1icOXusZabXitci9`):
+
+| Step | Result |
+| --- | --- |
+| Initial page | 20 episode rows |
+| In progress | 0 rows; YouTube's “No episodes match the filters you applied.” message |
+| Unplayed | 700 rows; chip highlighted |
+| Unplayed clicked again | Original 20 rows restored |
+| Played | 0 rows; real empty message (anonymous session has no history) |
+| Latest → Oldest | 100 rows; first episode changed from “Try Not To Get Angry Challenge” to “Extremely OCD Morning Routine” |
+| Unplayed + Oldest | 700 rows; summary “Unplayed episodes · Oldest” |
+| Clear Unplayed, keep Oldest | 100 rows; summary “Sorted by Oldest” |
+| Show all | Original 20 rows restored |
+
+The anonymous session has no listening history, so **In progress** and **Played** legitimately returned an empty list. **Unplayed** proving a 700-row replacement verifies that the same continuation path works for the other two chips; a signed-in account supplies the history they filter.
+
+### Identify music
+
+`generateSignature` was throwing `RangeError [ERR_OUT_OF_RANGE]` before any Shazam request was sent:
+
+```text
+The value of "value" is out of range. It must be >= -32768 and <= 32767. Received 38223
+```
+
+The Shazam signature format stores each peak's magnitude and corrected frequency bin as **unsigned** 16-bit little-endian values. The implementation wrote both with `writeInt16LE`, so any bin above 32767 failed. The fix uses `writeUInt16LE` with explicit clamping and matches the reference peak comparison (`spreadMinus49[binPos - 1]`).
+
+| Test | Result |
+| --- | --- |
+| Backend `recognize:from-video-id` `dQw4w9WgXcQ` | “Never Gonna Give You Up” — 6.9 s |
+| Backend `recognize:from-video-id` `kJQP7kiw5Fk` | “Despacito” — 5.8 s |
+| Now Playing dialog, play “Never Gonna Give You Up” then Identify | “Never Gonna Give You Up” / Rick Astley — 7.3–9.0 s across runs, album/year/genre populated |
+
+No recognition errors were logged in the main process during either run.
 
 ## Playback start latency (2 November 2026)
 
@@ -106,6 +164,8 @@ Tests were run against the real YouTube Music service, not fixtures. Each Playwr
 | `node scripts/qa-extra.mjs` | Live download, local playlist editing, podcast list, themes, EQ and radio |
 | `node scripts/qa-moods.mjs` | Moods & genres tiles and category navigation |
 | `node scripts/qa-full.mjs` | 21 live end-to-end checks: home, Explore, search filters, playback, likes, related-song radio and queue-end autoplay, detail pages, queue edit, sleep timer, local playlists, download/offline play, settings, lyrics, now playing, history, downloads page and restart persistence |
+| `node scripts/podcast-filter-qa.mjs` | Podcast In progress / Unplayed / Played chips, clear-on-second-click, Latest menu sorting, combined sort + filter and empty state |
+| `node scripts/identify-ui-qa.mjs` | Opens the Identify dialog in Now Playing mode after a real track starts, then checks the Shazam match |
 | `node scripts/qa-latency.mjs` | Playback latency: direct resolve timing, click → play button, click → first audio, and hover-prefetch effect; writes `qa/latency/results.json` |
 | `node scripts/qa-sleep.mjs` | Focused sleep-timer countdown, simulated expiry, toast, end-of-track option and off |
 | `node scripts/qa-packaged.mjs` | Packaged EXE launch, app info, playback, download, moods, podcast API |
@@ -396,6 +456,8 @@ Screenshots are stored in `qa/` and selected product screenshots in `docs/screen
 | Album detail | `docs/screenshots/album.png` |
 | Artist detail | `docs/screenshots/artist.png` |
 | Podcast | `docs/screenshots/podcast.png` |
+| Podcast filters | `qa/podcast-filter-unplayed.png`, `qa/podcast-filter-empty.png`, `qa/podcast-sort-menu.png` |
+| Identify result | `qa/identify-result.png` |
 | Downloads | `qa/packaged-downloads.png`, `docs/screenshots/downloads.png` |
 | Settings | `docs/screenshots/settings.png` |
 
@@ -410,6 +472,8 @@ npm run build:android
 npm run dist
 node scripts/qa-latency.mjs
 node scripts/qa-full.mjs
+node scripts/podcast-filter-qa.mjs
+node scripts/identify-ui-qa.mjs
 node scripts/qa-packaged.mjs
 node scripts/qa-upgrade.mjs
 ```

@@ -3,6 +3,7 @@ import type {
   ArtistRef,
   BrowsePage,
   Card,
+  ChipOption,
   ItemType,
   NavEndpoint,
   NextResult,
@@ -581,19 +582,52 @@ function collectSectionContents(json: Raw): { contents: Raw[]; chips: Raw[]; con
 function parseChips(chips: Raw[]): BrowsePage['chips'] {
   const out: NonNullable<BrowsePage['chips']> = [];
   for (const chip of chips || []) {
-    const text = textOf(chip?.chipCloudChipRenderer?.text).trim();
+    const renderer = chip?.chipCloudChipRenderer;
+    const text = textOf(renderer?.text).trim();
     if (!text) continue;
-    const nav =
-      chip?.chipCloudChipRenderer?.navigationEndpoint ||
-      chip?.chipCloudChipRenderer?.onTap?.navigationEndpoint || {};
-    const endpoint = endpointOf(nav);
+    const nav = renderer?.navigationEndpoint || renderer?.onTap?.navigationEndpoint || {};
+    const options = parseChipOptions(nav);
+    const selectedOption = options?.find((option) => option.selected);
     out.push({
       title: text,
-      endpoint: endpoint || (nav?.browseEndpoint?.params ? { params: nav.browseEndpoint.params } : undefined),
-      selected: Boolean(chip?.chipCloudChipRenderer?.isSelected),
+      endpoint: chipEndpoint(nav),
+      selected: Boolean(renderer?.isSelected) || Boolean(selectedOption),
+      options,
     });
   }
   return out;
+}
+
+/**
+ * Podcast filters ("In progress", "Unplayed", "Played") and browse filters use
+ * a `browseSectionListReloadEndpoint` instead of a browse endpoint. The token
+ * reloads just the section list, which the detail page applies in place.
+ */
+function chipEndpoint(nav: Raw): NavEndpoint | undefined {
+  const direct = endpointOf(nav);
+  if (direct) return direct;
+  const reload = nav?.browseSectionListReloadEndpoint?.continuation;
+  const token =
+    reload?.reloadContinuationData?.continuation ||
+    reload?.continuationData?.continuation ||
+    nav?.continuationCommand?.token;
+  return token ? { continuation: token } : undefined;
+}
+
+/** "Latest" opens a sort menu on YouTube Music instead of filtering directly. */
+function parseChipOptions(nav: Raw): ChipOption[] | undefined {
+  const items = nav?.openPopupAction?.popup?.menuPopupRenderer?.items || [];
+  const options: ChipOption[] = [];
+  for (const item of items) {
+    const renderer = item?.menuNavigationItemRenderer || item?.menuServiceItemRenderer;
+    const title = textOf(renderer?.text).trim();
+    if (!title) continue;
+    const endpoint = chipEndpoint(renderer?.navigationEndpoint || {});
+    if (!endpoint) continue;
+    const label = renderer?.accessibility?.accessibilityData?.label || '';
+    options.push({ title, endpoint, selected: /,\s*selected$/i.test(label) });
+  }
+  return options.length ? options : undefined;
 }
 
 function parseHeaderInternal(renderer: Raw, expected: PageHeader['type']): PageHeader | undefined {
@@ -1088,17 +1122,20 @@ export function summarize(json: Raw) {
 
 /** Continuation responses use `continuationContents` instead of `contents`. */
 export function parseBrowseContinuation(json: Raw): BrowsePage {
-  const sectionList =
-    json?.continuationContents?.sectionListContinuation ||
-    json?.continuationContents?.gridContinuation ||
-    json?.continuationContents?.musicShelfContinuation;
-  if (!sectionList) return { shelves: [] };
+  const continuation = json?.continuationContents || {};
+  const sectionList = continuation.sectionListContinuation || continuation.gridContinuation;
+  const shelf = continuation.musicShelfContinuation || continuation.musicPlaylistShelfContinuation;
+  const contents: Raw[] = [
+    ...(sectionList?.contents || sectionList?.items || []),
+    ...(shelf?.contents || shelf?.items || []),
+  ];
+  if (!sectionList && !shelf) return { shelves: [] };
   const shelves: Shelf[] = [];
-  const contents = sectionList?.contents || sectionList?.items || [];
+  let message: string | undefined;
   for (const node of contents) {
     if (node?.musicCarouselShelfRenderer) {
-      const shelf = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
-      if (shelf) shelves.push(shelf);
+      const parsed = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
+      if (parsed) shelves.push(parsed);
     } else if (node?.musicTwoRowItemRenderer) {
       const card = parseTwoRowItem(node.musicTwoRowItemRenderer);
       if (card) {
@@ -1106,8 +1143,8 @@ export function parseBrowseContinuation(json: Raw): BrowsePage {
         else shelves.push({ items: [card], style: 'grid' });
       }
     } else if (node?.musicShelfRenderer) {
-      const shelf = parseShelf(node.musicShelfRenderer, 'list');
-      if (shelf) shelves.push(shelf);
+      const parsed = parseShelf(node.musicShelfRenderer, 'list');
+      if (parsed) shelves.push(parsed);
     } else if (node?.musicResponsiveListItemRenderer) {
       const track = parseResponsiveItem(node.musicResponsiveListItemRenderer);
       if (track) {
@@ -1115,13 +1152,36 @@ export function parseBrowseContinuation(json: Raw): BrowsePage {
         if (shelves.length) shelves[0].items.push(...items);
         else shelves.push({ items, style: 'list' });
       }
+    } else if (node?.musicMultiRowListItemRenderer) {
+      // Podcast episode filters return musicMultiRowListItemRenderer rows.
+      const track = parseMultiRowItem(node.musicMultiRowListItemRenderer);
+      if (track) {
+        const items = [
+          {
+            type: 'episode',
+            id: track.id,
+            title: track.title,
+            subtitle: textOf(node.musicMultiRowListItemRenderer.subtitle).trim(),
+            thumbnail: track.thumbnail,
+            track,
+          } as Card,
+        ];
+        if (shelves.length) shelves[0].items.push(...items);
+        else shelves.push({ items, style: 'list' });
+      }
+    } else if (node?.messageRenderer) {
+      message = textOf(node.messageRenderer.text).trim() || message;
     }
   }
   return {
     shelves,
-    continuation: continuationOf(sectionList),
+    message,
+    continuation: continuationOf(shelf) || continuationOf(sectionList),
     chips: parseChips(
-      sectionList?.header?.chipCloudRenderer?.chips || json?.continuationContents?.sectionListContinuation?.header?.chipCloudRenderer?.chips || [],
+      sectionList?.header?.chipCloudRenderer?.chips ||
+        shelf?.header?.chipCloudRenderer?.chips ||
+        continuation.sectionListContinuation?.header?.chipCloudRenderer?.chips ||
+        [],
     ),
   };
 }

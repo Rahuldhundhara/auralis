@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.2",
   "checks": [
     {
       "name": "Cold-start animation renders all 13 layers",
@@ -44,7 +44,7 @@
     {
       "name": "Media Session mirrors the single playback source",
       "ok": true,
-      "detail": "{\"title\":\"Kesariya (From \\\"Brahmastra\\\")\",\"state\":\"playing\"}"
+      "detail": "{\"title\":\"Kesariya (From \\\"Brahmastra\\\") (Tu Fuljhadiyo Wale Tyohaaro Jesi - Happy Diwali)\",\"state\":\"playing\"}"
     },
     {
       "name": "Jump back in is a horizontal real-history carousel",

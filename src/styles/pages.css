@@ -821,6 +821,42 @@ html.is-android .quick-rail .quick-card {
   margin-top: -5px;
 }
 
+.detail-chips .genre-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-chips .genre-chip:disabled {
+  cursor: default;
+}
+
+.detail-filter-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.detail-filter-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: -10px 0 20px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.detail-filter-status .text-link {
+  font-size: 12.5px;
+}
+
+.detail-empty-note p {
+  margin: 0 0 14px;
+}
+
 .detail-tracks {
   margin-bottom: 12px;
 }

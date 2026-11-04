@@ -3,6 +3,7 @@ import {
   Bell,
   BellOff,
   Check,
+  ChevronDown,
   Download,
   ExternalLink,
   Heart,
@@ -18,7 +19,7 @@ import {
   UserCheck,
   UserPlus,
 } from 'lucide-react';
-import type { BrowsePage, Card, PageHeader, Shelf as ShelfType, Track } from '@shared/types';
+import type { BrowseChip, BrowsePage, Card, ChipOption, PageHeader, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
@@ -31,6 +32,49 @@ import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 
 export type DetailKind = 'album' | 'playlist' | 'artist' | 'podcast' | 'browse';
+
+interface ActiveFilter {
+  /** Played-state chip that is currently applied (In progress / Unplayed / Played). */
+  status?: string;
+  /** Sort option picked from the "Latest" popup. */
+  sort?: string;
+  tracks: Track[];
+  message?: string;
+  continuation?: string;
+}
+
+function uniqueTracks(input: Track[]): Track[] {
+  const seen = new Set<string>();
+  const output: Track[] = [];
+  for (const track of input) {
+    if (!track?.id || seen.has(track.id)) continue;
+    seen.add(track.id);
+    output.push(track);
+  }
+  return output;
+}
+
+/** Reads the selected sort option and played-state filter from a chip cloud. */
+function selectedChipState(chips: BrowseChip[] | undefined): { status?: string; sort?: string } {
+  const state: { status?: string; sort?: string } = {};
+  for (const chip of chips || []) {
+    if (chip.options?.length) {
+      const option = chip.options.find((entry) => entry.selected);
+      if (option) state.sort = option.title;
+    } else if (chip.selected) {
+      state.status = chip.title;
+    }
+  }
+  return state;
+}
+
+function findSortOption(chips: BrowseChip[], title: string): ChipOption | undefined {
+  for (const chip of chips) {
+    const option = chip.options?.find((entry) => entry.title === title);
+    if (option) return option;
+  }
+  return undefined;
+}
 
 function isTrackShelf(shelf: ShelfType): boolean {
   return shelf.items.some((item) => Boolean(item.track?.id));
@@ -111,6 +155,11 @@ export function DetailPage({
   const refreshLibrary = useAppStore((state) => state.refreshLibrary);
   const openMenu = useUiStore((state) => state.openMenu);
   const [pageHeader, setPageHeader] = useState<PageHeader | undefined>();
+  const [chips, setChips] = useState<BrowseChip[]>([]);
+  const [baseChips, setBaseChips] = useState<BrowseChip[]>([]);
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter | null>(null);
+  const [filterExtraTracks, setFilterExtraTracks] = useState<Track[]>([]);
+  const [filterLoading, setFilterLoading] = useState<string | null>(null);
 
   useEffect(() => {
     setExtraTracks([]);
@@ -119,6 +168,11 @@ export function DetailPage({
     setSavedCopy(false);
     setPageHeader(data?.header);
     setRenameValue(data?.header?.title || '');
+    setChips(data?.chips || []);
+    setBaseChips(data?.chips || []);
+    setActiveFilter(null);
+    setFilterExtraTracks([]);
+    setFilterLoading(null);
   }, [data]);
 
   const primaryShelf = useMemo(() => {
@@ -142,7 +196,7 @@ export function DetailPage({
     return [];
   }, [data, primaryShelf, kind]);
 
-  const tracks = useMemo(() => {
+  const baseTracks = useMemo(() => {
     const seen = new Set<string>();
     const output: Track[] = [];
     for (const track of [...primaryTracks, ...extraTracks]) {
@@ -152,6 +206,13 @@ export function DetailPage({
     }
     return output;
   }, [primaryTracks, extraTracks]);
+
+  const filteredTracks = useMemo(() => {
+    if (!activeFilter) return [];
+    return uniqueTracks([...activeFilter.tracks, ...filterExtraTracks]);
+  }, [activeFilter, filterExtraTracks]);
+
+  const tracks = activeFilter ? filteredTracks : baseTracks;
 
   const restShelves = useMemo(() => {
     if (!data) return [];
@@ -176,7 +237,18 @@ export function DetailPage({
   const displayTitle = header?.title || title || (loading ? 'Loading…' : 'Browse');
   const playlistId = (header?.playlistId || header?.browseId || header?.id || id || '').replace(/^VL/, '');
   const canEditPlaylist = kind === 'playlist' && Boolean(session.hasCookies && playlistId);
-  const hasContinuation = Boolean(continuation || data?.continuation);
+  const hasContinuation = Boolean(activeFilter ? activeFilter.continuation : continuation || data?.continuation);
+  const displayChips = chips.length ? chips : data?.chips || [];
+  const activeSort = activeFilter?.sort && activeFilter.sort !== 'Latest' ? activeFilter.sort : undefined;
+  const filterSummary = activeFilter
+    ? `${
+        activeFilter.status
+          ? `${activeFilter.status} ${kind === 'podcast' ? 'episodes' : 'songs'}${activeSort ? ` · ${activeSort}` : ''}`
+          : activeSort
+            ? `Sorted by ${activeSort}`
+            : 'Filtered'
+      } · ${tracks.length} shown`
+    : '';
 
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
@@ -196,15 +268,20 @@ export function DetailPage({
   }
 
   const loadMoreTracks = async () => {
-    const next = continuation || data?.continuation;
+    const next = activeFilter ? activeFilter.continuation : continuation || data?.continuation;
     if (!next || loadingMore) return;
     setLoadingMore(true);
     try {
       const result = await window.auralis.yt.detailContinuation(next);
-      setExtraTracks((current) => [...current, ...result.tracks]);
-      setContinuation(result.continuation);
+      if (activeFilter) {
+        setFilterExtraTracks((current) => [...current, ...result.tracks]);
+        setActiveFilter((current) => (current ? { ...current, continuation: result.continuation } : current));
+      } else {
+        setExtraTracks((current) => [...current, ...result.tracks]);
+        setContinuation(result.continuation);
+      }
     } catch (err: any) {
-      toast(`Could not load more songs: ${err?.message || err}`, 'error');
+      toast(`Could not load more ${kind === 'podcast' ? 'episodes' : 'songs'}: ${err?.message || err}`, 'error');
     } finally {
       setLoadingMore(false);
     }
@@ -226,9 +303,108 @@ export function DetailPage({
     }
   };
 
+  const inPageFilters = kind !== 'browse';
+
+  const clearFilter = () => {
+    setActiveFilter(null);
+    setFilterExtraTracks([]);
+    setChips(baseChips);
+  };
+
+  const applyFilterToken = async (
+    label: string,
+    token: string,
+    fallback: { status?: string; sort?: string },
+  ) => {
+    setFilterLoading(label);
+    try {
+      const page = await window.auralis.yt.browseEndpoint({ continuation: token });
+      if (page.chips?.length) setChips(page.chips);
+      const selected = selectedChipState(page.chips);
+      setActiveFilter({
+        status: 'status' in selected ? selected.status : fallback.status,
+        sort: 'sort' in selected ? selected.sort : fallback.sort,
+        tracks: tracksFromPage(page),
+        message: page.message,
+        continuation: page.continuation,
+      });
+      setFilterExtraTracks([]);
+    } catch (err: any) {
+      toast(`Could not apply the filter: ${err?.message || err}`, 'error');
+    } finally {
+      setFilterLoading(null);
+    }
+  };
+
+  const applyStatusChip = (chip: BrowseChip) => {
+    if (filterLoading) return;
+    const token = chip.endpoint?.continuation;
+    if (!token) return;
+    if (activeFilter?.status === chip.title) {
+      // Clicking the active played-state chip clears it. When a real sort is
+      // active, reload through the unfiltered sort token so the order is kept.
+      const baseSort =
+        activeFilter.sort && activeFilter.sort !== 'Latest'
+          ? findSortOption(baseChips, activeFilter.sort)
+          : undefined;
+      if (baseSort?.endpoint?.continuation) {
+        void applyFilterToken(baseSort.title, baseSort.endpoint.continuation, { sort: baseSort.title });
+      } else {
+        clearFilter();
+      }
+      return;
+    }
+    void applyFilterToken(chip.title, token, { status: chip.title, sort: activeFilter?.sort });
+  };
+
+  const applySortOption = (option: ChipOption) => {
+    if (filterLoading) return;
+    const token = option.endpoint?.continuation;
+    if (!token) return;
+    void applyFilterToken(option.title, token, { sort: option.title, status: activeFilter?.status });
+  };
+
+  const openSortMenu = (chip: BrowseChip, event: React.MouseEvent<HTMLButtonElement>) => {
+    const options = chip.options || [];
+    if (!options.length) return;
+    const selectedSort = activeFilter?.sort || options.find((option) => option.selected)?.title;
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu(
+      rect.left,
+      rect.bottom + 6,
+      options.map((option) => ({
+        label: option.title,
+        checked: option.title === selectedSort,
+        onClick: () => applySortOption(option),
+      })),
+    );
+  };
+
+  const handleChipClick = (chip: BrowseChip, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!inPageFilters) {
+      if (chip.endpoint) navigateEndpoint(chip.endpoint, chip.title);
+      return;
+    }
+    if (chip.options?.length) {
+      openSortMenu(chip, event);
+      return;
+    }
+    if (chip.endpoint?.continuation) {
+      applyStatusChip(chip);
+      return;
+    }
+    if (chip.endpoint) navigateEndpoint(chip.endpoint, chip.title);
+  };
+
+  const isChipSelected = (chip: BrowseChip): boolean => {
+    if (!inPageFilters) return Boolean(chip.selected);
+    if (chip.options?.length) return Boolean(activeSort);
+    return activeFilter ? activeFilter.status === chip.title : false;
+  };
+
   const playAll = (shuffle = false) => {
     if (!tracks.length) {
-      toast('No playable songs on this page.', 'error');
+      toast(`No playable ${kind === 'podcast' ? 'episodes' : 'songs'} on this page.`, 'error');
       return;
     }
     usePlayerStore.getState().playQueue(shuffle ? shuffleArray(tracks) : tracks, 0);
@@ -554,18 +730,40 @@ export function DetailPage({
     <div className={`page detail-page detail-page-${kind}`}>
       {headerNode}
 
-      {data?.chips?.length ? (
-        <div className="genre-chips detail-chips">
-          {data.chips.map((chip, index) => (
+      {displayChips.length ? (
+        <div
+          className="genre-chips detail-chips"
+          role="group"
+          aria-label={kind === 'podcast' ? 'Episode filters' : 'Filters'}
+          aria-busy={Boolean(filterLoading)}
+        >
+          {displayChips.map((chip, index) => (
             <button
               type="button"
               key={`${chip.title}-${index}`}
-              className={`genre-chip ${chip.selected ? 'is-selected' : ''}`}
-              onClick={() => chip.endpoint && navigateEndpoint(chip.endpoint, chip.title)}
+              className={`genre-chip ${isChipSelected(chip) ? 'is-selected' : ''}`}
+              onClick={(event) => handleChipClick(chip, event)}
+              aria-pressed={isChipSelected(chip)}
+              disabled={Boolean(filterLoading)}
             >
-              {chip.title}
+              <span>{chip.title}</span>
+              {chip.options?.length ? <ChevronDown size={13} aria-hidden="true" /> : null}
             </button>
           ))}
+          {filterLoading ? (
+            <span className="detail-filter-loading">
+              <Spinner size={13} /> Filtering…
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {activeFilter ? (
+        <div className="detail-filter-status">
+          <span>{filterSummary}</span>
+          <button type="button" className="text-link" onClick={clearFilter}>
+            Show all {kind === 'podcast' ? 'episodes' : 'songs'}
+          </button>
         </div>
       ) : null}
 
@@ -597,14 +795,21 @@ export function DetailPage({
           {hasContinuation ? (
             <div className="load-more-row">
               <Button variant="outline" onClick={() => void loadMoreTracks()} disabled={loadingMore}>
-                {loadingMore ? 'Loading more…' : 'Show all songs'}
+                {loadingMore ? 'Loading more…' : kind === 'podcast' ? 'Show all episodes' : 'Show all songs'}
               </Button>
             </div>
           ) : null}
         </section>
       ) : null}
 
-      {kind !== 'browse' && !tracks.length && primaryShelf && !loading ? (
+      {kind !== 'browse' && !tracks.length && !loading && activeFilter ? (
+        <div className="detail-empty-note">
+          <p>{activeFilter.message || 'No episodes match the filters you applied.'}</p>
+          <Button variant="outline" onClick={clearFilter}>
+            Show all {kind === 'podcast' ? 'episodes' : 'songs'}
+          </Button>
+        </div>
+      ) : kind !== 'browse' && !tracks.length && primaryShelf && !loading ? (
         <div className="detail-empty-note">This release does not have any playable songs.</div>
       ) : null}
 

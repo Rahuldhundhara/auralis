@@ -116,12 +116,28 @@ export interface NavEndpoint {
   continuation?: string;
 }
 
+export interface ChipOption {
+  title: string;
+  endpoint?: NavEndpoint;
+  selected?: boolean;
+}
+
+export interface BrowseChip {
+  title: string;
+  endpoint?: NavEndpoint;
+  selected?: boolean;
+  /** Menu entries for chips that open a sort/filter popup (e.g. podcast "Latest"). */
+  options?: ChipOption[];
+}
+
 export interface BrowsePage {
   header?: PageHeader;
   shelves: Shelf[];
   continuation?: string;
+  /** Human-readable empty state returned by filtered continuations. */
+  message?: string;
   /** chips for explore/library */
-  chips?: { title: string; endpoint?: NavEndpoint; selected?: boolean }[];
+  chips?: BrowseChip[];
 }
 
 export interface SearchResults {
