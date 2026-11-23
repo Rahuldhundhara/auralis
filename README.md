@@ -28,7 +28,8 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 
 | | |
 |---|---|
-| **Home** | Personalised home feed, quick picks, mixes, charts, new releases, moods and genres |
+| **Home** | Personalised home feed, animated hero with a live now-playing card, quick picks, mixes, charts, new releases, moods and genres |
+| **Explore** | Featured-track hero with a canvas palette and live waveform, plus a 15-mood photo grid that opens real YouTube Music mixes |
 | **Search** | Dedicated search page with live suggestions, removable history chips, songs/videos/albums/artists/playlists/podcasts filters and continuation without duplicates |
 | **Details** | Album, playlist, artist and podcast pages with continuation and full track/episode lists |
 | **Player** | Seek, volume, speed, repeat, shuffle, queue, radio/automix with queue-end autoplay, prefetch, sleep timer, streaming quality and media keys |
@@ -39,7 +40,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
 | **Desktop** | Frameless window, animated cold-start logo, tray icon, close-to-tray, keyboard shortcuts and Windows media controls; the separate Linux 1.0.2 builds add MPRIS |
-| **Look and feel** | Material-inspired design, dark/black/light/system themes, eight accent colours, 10-band EQ with presets and bass boost |
+| **Look and feel** | Smoked-glass shell over flat content, bundled Manrope and Bricolage Grotesque, emerald default accent, dark/black/light/system themes, eight accent colours, 10-band EQ with presets and bass boost |
 
 ### Screens
 
@@ -105,10 +106,11 @@ for Wayland, keyring, sandbox and troubleshooting details.
 ### First run
 
 1. Sign in with Google on the welcome screen. Auralis opens a separate, visible Chrome window for the Google form and then reads the session from its dedicated profile; the app cannot be used without an account. Sign out from **Settings → Account** to return to this screen.
-2. Open **Settings → Appearance** and choose a theme and accent.
-3. Open **Settings → Downloads** to manage offline audio. The Windows default is `%USERPROFILE%\Music\Auralis` (configurable); the separate Linux 1.0.2 build stores downloads under `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline`.
-4. Configure Last.fm and Discord under **Settings → Integrations** if you use them.
-5. Start typing in the search bar, open **YouTube Music**, or pick something from Home.
+2. Pick a few languages and artists in the taste setup. It is skippable, and **Settings → Music preferences → Edit preferences** reopens it with your current picks.
+3. Open **Settings → Appearance** and choose a theme and accent.
+4. Open **Settings → Downloads** to manage offline audio. The Windows default is `%USERPROFILE%\Music\Auralis` (configurable); the separate Linux 1.0.2 build stores downloads under `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline`.
+5. Configure Last.fm and Discord under **Settings → Integrations** if you use them.
+6. Start typing in the search bar, open **YouTube Music**, or pick something from Home or Explore.
 
 Every section runs on the signed-in session: Home, Search, the cloud library, account history and private playlists. There is no anonymous mode; `AURALIS_SKIP_LOGIN=1` exists only as a local QA bypass.
 
