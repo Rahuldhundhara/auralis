@@ -46,14 +46,6 @@ export function timeAgo(timestamp: number | undefined): string {
   return formatDate(timestamp);
 }
 
-export function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 5) return 'Good night';
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
-}
-
 export function artistsLine(artists?: { name: string }[]): string {
   return (artists || []).map((artist) => artist.name).filter(Boolean).join(', ');
 }

@@ -13,6 +13,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Shuffle,
   Trash2,
   UserRound,
@@ -25,11 +26,13 @@ import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
 import { tracksFromPage } from '../lib/actions';
+import { loadAllYouTubePlaylists } from '../lib/youtube';
 import { useAsync } from '../lib/useAsync';
 import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { MediaCard, ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
+import { YouTubePlaylistCard } from '../components/YouTubePlaylistCard';
 
 type LibraryTab = 'playlists' | 'songs' | 'albums' | 'artists' | 'downloads' | 'youtube';
 
@@ -246,6 +249,58 @@ function YouTubeLibrary() {
   );
 }
 
+function YouTubePlaylistSection({ localPlaylists }: { localPlaylists: LocalPlaylist[] }) {
+  const session = useAppStore((state) => state.session);
+  const { data, loading, error, reload } = useAsync(
+    () => (session.hasCookies ? loadAllYouTubePlaylists() : Promise.resolve([])),
+    [session.hasCookies],
+  );
+  if (!session.hasCookies) return null;
+
+  const linked = new Set(
+    localPlaylists
+      .map((playlist) => playlist.remoteId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const cards = (data || []).filter(
+    (card) => !linked.has(card.id) && !linked.has(card.id.replace(/^VL/, '')),
+  );
+
+  return (
+    <div className="yt-library-playlists">
+      <div className="section-heading">
+        <div>
+          <h2>From YouTube Music</h2>
+          <span className="section-subtitle">
+            Every playlist in your account, live from YouTube Music.
+          </span>
+        </div>
+        <Button variant="outline" size="sm" icon={<RefreshCw size={15} />} onClick={reload} disabled={loading}>
+          Refresh
+        </Button>
+      </div>
+      {loading && !data ? (
+        <div className="yt-inline-loading">
+          <Loader2 size={18} className="spin" /> Loading your YouTube playlists…
+        </div>
+      ) : null}
+      {error && !data ? <ErrorPanel message={error} retry={reload} /> : null}
+      {cards.length ? (
+        <div className="media-grid library-playlist-grid">
+          {cards.map((card) => (
+            <YouTubePlaylistCard key={card.id} card={card} />
+          ))}
+        </div>
+      ) : null}
+      {data && !cards.length && !loading ? (
+        <p className="yt-inline-empty">
+          No YouTube Music playlists found. Playlists you create in YouTube Music will appear here automatically.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
   const tab: LibraryTab = initialTab || 'playlists';
   const library = useAppStore((state) => state.library);
@@ -304,7 +359,7 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
               Shuffle liked
             </Button>
             {session.hasCookies ? (
-              <Button variant="ghost" icon={<History size={16} />} onClick={() => navigate({ page: 'history' })}>
+              <Button variant="ghost" icon={<History size={16} />} onClick={() => navigate({ page: 'youtube', tab: 'history' })}>
                 YouTube history
               </Button>
             ) : null}
@@ -350,7 +405,7 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
           <div className="section-heading">
             <div>
               <h2>Playlists</h2>
-              <span className="section-subtitle">Your own collections, ordered however you like.</span>
+              <span className="section-subtitle">Your own collections, plus every playlist from YouTube Music.</span>
             </div>
             <Button variant="outline" size="sm" icon={<Plus size={16} />} onClick={() => openDialog({ type: 'create-playlist' })}>
               Create
@@ -383,6 +438,8 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
           )}
         </section>
       ) : null}
+
+      {tab === 'playlists' ? <YouTubePlaylistSection localPlaylists={library.playlists} /> : null}
 
       {tab === 'songs' ? (
         <section className="library-section">

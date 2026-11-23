@@ -3,6 +3,7 @@ import type { Settings, Track } from '@shared/types';
 import { useAppStore } from './app';
 import { useUiStore } from './ui';
 import { isTypingTarget, safeJson, shuffleArray } from '../lib/format';
+import { curateRadioTracks, tasteProfile } from '../lib/taste';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -88,6 +89,7 @@ let compressorNode: DynamicsCompressorNode | null = null;
 let limiterNode: DynamicsCompressorNode | null = null;
 let eqNodes: BiquadFilterNode[] = [];
 let masterNode: GainNode | null = null;
+let analyserNode: AnalyserNode | null = null;
 let graphAttempted = false;
 let initialized = false;
 let loadToken = 0;
@@ -119,6 +121,15 @@ function mediaArtwork(track: Track | undefined) {
 export function currentPlaybackPosition(): number {
   if (audio && audio.src && Number.isFinite(audio.currentTime)) return audio.currentTime;
   return usePlayerStore.getState().position;
+}
+
+/**
+ * Live spectrum tap for decorative visualisers. The analyser sits after the
+ * master gain, so the bars follow the actual output including EQ and limiter.
+ * Returns null until the first track builds the audio graph.
+ */
+export function getPlayerAnalyser(): AnalyserNode | null {
+  return analyserNode;
 }
 
 export function isTrackLiked(track?: Track): boolean {
@@ -212,6 +223,9 @@ function buildGraph() {
     limiterNode.attack.value = 0.002;
     limiterNode.release.value = 0.08;
     masterNode = audioContext.createGain();
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 256;
+    analyserNode.smoothingTimeConstant = 0.82;
     eqNodes = EQ_FREQUENCIES.map((frequency) => {
       const filter = audioContext!.createBiquadFilter();
       filter.type = 'peaking';
@@ -230,7 +244,8 @@ function buildGraph() {
     bassNode.connect(compressorNode);
     compressorNode.connect(limiterNode);
     limiterNode.connect(masterNode);
-    masterNode.connect(audioContext.destination);
+    masterNode.connect(analyserNode);
+    analyserNode.connect(audioContext.destination);
     applyDsp(useAppStore.getState().settings);
   } catch {
     audioContext = null;
@@ -240,6 +255,7 @@ function buildGraph() {
     compressorNode = null;
     limiterNode = null;
     masterNode = null;
+    analyserNode = null;
     eqNodes = [];
   }
 }
@@ -683,12 +699,58 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     return get().shuffle ? shuffleArray(tracks) : tracks;
   };
 
+  /** Consecutive taste re-seeds after a station ran dry; capped so sessions still end. */
+  let radioFallbacks = 0;
+
+  /** Title/artist of the track that seeded the current station, for same-name filtering. */
+  let radioSeedInfo: { id: string; title: string; artist: string } | undefined;
+
+  /** Resolves a seed id to its track when it is part of the queue/session. */
+  const seedTrackFor = (id: string): Track | undefined =>
+    get().queue.find((track) => track.id === id) || (get().current?.id === id ? get().current : undefined);
+
+  const seedInfoFor = (seed: string) => {
+    if (radioSeedInfo?.id === seed) return radioSeedInfo;
+    const track = seedTrackFor(seed);
+    return track ? { id: track.id, title: track.title, artist: track.artists[0]?.name || '' } : undefined;
+  };
+
+  /**
+   * Picks a different seed when a station runs out — the same trick Spotify
+   * uses to keep a session going instead of dying on a page. First choice is
+   * a track this session already played, so the station keeps the same
+   * style/language the listener started with; only when the session history
+   * is thin does it fall back to a high-affinity profile seed.
+   */
+  const fallbackSeed = (currentSeed: string): Track | undefined => {
+    const sessionPlayed = get()
+      .queue.slice(0, get().index + 1)
+      .filter((track) => track.id && track.id !== currentSeed);
+    if (sessionPlayed.length) {
+      const ordered = [...sessionPlayed].reverse();
+      return ordered[radioFallbacks % ordered.length];
+    }
+    const library = useAppStore.getState().library;
+    const profile = tasteProfile(library);
+    const existing = new Set(get().queue.map((track) => track.id));
+    const candidates = profile.seedTracks.filter((track) => track.id !== currentSeed && !existing.has(track.id));
+    if (!candidates.length) return undefined;
+    const ordered = [...candidates].sort((a, b) => {
+      const profileA = profile.artistAffinity.get(a.artists[0]?.name.toLowerCase().trim()) || 0;
+      const profileB = profile.artistAffinity.get(b.artists[0]?.name.toLowerCase().trim()) || 0;
+      return profileB - profileA;
+    });
+    return ordered[radioFallbacks % ordered.length];
+  };
+
   const appendRadioPage = async (
     seed: string,
     continuation?: string,
+    seedInfo?: { id: string; title: string; artist: string },
   ): Promise<'added' | 'ended' | 'busy' | 'stale' | 'error'> => {
     if (get().radioLoading) return 'busy';
     set({ radioLoading: true });
+    const info = seedInfo || seedInfoFor(seed);
     let nextToken = continuation;
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -697,8 +759,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           nextToken,
         );
         if (get().radioSeed !== seed) return 'stale';
+        const profile = tasteProfile(useAppStore.getState().library);
+        const curated = curateRadioTracks(result.tracks, profile, Date.now(), {
+          seedTitle: info?.title,
+          seedArtist: info?.artist,
+        });
         const existing = new Set(get().queue.map((track) => track.id));
-        const extra = result.tracks.filter((track) => {
+        const extra = curated.filter((track) => {
           if (existing.has(track.id)) return false;
           existing.add(track.id);
           return true;
@@ -724,6 +791,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         return 'added';
       }
       set({ radioLoading: false, radioContinuation: nextToken });
+      // The station ran dry. Re-seed once or twice before giving up, so the
+      // session continues with fresh material in the same style.
+      if (radioFallbacks < 2) {
+        const nextSeed = fallbackSeed(seed);
+        if (nextSeed) {
+          radioFallbacks += 1;
+          radioSeedInfo = { id: nextSeed.id, title: nextSeed.title, artist: nextSeed.artists[0]?.name || '' };
+          set({ radioSeed: nextSeed.id, radioContinuation: undefined });
+          const result = await appendRadioPage(nextSeed.id, undefined, radioSeedInfo);
+          if (result === 'added') return 'added';
+        }
+      }
       return 'ended';
     } catch (error: any) {
       set({ radioLoading: false });
@@ -842,6 +921,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       } else {
         shuffleBackup = null;
       }
+      // A fresh queue resets the station context: fallback counter and the
+      // seed song used for same-name filtering.
+      radioFallbacks = 0;
+      const seedTrack = options.seed ? list.find((track) => track.id === options.seed) : undefined;
+      radioSeedInfo = seedTrack
+        ? { id: seedTrack.id, title: seedTrack.title, artist: seedTrack.artists[0]?.name || '' }
+        : undefined;
       set({
         queue,
         index,
@@ -864,6 +950,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (player.current?.id === track.id && player.radio && player.radioSeed === track.id && player.radioLoading) return;
       useUiStore.getState().toast(`Starting radio for “${track.title}”…`);
       get().playQueue([track], 0, { radio: true, seed: track.id });
+      radioSeedInfo = { id: track.id, title: track.title, artist: track.artists[0]?.name || '' };
       set({ radioLoading: true });
       try {
         const result = await window.auralis.yt.next({
@@ -871,8 +958,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           playlistId: `RDAMVM${track.id}`,
         });
         if (get().radioSeed !== track.id) return;
+        const profile = tasteProfile(useAppStore.getState().library);
+        const curated = curateRadioTracks(result.tracks, profile, Date.now(), {
+          seedTitle: track.title,
+          seedArtist: track.artists[0]?.name,
+        });
         const existing = new Set(get().queue.map((item) => item.id));
-        const extra = result.tracks.filter((item) => {
+        const extra = curated.filter((item) => {
           if (existing.has(item.id)) return false;
           existing.add(item.id);
           return true;

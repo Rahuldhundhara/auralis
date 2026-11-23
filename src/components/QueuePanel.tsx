@@ -1,10 +1,94 @@
-import { ChevronDown, ChevronUp, ListMusic, MoreHorizontal, Radio, Trash2, X } from 'lucide-react';
+import {
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  Heart,
+  ListMusic,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Radio,
+  X,
+} from 'lucide-react';
 import type { Track } from '@shared/types';
+import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
-import { formatDuration } from '../lib/format';
-import { showTrackMenu } from '../lib/actions';
+import { artistsLine, formatDuration } from '../lib/format';
+import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, EmptyState, IconButton, Spinner } from './primitives';
+
+function QueueNowCard({ track, queueIndex }: { track: Track; queueIndex: number }) {
+  const playing = usePlayerStore((state) => state.playing);
+  const position = usePlayerStore((state) => state.position);
+  const liveDuration = usePlayerStore((state) => state.duration);
+  const liked = useAppStore((state) => state.library.liked.some((item) => item.id === track.id));
+  const duration = liveDuration || track.duration || 0;
+  const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+
+  return (
+    <div className="queue-now">
+      <div className="queue-now-art-wrap">
+        <Artwork src={track.thumbnail} alt={track.title} className="queue-now-art" />
+        <button
+          type="button"
+          className="queue-now-play"
+          aria-label={playing ? 'Pause' : 'Play'}
+          onClick={() => usePlayerStore.getState().toggle()}
+        >
+          {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+        </button>
+      </div>
+      <div className="queue-now-copy">
+        <span className="queue-now-label">
+          <i />
+          {playing ? 'Playing now' : 'Paused'}
+        </span>
+        <strong className="queue-now-title" title={track.title}>
+          {track.title}
+        </strong>
+        <span className="queue-now-artist">{artistsLine(track.artists) || 'YouTube Music'}</span>
+        {track.album?.name ? <span className="queue-now-album">{track.album.name}</span> : null}
+        <div className="queue-now-progress" aria-hidden="true">
+          <span className="queue-now-track">
+            <i style={{ width: `${progress}%` }} />
+          </span>
+          <span className="queue-now-time">
+            {formatDuration(position)} / {formatDuration(duration)}
+          </span>
+        </div>
+        <div className="queue-now-actions">
+          <button
+            type="button"
+            className={`queue-now-action ${liked ? 'is-liked' : ''}`}
+            onClick={() => void toggleLikeTrack(track)}
+          >
+            <Heart size={15} fill={liked ? 'currentColor' : 'none'} />
+            <span>{liked ? 'Liked' : 'Like'}</span>
+          </button>
+          <button
+            type="button"
+            className="queue-now-action is-accent"
+            onClick={() => {
+              useUiStore.getState().setQueueOpen(false);
+              useUiStore.getState().openNowPlaying();
+            }}
+          >
+            <ArrowUpRight size={15} />
+            <span>Open player</span>
+          </button>
+          <IconButton
+            label="More options"
+            size="xs"
+            onClick={(event) => showTrackMenu(track, event, { queueIndex })}
+          >
+            <MoreHorizontal size={15} />
+          </IconButton>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function QueueRow({
   track,
@@ -108,7 +192,11 @@ export function QueueList({ compact = false }: { compact?: boolean }) {
               </span>
             ) : null}
           </div>
-          <QueueRow track={current} queueIndex={index} current />
+          {compact ? (
+            <QueueRow track={current} queueIndex={index} current />
+          ) : (
+            <QueueNowCard track={current} queueIndex={index} />
+          )}
         </section>
       ) : null}
       <section className="queue-section">
@@ -151,11 +239,14 @@ export function QueuePanel() {
   if (!open) return null;
   return (
     <div className="drawer-layer" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}>
-      <aside className="queue-drawer" role="dialog" aria-label="Queue">
+      <aside className="queue-drawer" role="dialog" aria-label="Now playing and queue">
         <header className="drawer-head">
-          <div>
-            <h2>Queue</h2>
-            <span>{count} {count === 1 ? 'track' : 'tracks'}</span>
+          <div className="drawer-head-title">
+            <i className="drawer-live-dot" aria-hidden="true" />
+            <div>
+              <h2>Now playing &amp; queue</h2>
+              <span>{count} {count === 1 ? 'track' : 'tracks'} in this session</span>
+            </div>
           </div>
           <IconButton label="Close queue" size="sm" onClick={() => setOpen(false)}>
             <X size={18} />
@@ -164,19 +255,6 @@ export function QueuePanel() {
         <div className="drawer-body">
           <QueueList />
         </div>
-        <footer className="drawer-foot">
-          <button
-            type="button"
-            className="text-button danger"
-            onClick={() => {
-              const state = usePlayerStore.getState();
-              if (!state.queue.length) return;
-              for (let index = state.queue.length - 1; index > state.index; index--) state.removeQueueAt(index);
-            }}
-          >
-            <Trash2 size={14} /> Clear upcoming
-          </button>
-        </footer>
       </aside>
     </div>
   );

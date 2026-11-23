@@ -15,6 +15,7 @@ const port = 9333;
 const child = spawn(executablePath, [`--user-data-dir=${userData}`, `--remote-debugging-port=${port}`], {
   stdio: 'ignore',
   windowsHide: true,
+  env: { ...process.env, AURALIS_SKIP_LOGIN: '1' },
 });
 
 let browser;

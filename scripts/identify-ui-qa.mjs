@@ -8,7 +8,7 @@ const logs = [];
 const app = await electron.launch({
   args: ['.', `--user-data-dir=${userData}`],
   cwd: process.cwd(),
-  env: { ...process.env, AURALIS_FORCE_PROD: '1' },
+  env: { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_SKIP_LOGIN: '1' },
   timeout: 60000,
 });
 const page = await app.firstWindow({ timeout: 60000 });

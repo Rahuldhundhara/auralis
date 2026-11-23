@@ -4,6 +4,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
+import { proxiedArtwork } from '../lib/artwork';
 import { useAsync } from '../lib/useAsync';
 import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
@@ -39,7 +40,7 @@ export function RecentPage() {
   return (
     <div className="page recent-page">
       <section className="detail-hero detail-hero-recent">
-        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${cover})` } : undefined} aria-hidden="true" />
+        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${proxiedArtwork(cover)})` } : undefined} aria-hidden="true" />
         <div className="detail-hero-inner">
           <div className="detail-cover recent-cover">
             <Artwork src={cover} alt="Recently played" className="detail-art" />
@@ -72,7 +73,7 @@ export function RecentPage() {
                 <Shuffle size={19} />
               </IconButton>
               {session.hasCookies ? (
-                <Button variant="outline" icon={<CirclePlay size={17} />} onClick={() => navigate({ page: 'history' })}>
+                <Button variant="outline" icon={<CirclePlay size={17} />} onClick={() => navigate({ page: 'youtube', tab: 'history' })}>
                   YouTube history
                 </Button>
               ) : null}

@@ -8,7 +8,7 @@ const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-dldir-'));
 const app = await electron.launch({
   args: ['.', `--user-data-dir=${userData}`],
   cwd: process.cwd(),
-  env: { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_DEBUG_DOWNLOAD: '1' },
+  env: { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_DEBUG_DOWNLOAD: '1', AURALIS_SKIP_LOGIN: '1' },
   timeout: 60000,
 });
 app.process().stdout?.on('data', (data) => process.stdout.write(`[main] ${data}`));

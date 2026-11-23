@@ -14,3 +14,14 @@ Auralis-*-android.apk.sha256
 *.aab
 *.jks
 *.keystore
+
+# Live-account QA captures: screenshots and JSON that contain real library data.
+qa/perf/
+qa/youtube/
+qa/moods/
+qa/mood-candidates/
+qa/reco/
+qa/search-radio/
+qa/shell/
+qa/signin/
+qa/hero/

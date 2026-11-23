@@ -16,7 +16,7 @@ const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-upgrade-do
 const app = await electron.launch({
   executablePath,
   args: [`--user-data-dir=${userData}`],
-  env: { ...process.env, AURALIS_QA_DOWNLOAD_DIR: downloadDir },
+  env: { ...process.env, AURALIS_QA_DOWNLOAD_DIR: downloadDir, AURALIS_SKIP_LOGIN: '1' },
   timeout: 90000,
 });
 const page = await app.firstWindow({ timeout: 90000 });
@@ -128,12 +128,23 @@ try {
   check('Media Session mirrors the single playback source', media.title === playerTitle && media.state === 'playing', JSON.stringify(media));
 
   await page.locator('.sidebar-item', { hasText: 'Home' }).first().click();
-  await page.waitForSelector('.quick-rail', { timeout: 15000 });
-  const quick = await page.locator('.quick-rail').evaluate((node) => {
+  await page.waitForSelector('.quick-grid', { timeout: 15000 });
+  const quick = await page.locator('.quick-grid').evaluate((node) => {
     const style = getComputedStyle(node);
-    return { cards: node.children.length, overflowX: style.overflowX, overflowY: style.overflowY };
+    const cards = Array.from(node.querySelectorAll('.quick-card:not(.quick-mix-card)'));
+    return {
+      cards: cards.length,
+      display: style.display,
+      columns: style.gridTemplateColumns.split(' ').filter(Boolean).length,
+      overflowX: style.overflowX,
+      titled: cards.every((card) => Boolean(card.querySelector('.quick-title')?.textContent?.trim())),
+    };
   });
-  check('Jump back in is a horizontal real-history carousel', quick.cards > 0 && quick.overflowX === 'auto', JSON.stringify(quick));
+  check(
+    'Jump back in is a compact real-history grid',
+    quick.cards > 0 && quick.display === 'grid' && quick.columns === 3 && quick.titled,
+    JSON.stringify(quick),
+  );
 
   await page.locator('.sidebar-item', { hasText: 'Search' }).first().click();
   await page.waitForSelector('.search-history-chip', { timeout: 15000 });

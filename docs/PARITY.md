@@ -92,7 +92,7 @@ Auralis targets the day-to-day feature set of the reference Android YouTube Musi
 
 | Feature | Status | Evidence / notes |
 | --- | --- | --- |
-| Google sign-in window | **Ready** | Embedded Google flow in an isolated `persist:auralis-login` partition; cookie capture completes when YouTube Music redirects. |
+| Google sign-in window | **Ready** | Opens a plain, visible Chrome window with Auralis's own `chrome-login` profile (never the user's Chrome data). No DevTools port is used during sign-in, so Google does not flag the browser. Completion is detected from the YouTube Music window title; Chrome is then closed gracefully and a short-lived headless Chrome reads the YouTube cookies. Embedded Google window remains as the fallback when Chrome is missing. |
 | Manual cookie import | **Ready** | Accepts a `Cookie` header string, validates YouTube cookies and stores it encrypted. |
 | Cookie encryption | **Verified** | `safeStorage`/DPAPI encryption path; cookies are never written in plain text when encryption is available. |
 | Last.fm authentication | **Ready** | Browser-token flow, signing, now-playing and scrobbling implemented; needs the user's own API key/secret. |

@@ -18,20 +18,17 @@ import { usePlayerStore, currentPlaybackPosition } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { artistsLine, formatDuration, formatLongDuration } from '../lib/format';
 import { isAndroidShell } from '../lib/platform';
+import { proxiedArtwork, sizedArtwork } from '../lib/artwork';
 import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, Button, IconButton } from './primitives';
 import { SeekBar, TransportControls, VolumeControl } from './PlayerBar';
 import { LyricsPanel } from './LyricsPanel';
 import { QueueList } from './QueuePanel';
 
-function largerAndroidArtwork(src?: string): string | undefined {
-  if (!src || !document.documentElement.classList.contains('is-android')) return src;
-  if (!/googleusercontent\.com|ggpht\.com/.test(src)) return src;
-  if (/=w\d+-h\d+/.test(src)) {
-    return src.replace(/=w\d+-h\d+/, '=w960-h960');
-  }
-  if (/=s\d+/.test(src)) return src.replace(/=s\d+/, '=s960');
-  return src;
+function nowPlayingArtwork(src?: string): string | undefined {
+  // Only this panel asks for a larger decode. The rest of the UI keeps the
+  // 320 px card variant, so covers are not held in memory at two sizes.
+  return sizedArtwork(src, isAndroidShell ? 960 : 640);
 }
 
 function NowPlayingAbout() {
@@ -214,7 +211,7 @@ export function NowPlaying() {
 
   if (!open || !current) return null;
   const downloaded = downloads.some((item) => item.track.id === current.id && item.status === 'done');
-  const artworkSrc = largerAndroidArtwork(current.thumbnail);
+  const artworkSrc = proxiedArtwork(nowPlayingArtwork(current.thumbnail));
 
   return (
     <div className="now-playing" role="dialog" aria-modal="true" aria-label="Now playing">

@@ -49,6 +49,10 @@ interface UiState {
   setNowPlayingTab: (tab: 'lyrics' | 'queue' | 'about') => void;
   openNowPlaying: (tab?: 'lyrics' | 'queue' | 'about') => void;
 
+  onboardingOpen: boolean;
+  setOnboardingOpen: (value: boolean) => void;
+  openOnboarding: () => void;
+
   toasts: Toast[];
   toast: (message: string, kind?: Toast['kind'], action?: Toast['action']) => void;
   dismissToast: (id: string) => void;
@@ -75,6 +79,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   nowPlayingTab: 'queue',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
   openNowPlaying: (tab = 'queue') => set({ nowPlayingTab: tab, nowPlayingOpen: true }),
+
+  onboardingOpen: false,
+  setOnboardingOpen: (value) => set({ onboardingOpen: value }),
+  openOnboarding: () => set({ onboardingOpen: true }),
 
   toasts: [],
   toast: (message, kind = 'info', action) => {

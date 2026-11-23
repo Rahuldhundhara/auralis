@@ -1,4 +1,5 @@
 import {
+  CirclePlay,
   Clock3,
   Compass,
   Download,
@@ -14,6 +15,7 @@ import {
   Search,
   Settings,
   Trash2,
+  UserRound,
 } from 'lucide-react';
 import type { LocalPlaylist } from '@shared/types';
 import { useAppStore } from '../stores/app';
@@ -21,6 +23,7 @@ import { useNavStore } from '../stores/nav';
 import { useUiStore } from '../stores/ui';
 import { confirmDialog, toast } from '../stores/ui';
 import { isAndroidShell } from '../lib/platform';
+import { initials } from '../lib/format';
 import { Artwork, IconButton } from './primitives';
 
 function NavItem({
@@ -62,6 +65,7 @@ export function Sidebar() {
   const navigate = useNavStore((state) => state.navigate);
   const route = useNavStore((state) => state.entries[state.index]);
   const library = useAppStore((state) => state.library);
+  const session = useAppStore((state) => state.session);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const openDialog = useUiStore((state) => state.openDialog);
   const openMenu = useUiStore((state) => state.openMenu);
@@ -100,6 +104,15 @@ export function Sidebar() {
 
   return (
     <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
+      <div className="sidebar-brand">
+        <img src="./icon.png" alt="" className="sidebar-brand-logo" draggable={false} />
+        {!collapsed ? (
+          <div className="sidebar-brand-copy">
+            <strong>Auralis</strong>
+            <span>Music</span>
+          </div>
+        ) : null}
+      </div>
       <div className="sidebar-top">
         <nav className="sidebar-section">
           {!collapsed ? <div className="sidebar-section-title">Discover</div> : null}
@@ -134,6 +147,13 @@ export function Sidebar() {
             collapsed={collapsed}
             active={route.page === 'library'}
             onClick={() => navigate({ page: 'library' })}
+          />
+          <NavItem
+            icon={<CirclePlay size={20} />}
+            label="YouTube Music"
+            collapsed={collapsed}
+            active={route.page === 'youtube'}
+            onClick={() => navigate({ page: 'youtube' })}
           />
           <NavItem
             icon={<Heart size={20} />}
@@ -213,6 +233,27 @@ export function Sidebar() {
       ) : null}
 
       <div className="sidebar-footer">
+        <button
+          type="button"
+          className={`sidebar-account ${collapsed ? 'is-collapsed' : ''} ${session.hasCookies ? 'is-connected' : ''}`}
+          onClick={() => navigate({ page: 'settings', tab: 'account' })}
+          title={collapsed ? (session.hasCookies ? session.account?.name || 'Account' : 'Sign in') : undefined}
+        >
+          {session.account?.thumbnailUrl ? (
+            <Artwork src={session.account.thumbnailUrl} alt="" round className="sidebar-account-avatar" />
+          ) : (
+            <span className="sidebar-account-avatar is-fallback">
+              {session.account ? initials(session.account.name) : <UserRound size={16} />}
+            </span>
+          )}
+          {!collapsed ? (
+            <span className="sidebar-account-copy">
+              <strong>{session.account?.name || (session.hasCookies ? 'YouTube Music' : 'Sign in')}</strong>
+              <span>{session.hasCookies ? session.account?.channelHandle || 'YouTube Music connected' : 'Connect your account'}</span>
+            </span>
+          ) : null}
+          {!collapsed ? <span className="sidebar-account-state" aria-hidden="true" /> : null}
+        </button>
         <NavItem
           icon={<Settings size={20} />}
           label="Settings"

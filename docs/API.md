@@ -86,7 +86,7 @@ Download progress arrives asynchronously through `events.onDownloadProgress`.
 | Method | Endpoint / behaviour |
 | --- | --- |
 | `session()` | Current cookie/account state, visitor data and auth user. |
-| `login()` | Opens the embedded Google sign-in window and captures YouTube cookies. |
+| `login()` | Opens a visible Chrome sign-in window on Auralis's dedicated profile (no DevTools port), detects the YouTube Music redirect, then reads the YouTube cookies with a short-lived headless Chrome. |
 | `setCookies(cookie)` | Validates and stores a manually pasted cookie header. |
 | `clearSession()` | Clears cookies and account metadata. |
 | `home(continuation?)` | `FEmusic_home`; follows continuation tokens. |
@@ -298,6 +298,6 @@ The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). 
 
 - YouTube Music's web client version and API key change occasionally. If browsing breaks while the website works, update `CLIENT_VERSION` and `API_KEY` in `innertube.ts`.
 - YouTube's stream URLs are short-lived and IP-bound. Auralis caches them for 90 minutes and invalidates on demand; switching networks may require replaying the track.
-- Signing into Google inside an embedded browser can be restricted by Google. Manual cookie import is the supported fallback.
+- Desktop sign-in opens a plain, visible Chrome window with Auralis's own `chrome-login` profile; the user's main Chrome profile is never read or modified, and no DevTools port is used while Google's page is open. When the window title reaches YouTube Music, Auralis closes Chrome gracefully and reads only the YouTube cookies with a short-lived headless Chrome. If Chrome is missing, an embedded Google window is used. Manual cookie import remains available from the cookie dialog.
 - The official transcript endpoint currently responds with HTTP 400 for this client version. Captions through yt-dlp are the fallback.
 - yt-dlp is updated independently of the app. Use Settings → About or replace the binary when formats change.

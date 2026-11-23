@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Sun,
   Terminal,
   Trash2,
@@ -36,7 +37,9 @@ import { useAppStore } from '../stores/app';
 import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
+import { proxiedArtwork } from '../lib/artwork';
 import { TRANSLATION_LANGUAGES } from '../lib/languages';
+import { languageSummary } from '../lib/onboarding';
 import { isAndroidShell } from '../lib/platform';
 import { Button, IconButton, Range } from '../components/primitives';
 
@@ -94,6 +97,7 @@ const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
 ];
 
 const ACCENTS = [
+  { value: '#10b981', label: 'Emerald' },
   { value: '#8ab4f8', label: 'Auralis blue' },
   { value: '#7de2ff', label: 'Ice' },
   { value: '#c39bff', label: 'Violet' },
@@ -234,6 +238,17 @@ function GeneralTab() {
   const settings = useAppStore((state) => state.settings);
   const update = useAppStore((state) => state.updateSettings);
   const reset = useAppStore((state) => state.resetSettings);
+  const openOnboarding = useUiStore((state) => state.openOnboarding);
+
+  const tasteLanguages = settings.tasteLanguages ?? [];
+  const tasteArtists = settings.tasteArtists ?? [];
+  const tasteDescription = `${
+    tasteLanguages.length ? languageSummary(tasteLanguages, 4) : 'No languages picked yet'
+  } · ${
+    tasteArtists.length
+      ? `${tasteArtists.length} ${tasteArtists.length === 1 ? 'artist' : 'artists'}`
+      : 'no artists yet'
+  }`;
 
   return (
     <>
@@ -262,6 +277,21 @@ function GeneralTab() {
             <option value="explore">Explore</option>
             <option value="library">Library</option>
           </Select>
+        </SettingRow>
+      </SettingsCard>
+
+      <SettingsCard
+        title="Music preferences"
+        description="The languages and artists behind the Your artists shelf on Home."
+        icon={<Sparkles size={19} />}
+      >
+        <SettingRow
+          label="Your taste"
+          description={tasteDescription}
+        >
+          <Button variant="secondary" size="sm" onClick={openOnboarding}>
+            Edit preferences
+          </Button>
         </SettingRow>
       </SettingsCard>
 
@@ -1067,11 +1097,11 @@ function AccountTab() {
 
   return (
     <>
-      <SettingsCard title="YouTube Music" description="Auralis signs in with a private Google window and stores only the cookies it needs." icon={<CirclePlay size={19} />}>
+      <SettingsCard title="YouTube Music" description="Auralis opens a real Chrome window for Google sign-in and stores only the YouTube cookies it needs." icon={<CirclePlay size={19} />}>
         {session.hasCookies ? (
           <div className="account-card">
             {session.account?.thumbnailUrl ? (
-              <img src={session.account.thumbnailUrl} alt="" className="account-card-avatar" />
+              <img src={proxiedArtwork(session.account.thumbnailUrl)} alt="" className="account-card-avatar" />
             ) : (
               <span className="account-card-avatar account-card-fallback">
                 <UserRound size={30} />
@@ -1102,15 +1132,20 @@ function AccountTab() {
             <div>
               <h2>Connect your YouTube Music account</h2>
               <p>
-                Sign in to like songs, edit playlists, view your history and sync everything with the YouTube Music app. Auralis uses a
-                separate Google window and never sees your password.
+                Sign in with the Google account you already use in Chrome. Auralis opens a Chrome window for the
+                sign-in and never sees your password.
               </p>
             </div>
             <div className="account-empty-actions">
-              <Button variant="primary" icon={<LogIn size={16} />} onClick={() => void signIn()} disabled={busy}>
+              <Button
+                variant="primary"
+                icon={<LogIn size={16} />}
+                onClick={() => void signIn()}
+                disabled={busy}
+              >
                 {busy ? 'Waiting for sign in…' : 'Sign in with Google'}
               </Button>
-              <Button variant="outline" onClick={() => openDialog({ type: 'cookie' })}>
+              <Button variant="ghost" onClick={() => openDialog({ type: 'cookie' })} disabled={busy}>
                 Paste cookies
               </Button>
             </div>

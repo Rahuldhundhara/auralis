@@ -24,6 +24,12 @@ import { lyricsService } from './services/lyrics';
 import { lastfm } from './services/lastfm';
 import { discord } from './services/discord';
 import { recognition } from './services/shazam';
+import {
+  clearChromeLoginProfile,
+  disposeChromeLogin,
+  findChrome,
+  openChromeLogin,
+} from './services/chromeLogin';
 import { libraryService, setLibraryChangeHandler } from './services/library';
 import {
   DEFAULT_SETTINGS,
@@ -48,6 +54,11 @@ let loginWindow: BrowserWindow | null = null;
 
 app.setAppUserModelId(APP_ID);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// Chromium otherwise grows its HTTP/media cache without a practical ceiling.
+// Keep it useful for repeat artwork and streams but bounded on disk and in the
+// cache index; 307 MB was measured in a real profile before this limit.
+app.commandLine.appendSwitch('disk-cache-size', String(128 * 1024 * 1024));
+app.commandLine.appendSwitch('media-cache-size', String(64 * 1024 * 1024));
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -164,7 +175,7 @@ function createWindow() {
     minHeight: 680,
     show: false,
     frame: false,
-    backgroundColor: settings.theme === 'light' ? '#f6f5f8' : '#0b0b0f',
+    backgroundColor: settings.theme === 'light' ? '#f5f4f8' : '#090b0e',
     title: 'Auralis',
     icon: iconPath() || undefined,
     webPreferences: {
@@ -173,7 +184,10 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       webSecurity: true,
-      backgroundThrottling: false,
+      // Keep audio running when the window is hidden, but let Chromium throttle
+      // timers, animation frames and layout in the tray instead of rendering a
+      // full-rate UI nobody can see.
+      backgroundThrottling: true,
       spellcheck: false,
     },
   });
@@ -211,7 +225,11 @@ function createWindow() {
 
   if (isDev) {
     void mainWindow.loadURL(devUrl);
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    // DevTools costs a separate renderer and a lot of memory. Open it only
+    // when explicitly requested instead of on every `npm run dev`.
+    if (process.env.AURALIS_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
   } else {
     void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
@@ -282,10 +300,201 @@ function isAllowedLocalMedia(filePath: string): boolean {
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/* Artwork image pipeline (auralis-media://image/<base64url>)                  */
+/* -------------------------------------------------------------------------- */
+
+const IMAGE_CACHE_DIR = path.join(userDataDir(), 'image-cache');
+const IMAGE_CACHE_MAX_FILES = 400;
+const IMAGE_CACHE_VERSION = '2';
+const IMAGE_MEMORY_MAX_BYTES = 16 * 1024 * 1024;
+const DISK_CACHE_VERSION = '2';
+const IMAGE_HOST_ALLOWLIST = /(^|\.)(ytimg\.com|googleusercontent\.com|ggpht\.com)$/i;
+const imageMemoryCache = new Map<string, { body: Buffer; type: string }>();
+let imageMemoryBytes = 0;
+let imageCacheWrites = 0;
+
+/** Inserts into the in-memory image cache and evicts oldest entries over budget. */
+function rememberImage(key: string, entry: { body: Buffer; type: string }) {
+  const existing = imageMemoryCache.get(key);
+  if (existing) {
+    imageMemoryBytes -= existing.body.length;
+    imageMemoryCache.delete(key);
+  }
+  imageMemoryCache.set(key, entry);
+  imageMemoryBytes += entry.body.length;
+  while (
+    (imageMemoryBytes > IMAGE_MEMORY_MAX_BYTES || imageMemoryCache.size > 200) &&
+    imageMemoryCache.size > 1
+  ) {
+    const oldestKey = imageMemoryCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldest = imageMemoryCache.get(oldestKey);
+    if (oldest) imageMemoryBytes -= oldest.body.length;
+    imageMemoryCache.delete(oldestKey);
+  }
+}
+
+function imageExtension(type: string): string {
+  if (type.includes('webp')) return 'webp';
+  if (type.includes('png')) return 'png';
+  if (type.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+function imageResponse(body: Buffer, type: string): Response {
+  return new Response(new Uint8Array(body), {
+    status: 200,
+    headers: {
+      'Content-Type': type,
+      'Content-Length': String(body.length),
+      'Cache-Control': 'max-age=86400',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+/** Reads a cached image from disk, warming the memory cache on a hit. */
+function readDiskImage(key: string): { body: Buffer; type: string } | undefined {
+  try {
+    const entries = fs.readdirSync(IMAGE_CACHE_DIR).filter((file) => file.startsWith(`${key}.`));
+    for (const entry of entries) {
+      const body = fs.readFileSync(path.join(IMAGE_CACHE_DIR, entry));
+      const type = entry.endsWith('.webp') ? 'image/webp' : entry.endsWith('.png') ? 'image/png' : entry.endsWith('.gif') ? 'image/gif' : 'image/jpeg';
+      rememberImage(key, { body, type });
+      return { body, type };
+    }
+  } catch {
+    // Cache misses are normal; ignore read errors.
+  }
+  return undefined;
+}
+
+/**
+ * Drops artwork cached before the thumbnail-size change. The cache is only a
+ * convenience, so a one-time clear is safe and removes hundreds of oversized
+ * 1200 px files left behind by older versions.
+ */
+function ensureImageCacheVersion() {
+  try {
+    fs.mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
+    const marker = path.join(IMAGE_CACHE_DIR, '.version');
+    const current = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+    if (current === IMAGE_CACHE_VERSION) return;
+    for (const file of fs.readdirSync(IMAGE_CACHE_DIR)) {
+      if (file === '.version') continue;
+      fs.rmSync(path.join(IMAGE_CACHE_DIR, file), { force: true, recursive: true });
+    }
+    fs.writeFileSync(marker, IMAGE_CACHE_VERSION);
+  } catch {
+    // Cache cleanup is best effort.
+  }
+}
+
+/**
+ * One-time cleanup for profiles that grew before the disk-cache limit existed.
+ * Runs after the window is usable so it never delays startup.
+ */
+async function trimBrowserCacheOnce() {
+  const marker = path.join(userDataDir(), '.cache-version');
+  try {
+    const current = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+    if (current === DISK_CACHE_VERSION) return;
+    await session.defaultSession.clearCache();
+    fs.writeFileSync(marker, DISK_CACHE_VERSION);
+  } catch {
+    // Clearing the HTTP cache is best effort.
+  }
+}
+
+/** Keeps the disk cache bounded; oldest files go first. */
+function pruneImageCache() {
+  try {
+    fs.mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
+    const files = fs
+      .readdirSync(IMAGE_CACHE_DIR)
+      .filter((file) => file !== '.version')
+      .map((file) => {
+        const full = path.join(IMAGE_CACHE_DIR, file);
+        return { full, mtime: fs.statSync(full).mtimeMs };
+      })
+      .sort((a, b) => a.mtime - b.mtime);
+    if (files.length <= IMAGE_CACHE_MAX_FILES) return;
+    for (const file of files.slice(0, files.length - IMAGE_CACHE_MAX_FILES)) {
+      fs.rmSync(file.full, { force: true });
+    }
+  } catch {
+    // A full or unwritable cache must never break artwork rendering.
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function fetchProxiedImage(remote: string): Promise<Response> {
+  const parsed = new URL(remote);
+  if (!/^https:$/i.test(parsed.protocol) || !IMAGE_HOST_ALLOWLIST.test(parsed.hostname)) {
+    return new Response('Forbidden', { status: 403, headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
+  const key = Buffer.from(remote).toString('base64url');
+  const memory = imageMemoryCache.get(key);
+  if (memory) return imageResponse(memory.body, memory.type);
+
+  const disk = readDiskImage(key);
+  if (disk) return imageResponse(disk.body, disk.type);
+
+  const headers: Record<string, string> = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+    Referer: 'https://music.youtube.com/',
+  };
+
+  // Two attempts with a short backoff: ytimg occasionally drops the first
+  // request, and a spinner that recovers itself beats a broken cover.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await net.fetch(remote, { headers });
+      const type = (response.headers.get('content-type') || 'image/jpeg').split(';')[0];
+      if (!response.ok || !type.startsWith('image/')) {
+        if (attempt === 0) {
+          await sleep(350);
+          continue;
+        }
+        return new Response('Image unavailable', { status: 502, headers: { 'Access-Control-Allow-Origin': '*' } });
+      }
+      const body = Buffer.from(await response.arrayBuffer());
+      rememberImage(key, { body, type });
+      imageCacheWrites += 1;
+      try {
+        fs.mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
+        fs.writeFileSync(path.join(IMAGE_CACHE_DIR, `${key}.${imageExtension(type)}`), body);
+        if (imageCacheWrites % 64 === 0) pruneImageCache();
+      } catch {
+        // Disk caching is best effort.
+      }
+      return imageResponse(body, type);
+    } catch {
+      if (attempt === 0) await sleep(350);
+    }
+  }
+  // CORS-wrapped 502 so the renderer's onError fires and the fallback renders.
+  return new Response('Image fetch failed', { status: 502, headers: { 'Access-Control-Allow-Origin': '*' } });
+}
+
 function registerMediaProtocol() {
+  ensureImageCacheVersion();
   protocol.handle('auralis-media', async (request) => {
     try {
       const url = new URL(request.url);
+      if (url.host === 'image') {
+        const encoded = url.pathname.replace(/^\//, '');
+        try {
+          const remote = Buffer.from(encoded, 'base64url').toString('utf8');
+          if (!remote) return new Response('Bad request', { status: 400 });
+          return await fetchProxiedImage(remote);
+        } catch {
+          return new Response('Bad request', { status: 400 });
+        }
+      }
       if (url.host === 'local') {
         const filePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
         if (!isAllowedLocalMedia(filePath)) {
@@ -365,12 +574,23 @@ function withCors(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function openLoginWindow(): Promise<SessionState> {
+const LOGIN_PARTITION = 'persist:auralis-login';
+
+/** Drops the sign-in window's cookie jar; the saved app session is unaffected. */
+async function clearLoginPartition(): Promise<void> {
+  try {
+    await session.fromPartition(LOGIN_PARTITION).clearStorageData({ storages: ['cookies'] });
+  } catch {
+    // Best effort: signing out must still succeed if the partition is locked.
+  }
+}
+
+async function openEmbeddedLoginWindow(): Promise<SessionState> {
   if (loginWindow) {
     loginWindow.focus();
     return ytm.session();
   }
-  const partition = 'persist:auralis-login';
+  const partition = LOGIN_PARTITION;
   const loginSession = session.fromPartition(partition);
   const userAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
@@ -393,43 +613,72 @@ async function openLoginWindow(): Promise<SessionState> {
 
   return new Promise<SessionState>((resolve) => {
     let settled = false;
+    let pending: Promise<boolean> | null = null;
+    let poller: NodeJS.Timeout | undefined;
     const complete = (state: SessionState) => {
       if (settled) return;
       settled = true;
+      if (poller) clearInterval(poller);
       resolve(state);
     };
-    const finish = async () => {
-      try {
-        const cookies = await loginSession.cookies.get({ domain: '.youtube.com' });
-        const names = new Map<string, string>();
-        for (const cookie of cookies) {
-          if (!cookie.name || !cookie.value) continue;
-          if (cookie.domain?.includes('youtube.com')) names.set(cookie.name, cookie.value);
+    // Reads the YouTube auth cookies from the login partition and, once they
+    // exist, adopts them as the app session. Runs on every navigation, on a
+    // short poll (Google's flow finishes with client-side routing, so a
+    // navigation event alone is not reliable) and once when the window
+    // closes.
+    const finish = (): Promise<boolean> => {
+      if (settled) return Promise.resolve(false);
+      if (pending) return pending;
+      pending = (async () => {
+        try {
+          const cookies = await loginSession.cookies.get({});
+          const names = new Map<string, string>();
+          for (const cookie of cookies) {
+            if (!cookie.name || !cookie.value) continue;
+            if (cookie.domain?.includes('youtube.com')) names.set(cookie.name, cookie.value);
+          }
+          if (!names.has('SAPISID') && !names.has('__Secure-3PAPISID') && !names.has('SID')) return false;
+          const cookie = [...names.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+          const state = await ytm.setCookies(cookie);
+          // The app session now owns these cookies. Dropping the copy in the
+          // login partition keeps a later sign-out from silently signing the
+          // same account back in when the window is reopened.
+          await clearLoginPartition();
+          broadcast('session-change', state);
+          complete(state);
+          loginWindow?.close();
+          loginWindow = null;
+          return true;
+        } catch {
+          return false;
+        } finally {
+          pending = null;
         }
-        if (!names.has('SAPISID') && !names.has('__Secure-3PAPISID') && !names.has('SID')) return false;
-        const cookie = [...names.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
-        const state = await ytm.setCookies(cookie);
-        broadcast('session-change', state);
-        complete(state);
-        loginWindow?.close();
-        loginWindow = null;
-        return true;
-      } catch {
-        return false;
-      }
+      })();
+      return pending;
     };
 
-    loginWindow!.webContents.on('did-navigate', async (_event, url) => {
-      if (!/^https:\/\/(music|www)\.youtube\.com\//.test(url)) return;
-      await finish();
+    const isYoutube = (url: string) => /^https:\/\/([a-z0-9-]+\.)*youtube\.com\//i.test(url);
+    loginWindow!.webContents.on('did-navigate', (_event, url) => {
+      if (isYoutube(url)) void finish();
     });
-    loginWindow!.webContents.on('did-redirect-navigation', async (_event, url) => {
-      if (!/^https:\/\/(music|www)\.youtube\.com\//.test(url)) return;
-      await finish();
+    loginWindow!.webContents.on('did-navigate-in-page', (_event, url) => {
+      if (isYoutube(url)) void finish();
     });
+    loginWindow!.webContents.on('did-redirect-navigation', (_event, url) => {
+      if (isYoutube(url)) void finish();
+    });
+    poller = setInterval(() => {
+      void finish();
+    }, 1500);
     loginWindow!.on('closed', () => {
-      loginWindow = null;
-      complete(ytm.session());
+      void (async () => {
+        // The listener has to outlive the window: a user can close it right
+        // after the redirect, and the cookies are still readable.
+        const done = await finish().catch(() => false);
+        loginWindow = null;
+        if (!done) complete(ytm.session());
+      })();
     });
     loginWindow!.loadURL(
       'https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F&flowName=GlifWebSignIn',
@@ -438,6 +687,27 @@ async function openLoginWindow(): Promise<SessionState> {
       complete(ytm.session());
     });
   });
+}
+
+/**
+ * Sign-in entry point. On a desktop with Chrome installed, a real Chrome
+ * window opens with a profile owned by Auralis; the user signs in to Google
+ * there and Auralis copies only the YouTube cookies into the app session.
+ * The embedded window is a fallback for machines without Chrome.
+ */
+async function openLoginWindow(): Promise<SessionState> {
+  if (!findChrome()) return openEmbeddedLoginWindow();
+  try {
+    const state = await openChromeLogin();
+    if (state.hasCookies) {
+      await clearLoginPartition();
+      broadcast('session-change', state);
+    }
+    return state;
+  } catch (error) {
+    console.warn('[auralis] Chrome sign-in failed, using the embedded window', error);
+    return openEmbeddedLoginWindow();
+  }
 }
 
 function settingsPatchHandlers() {
@@ -501,6 +771,7 @@ function registerIpc() {
       downloadsDir: resolvedDownloads,
       ytDlpVersion,
       ffmpegAvailable,
+      skipLogin: process.env.AURALIS_SKIP_LOGIN === '1',
     };
   });
   ipcMain.handle('app:minimize', () => mainWindow?.minimize());
@@ -592,7 +863,11 @@ function registerIpc() {
 
   ipcMain.handle('yt:session', () => ytm.session());
   ipcMain.handle('yt:set-cookies', (_event, cookie: string) => ytm.setCookies(sanitizeCookieString(cookie)));
-  ipcMain.handle('yt:clear-session', () => ytm.clearSession());
+  ipcMain.handle('yt:clear-session', async () => {
+    await clearLoginPartition();
+    await clearChromeLoginProfile();
+    return ytm.clearSession();
+  });
   ipcMain.handle('yt:login', () => openLoginWindow());
   ipcMain.handle('yt:home', (_event, continuation?: string) => ytm.home(continuation));
   ipcMain.handle('yt:explore', () => ytm.explore());
@@ -695,6 +970,21 @@ async function bootstrap() {
   app.on('second-instance', () => showWindow());
   if (!settingsStore.get().hardwareAcceleration) app.disableHardwareAcceleration();
   await app.whenReady();
+  // safeStorage is only usable after the app is ready on Windows. The
+  // Innertube client copies the session when the module is imported, so
+  // refresh it here — otherwise a valid encrypted cookie looks signed out
+  // on every cold start.
+  innertube.refreshSession();
+  if (innertube.hasCookies && !sessionStore.account) {
+    void ytm
+      .account()
+      .then((account) => {
+        if (!account) return;
+        sessionStore.account = account;
+        broadcast('session-change', ytm.session());
+      })
+      .catch(() => undefined);
+  }
   applyTheme(settingsStore.get().theme);
   registerMediaProtocol();
   registerIpc();
@@ -703,6 +993,9 @@ async function bootstrap() {
   createWindow();
   createTray();
   registerShortcuts();
+  setTimeout(() => {
+    void trimBrowserCacheOnce();
+  }, 15000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -712,6 +1005,7 @@ async function bootstrap() {
 
 app.on('before-quit', () => {
   quitting = true;
+  disposeChromeLogin();
   flushStores();
   void discord.clear();
   // A second instance quits before Electron is ready. Calling globalShortcut

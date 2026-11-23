@@ -63,7 +63,45 @@ export function pageTypeOf(value: Raw): string | undefined {
   );
 }
 
-export function thumbnailsOf(value: Raw): string | undefined {
+const THUMBNAIL_MAX = 320;
+
+/**
+ * YouTube's CDN puts the decode size in the URL: the last `=` segment is a
+ * list like `w1200-h1200-l90-rj` or `s1200-c-k`, and static video posters use
+ * `maxresdefault.jpg` / `hq720.jpg`. Cards render around 180 px, so decoding
+ * the 1200 px variant wastes several MB of renderer and GPU memory per image.
+ * Clamp at parse time; Now Playing can still request a larger variant from the
+ * same URL because only the size parameter changes.
+ */
+export function optimizedThumbnail(url: string, max = THUMBNAIL_MAX): string {
+  let output = url;
+  const equals = output.lastIndexOf('=');
+  if (equals !== -1) {
+    const head = output.slice(0, equals + 1);
+    const parts = output.slice(equals + 1).split('-');
+    let changed = false;
+    const next = parts.map((part) => {
+      const match = /^([whs])(\d+)$/.exec(part);
+      if (!match) return part;
+      const value = Number(match[2]);
+      if (!Number.isFinite(value) || value <= max) return part;
+      changed = true;
+      return `${match[1]}${max}`;
+    });
+    if (changed) output = head + next.join('-');
+  }
+  // `maxresdefault` is 1280x720 and `sddefault` 640x480. `mqdefault` is
+  // 320x180 and exists for every video, including ones that never got a
+  // max-res poster. A card renders near 180-220 px, so this is the right
+  // decode size; Now Playing asks for `sddefault` from the same URL.
+  output = output.replace(
+    /\/(maxresdefault|hq720|sddefault|hqdefault)\.(jpg|webp)(?=($|[?&]))/i,
+    '/mqdefault.$2',
+  );
+  return output;
+}
+
+export function thumbnailsOf(value: Raw, max = THUMBNAIL_MAX): string | undefined {
   const lists: Raw[] = [];
   const walk = (node: Raw, depth = 0) => {
     if (!node || typeof node !== 'object' || depth > 8) return;
@@ -79,7 +117,7 @@ export function thumbnailsOf(value: Raw): string | undefined {
   flat.sort((a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0));
   let url: string = flat[0].url;
   if (url.startsWith('//')) url = `https:${url}`;
-  return url;
+  return optimizedThumbnail(url, max);
 }
 
 export function parseDuration(text: string): number {
@@ -111,7 +149,9 @@ function navigationPageType(renderer: Raw): string | undefined {
   return (
     pageTypeOf(firstEndpointNav(renderer)) ||
     pageTypeOf(renderer?.title) ||
+    pageTypeOf(renderer?.title?.runs?.[0]?.navigationEndpoint) ||
     pageTypeOf(renderer?.subtitle) ||
+    pageTypeOf(renderer?.onTap) ||
     undefined
   );
 }
@@ -270,7 +310,14 @@ export function parseResponsiveItem(
     renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
       ?.playNavigationEndpoint?.watchEndpoint?.videoId;
   if (!title) return undefined;
-  const type: Track['type'] = fallbackType || (renderer?.playlistItemData?.videoId ? 'song' : 'video');
+  const videoType =
+    nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+  const isMusicVideo = videoType === 'MUSIC_VIDEO_TYPE_OMV';
+  const isUgcVideo = Boolean(videoType && videoType !== 'MUSIC_VIDEO_TYPE_ATV' && !isMusicVideo);
+  let type: Track['type'] = fallbackType || (renderer?.playlistItemData?.videoId ? 'song' : 'video');
+  // Official music videos inside a playlist are still playlist songs; UGC
+  // clips are real videos and stay out of the songs-only lists.
+  if (!fallbackType && isUgcVideo) type = 'video';
   const subtitleRuns: Raw[] = [];
   for (const column of renderer.flexColumns || []) {
     const runs = column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
@@ -285,8 +332,6 @@ export function parseResponsiveItem(
   const duration = parsedSubtitle.duration || parseDuration(fixed);
   const id = watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId;
   if (!id) return undefined;
-  const videoType =
-    nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
   const context = parsePlaylistContext(renderer);
   return {
     id,
@@ -318,18 +363,46 @@ export function parseTwoRowItem(renderer: Raw): Card | undefined {
   if (type === 'playlist' && subtitle.startsWith('Album')) type = 'album';
   if (subtitle.startsWith('Single')) type = 'single';
   if (subtitle.startsWith('EP')) type = 'ep';
+  const parsedSubtitle = parseSubtitleRuns(renderer.subtitle?.runs || []);
+  // Home shelves such as "Music videos for you" are two-row cards whose
+  // navigation is a watchEndpoint, not a browseEndpoint. Treating them as
+  // playlists sent the player to a nonexistent VL<videoId> page.
+  if (endpoint?.videoId && !endpoint.browseId) {
+    const videoType = nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+    type = videoType === 'MUSIC_VIDEO_TYPE_ATV' ? 'song' : 'video';
+  }
+  const thumbnail = thumbnailsOf(renderer.thumbnailRenderer || renderer.thumbnail);
+  const artists =
+    parsedSubtitle.artists.length || !subtitle
+      ? parsedSubtitle.artists
+      : [{ name: subtitle.split('•')[0].trim() }].filter((artist) => artist.name);
+  const track: Track | undefined = endpoint?.videoId
+    ? {
+        id: endpoint.videoId,
+        type: type === 'video' ? 'video' : 'song',
+        title,
+        artists,
+        duration: 0,
+        thumbnail,
+        explicit: explicitOf(renderer),
+        isVideo: type === 'video',
+        playlistId: endpoint.playlistId,
+        source: 'youtube',
+      }
+    : undefined;
   return {
     type,
     id,
     title,
     subtitle,
-    thumbnail: thumbnailsOf(renderer.thumbnailRenderer || renderer.thumbnail),
+    thumbnail,
     round: type === 'artist',
     explicit: explicitOf(renderer),
     browseId: endpoint?.browseId,
     params: endpoint?.params,
-    artists: parseSubtitleRuns(renderer.subtitle?.runs || []).artists,
-    year: parseSubtitleRuns(renderer.subtitle?.runs || []).year,
+    artists,
+    year: parsedSubtitle.year,
+    track,
     trackCount: (() => {
       const match = subtitle.match(/(\d+)\s+(songs?|tracks?|episodes?)/i);
       return match ? Number(match[1]) : undefined;
@@ -647,8 +720,8 @@ function parseHeaderInternal(renderer: Raw, expected: PageHeader['type']): PageH
   if (subtitle) meta.unshift(subtitle);
   const thumb =
     thumbnailsOf(renderer.thumbnail) ||
-    thumbnailsOf(renderer.heroImage?.image?.sources) ||
-    thumbnailsOf(renderer.foregroundThumbnail);
+    thumbnailsOf(renderer.heroImage?.image?.sources, 960) ||
+    thumbnailsOf(renderer.foregroundThumbnail, 960);
   const trackCountMatch = secondSubtitle.match(/(\d+)\s+(songs?|tracks?|episodes?)/i);
   const yearMatch = secondSubtitle.match(/\b(19|20)\d{2}\b/) || subtitle.match(/\b(19|20)\d{2}\b/);
   const duration = parseLongDuration(secondSubtitle);
@@ -809,11 +882,26 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
   const endpoint = endpointOf(nav);
   const id = endpoint?.browseId || endpoint?.videoId;
   if (!id) return undefined;
-  const type = typeFromPageType(navigationPageType(renderer), typeFromId(id, 'song'));
+  const pageType = pageTypeOf(nav) || navigationPageType(renderer);
+  const type = typeFromPageType(pageType, typeFromId(id, 'song'));
   const subtitle = textOf(renderer?.subtitle).trim();
   const thumbnail = thumbnailsOf(renderer?.thumbnailRenderer || renderer?.thumbnail);
   const parsedSubtitle = parseSubtitleRuns(renderer?.subtitle?.runs || []);
-  const videoId = type === 'episode' && id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
+  // The top-result card can point at a `MPED…` page whose real video id lives
+  // in the play button. Read that first so the card queue gets a playable id
+  // instead of the page browse id (which the player cannot stream).
+  const playNav =
+    renderer?.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint ||
+    renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint ||
+    renderer?.buttons?.find((button: Raw) => button?.buttonRenderer?.command?.watchEndpoint)?.buttonRenderer
+      ?.command;
+  const videoId =
+    endpointOf(playNav)?.videoId ||
+    endpoint?.videoId ||
+    (id.startsWith('MPED') && id.length > 4 ? id.slice(4) : undefined);
+  const playable = type === 'song' || type === 'video' || type === 'episode';
   return {
     type,
     id,
@@ -822,17 +910,18 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
     thumbnail,
     round: type === 'artist',
     browseId: id.startsWith('MPED') ? id : undefined,
-    track: videoId
-      ? {
-          id: videoId,
-          type: 'episode',
-          title,
-          artists: parsedSubtitle.artists,
-          duration: parsedSubtitle.duration,
-          thumbnail,
-          source: 'youtube',
-        }
-      : undefined,
+    track:
+      videoId && playable
+        ? {
+            id: videoId,
+            type: type === 'video' ? 'video' : type === 'song' ? 'song' : 'episode',
+            title,
+            artists: parsedSubtitle.artists,
+            duration: parsedSubtitle.duration,
+            thumbnail,
+            source: 'youtube',
+          }
+        : undefined,
   };
 }
 

@@ -32,10 +32,13 @@ export function downloadsDir(): string {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#8ab4f8',
+  accent: '#10b981',
   language: 'en',
   region: 'US',
   startPage: 'home',
+  tasteLanguages: [],
+  tasteArtists: [],
+  onboardingComplete: false,
   audioQuality: 'auto',
   volume: 0.9,
   muted: false,
@@ -190,6 +193,8 @@ export const settingsStore = new JsonFile<Settings>(path.join(userDataDir(), 'se
   if (!Array.isArray(merged.eq?.bands) || merged.eq.bands.length !== 10) {
     merged.eq = { ...DEFAULT_SETTINGS.eq };
   }
+  if (!Array.isArray(merged.tasteLanguages)) merged.tasteLanguages = [];
+  if (!Array.isArray(merged.tasteArtists)) merged.tasteArtists = [];
   merged.volume = Math.min(1, Math.max(0, Number(merged.volume) || 0));
   merged.playbackRate = Math.min(2, Math.max(0.5, Number(merged.playbackRate) || 1));
   return merged;

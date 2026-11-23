@@ -29,8 +29,17 @@ const FILTER_KEYS: Record<string, string | undefined> = {
 function TopResult({ card }: { card: Card }) {
   const round = card.type === 'artist';
   const playable = Boolean(card.track) || ['song', 'video', 'album', 'playlist', 'episode'].includes(card.type);
+  // A searched song starts its related-songs radio, never a queue of the
+  // other search results; albums and playlists keep their page queue.
+  const play = () => {
+    if (card.track) {
+      void usePlayerStore.getState().startRadio(card.track);
+      return;
+    }
+    void playCard(card);
+  };
   return (
-    <div className="top-result" onClick={() => openCard(card)} role="button" tabIndex={0}>
+    <div className="top-result" onClick={() => (card.track ? play() : openCard(card))} role="button" tabIndex={0}>
       <Artwork src={card.thumbnail} alt={card.title} round={round} className="top-result-art" />
       <div className="top-result-text">
         <span className="eyebrow">Top result</span>
@@ -45,7 +54,7 @@ function TopResult({ card }: { card: Card }) {
           aria-label={`Play ${card.title}`}
           onClick={(event) => {
             event.stopPropagation();
-            void playCard(card);
+            play();
           }}
         >
           <Play size={24} fill="currentColor" />
@@ -257,7 +266,10 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
 
           {filter === 'All' || filter === 'Videos' ? (
             results.videos.length ? (
-              <Shelf shelf={{ title: 'Videos', items: results.videos.map((track) => ({ type: 'video', id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track: { ...track, isVideo: true } })) }} />
+              <Shelf
+                shelf={{ title: 'Videos', items: results.videos.map((track) => ({ type: 'video', id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track: { ...track, isVideo: true } })) }}
+                radioOnPlay
+              />
             ) : null
           ) : null}
 

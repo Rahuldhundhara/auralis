@@ -25,6 +25,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray } from '../lib/format';
+import { proxiedArtwork } from '../lib/artwork';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, Modal, PageSkeleton, Spinner } from '../components/primitives';
@@ -613,7 +614,7 @@ export function DetailPage({
     <section className={`detail-hero detail-hero-${kind}`}>
       <div
         className="detail-hero-bg"
-        style={cover ? { backgroundImage: `url(${cover})` } : undefined}
+        style={cover ? { backgroundImage: `url(${proxiedArtwork(cover)})` } : undefined}
         aria-hidden="true"
       />
       <div className="detail-hero-inner">

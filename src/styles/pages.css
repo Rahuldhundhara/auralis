@@ -6,80 +6,218 @@
 /* Home                                                                       */
 /* -------------------------------------------------------------------------- */
 
-.home-hero {
+/* Home vibe stage — the dynamic hero follows the current track. */
+.home-vibe-stage {
   position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 312px;
   overflow: hidden;
-  margin-bottom: 24px;
-  padding: 43px clamp(28px, 4vw, 54px);
-  border: 1px solid var(--border);
-  border-radius: 30px;
-  background:
-    radial-gradient(70% 150% at 8% 10%, rgba(var(--accent-rgb), 0.18), transparent 57%),
-    radial-gradient(55% 120% at 95% 95%, rgba(var(--accent-rgb), 0.09), transparent 60%),
-    linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  min-height: 300px;
+  margin-bottom: 28px;
+  padding: 32px clamp(28px, 3.4vw, 44px);
+  border: 1px solid var(--border-strong);
+  border-radius: 24px;
+  background: linear-gradient(90deg, rgba(6, 51, 40, 0.65), var(--surface) 72%);
+  box-shadow: var(--shadow-lg);
 }
 
-.home-hero::before {
+.vibe-backdrop {
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(var(--accent-rgb), 0.2) 0.8px, transparent 0.8px);
-  background-size: 19px 19px;
-  content: '';
-  opacity: 0.35;
-  mask-image: linear-gradient(105deg, #000, transparent 58%);
+  overflow: hidden;
+  opacity: 0.22;
+  filter: blur(40px) saturate(1.15);
+  transform: scale(1.25);
   pointer-events: none;
 }
 
-.home-hero-copy {
+.vibe-backdrop img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  animation: vibe-fade 900ms var(--ease);
+}
+
+.vibe-glow {
+  position: absolute;
+  top: -120px;
+  right: -110px;
+  width: 384px;
+  height: 384px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--hero-accent-r, 16), var(--hero-accent-g, 185), var(--hero-accent-b, 129), 0.55), transparent 68%);
+  filter: blur(60px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.vibe-row {
   position: relative;
-  z-index: 2;
-  width: min(600px, 58%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: clamp(22px, 3vw, 40px);
 }
 
-.home-hero h1 {
-  margin-top: 10px;
-  font-size: clamp(42px, 5.6vw, 68px);
-  font-weight: 750;
-  line-height: 0.98;
-  letter-spacing: -0.055em;
+.vibe-art {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  flex: 0 0 150px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.42);
+  background: var(--surface-3);
 }
 
-.home-hero-copy > p {
-  max-width: 500px;
-  margin-top: 16px;
+.vibe-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: vibe-fade 900ms var(--ease);
+}
+
+.vibe-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.vibe-tagline {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.vibe-title {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(34px, 3.6vw, 52px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vibe-artists {
+  margin: 0;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: 14px;
-  line-height: 1.65;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.home-hero-actions {
+.vibe-album {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vibe-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 26px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
 }
 
-.home-hero-art {
-  position: absolute;
-  top: 50%;
-  right: clamp(20px, 4vw, 60px);
-  z-index: 1;
-  width: clamp(300px, 30vw, 410px);
-  height: 280px;
-  transform: translateY(-50%);
+.vibe-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.32);
+  transition: transform var(--fast), box-shadow var(--fast), filter var(--fast);
 }
+
+.vibe-play:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(var(--accent-rgb), 0.4);
+  filter: brightness(1.04);
+}
+
+.vibe-play:active {
+  transform: translateY(0);
+}
+
+.vibe-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+
+.vibe-radio:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.vibe-radio svg {
+  color: var(--accent);
+}
+
+.vibe-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes vibe-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe-backdrop img,
+  .vibe-art img {
+    animation: none;
+  }
+}
+
+
 
 .hero-tile {
   position: absolute;
   display: block;
   width: 152px;
   height: 152px;
-  border-radius: 15px;
+  border-radius: 14px;
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
   object-fit: cover;
+  animation: none !important;
 }
 
 .hero-tile-1 {
@@ -143,138 +281,113 @@
 }
 
 .quick-access {
-  margin-bottom: 22px;
+  margin-bottom: 28px;
+}
+
+.quick-heading {
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+
+.quick-heading-copy {
+  min-width: 0;
+}
+
+.quick-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quick-chip {
+  padding: 2px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
+.quick-subtitle {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .quick-heading-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .quick-heading-actions .text-button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
 }
 
-.quick-rail-wrap {
-  position: relative;
+.quick-heading-actions .icon-btn svg.is-spinning {
+  animation: quick-spin 900ms linear infinite;
 }
 
-.quick-rail {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 2px 2px 5px;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+@keyframes quick-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.quick-rail::-webkit-scrollbar {
-  display: none;
+@media (prefers-reduced-motion: reduce) {
+  .quick-heading-actions .icon-btn svg.is-spinning {
+    animation: none;
+  }
 }
 
-.quick-rail .quick-card {
-  flex: 0 0 250px;
-  scroll-snap-align: start;
-}
-
-.quick-mix-card {
-  border-color: rgba(var(--accent-rgb), 0.34);
-  background:
-    radial-gradient(circle at 8% 12%, rgba(var(--accent-rgb), 0.16), transparent 58%),
-    var(--surface);
-}
-
-.quick-mix-art {
+.quick-grid {
   display: grid;
-  width: 49px;
-  height: 49px;
-  flex: 0 0 49px;
-  place-items: center;
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.26), rgba(var(--accent-rgb), 0.08));
-  color: var(--accent);
-}
-
-.rail-arrow {
-  position: absolute;
-  top: 50%;
-  z-index: 3;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--menu-bg);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  cursor: pointer;
-  transform: translateY(-50%);
-}
-
-.rail-arrow.is-left {
-  left: -12px;
-}
-
-.rail-arrow.is-right {
-  right: -12px;
-}
-
-.rail-arrow:hover {
-  background: var(--surface-2);
-}
-
-html.is-android .rail-arrow {
-  display: none;
-}
-
-html.is-android .quick-rail {
-  padding-right: 14px;
-  scroll-padding-inline: 2px 14px;
-}
-
-html.is-android .quick-rail .quick-card {
-  flex-basis: 238px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .quick-card {
   display: flex;
   align-items: center;
-  flex: 0 0 clamp(248px, 24vw, 322px);
   gap: 11px;
   min-width: 0;
-  width: clamp(248px, 24vw, 322px);
-  height: 61px;
-  padding: 6px 10px 6px 6px;
+  width: auto;
+  height: 74px;
+  padding: 8px 12px 8px 8px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
   text-align: left;
-  scroll-snap-align: start;
-  transition: background var(--fast), border-color var(--fast), transform var(--fast);
+  transition: background var(--fast), border-color var(--fast), transform var(--fast), box-shadow var(--fast);
 }
 
 .quick-card:hover {
-  border-color: var(--border-strong);
+  border-color: rgba(var(--accent-rgb), 0.35);
   background: var(--surface-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(var(--accent-rgb), 0.06);
+  transform: translateY(-2px);
 }
 
 .quick-card:active {
-  transform: scale(0.992);
+  transform: scale(0.995);
 }
 
 .quick-art {
-  width: 49px;
-  height: 49px;
-  flex: 0 0 49px;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 12px;
 }
-
 .quick-text {
   display: flex;
   min-width: 0;
@@ -286,7 +399,7 @@ html.is-android .quick-rail .quick-card {
 .quick-title {
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -300,17 +413,22 @@ html.is-android .quick-rail .quick-card {
   white-space: nowrap;
 }
 
+.quick-duration {
+  color: var(--faint);
+}
+
 .quick-play {
   display: grid;
-  width: 31px;
-  height: 31px;
-  flex: 0 0 31px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   place-items: center;
   border-radius: 50%;
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.3);
   opacity: 0;
-  transform: scale(0.88);
+  transform: translateX(4px) scale(0.92);
   transition: opacity var(--fast), transform var(--fast);
 }
 
@@ -319,32 +437,11 @@ html.is-android .quick-rail .quick-card {
   transform: none;
 }
 
-.quick-actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 30px;
-}
-
-.pill-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-size: 11.5px;
-  font-weight: 600;
-  transition: border-color var(--fast), background var(--fast), color var(--fast);
-}
-
-.pill-action:hover {
-  border-color: rgba(var(--accent-rgb), 0.4);
-  background: rgba(var(--accent-rgb), 0.08);
-  color: var(--accent);
+@media (hover: none), (pointer: coarse) {
+  .quick-play {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -363,9 +460,9 @@ html.is-android .quick-rail .quick-card {
   overflow-x: auto;
   margin-bottom: 22px;
   padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg-soft);
   scrollbar-width: none;
 }
 
@@ -415,9 +512,9 @@ html.is-android .quick-rail .quick-card {
 
 .search-landing-hero h1 {
   margin: 10px 0 10px;
-  font-size: clamp(34px, 4.7vw, 54px);
-  line-height: 1.05;
-  letter-spacing: -0.045em;
+  font-size: clamp(32px, 4vw, 46px);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
 }
 
 .search-landing-hero > p {
@@ -572,18 +669,17 @@ html.is-android .quick-rail .quick-card {
   justify-content: flex-end;
   overflow: hidden;
   padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background:
-    radial-gradient(110% 100% at 10% 0%, rgba(var(--accent-rgb), 0.2), transparent 60%),
-    linear-gradient(150deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
   cursor: pointer;
-  transition: border-color var(--fast), transform var(--fast);
+  transition: border-color var(--fast), background var(--fast);
 }
 
 .top-result:hover {
   border-color: var(--border-strong);
-  transform: translateY(-2px);
+  background: var(--glass-bg-strong);
 }
 
 .top-result-art {
@@ -643,7 +739,6 @@ html.is-android .quick-rail .quick-card {
   border-radius: 50%;
   background: var(--accent);
   color: var(--accent-contrast);
-  box-shadow: 0 9px 27px rgba(var(--accent-rgb), 0.3);
   opacity: 0;
   transform: translateY(7px);
   transition: opacity var(--normal), transform var(--normal), filter var(--fast);
@@ -754,10 +849,10 @@ html.is-android .quick-rail .quick-card {
   display: -webkit-box;
   overflow: hidden;
   margin: 7px 0 0;
-  font-size: clamp(31px, 4.4vw, 58px);
-  font-weight: 750;
-  line-height: 1.02;
-  letter-spacing: -0.05em;
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 550;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
@@ -973,12 +1068,12 @@ html.is-android .quick-rail .quick-card {
   background: var(--surface-3);
   color: var(--muted);
   font-size: 9.5px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .event-state.is-complete {
-  background: rgba(var(--accent-rgb), 0.11);
-  color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text-secondary);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -990,11 +1085,12 @@ html.is-android .quick-rail .quick-card {
   align-items: flex-end;
   justify-content: space-between;
   gap: 30px;
-  min-height: 300px;
-  padding: clamp(27px, 3.5vw, 42px);
-  background:
-    radial-gradient(75% 160% at 5% 0%, rgba(var(--accent-rgb), 0.17), transparent 58%),
-    linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  min-height: 250px;
+  padding: clamp(24px, 3vw, 36px);
+  border-color: var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .library-hero-copy {
@@ -1004,7 +1100,7 @@ html.is-android .quick-rail .quick-card {
 
 .library-hero h1 {
   margin: 8px 0 0;
-  font-size: clamp(40px, 5.3vw, 64px);
+  font-size: clamp(34px, 4.4vw, 48px);
 }
 
 .library-stats {
@@ -1020,24 +1116,23 @@ html.is-android .quick-rail .quick-card {
   flex-direction: column;
   align-items: flex-start;
   padding: 9px 14px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: rgba(var(--surface-rgb), 0.4);
+  border: 1px solid var(--glass-border);
+  border-radius: 9px;
+  background: var(--glass-bg-soft);
   text-align: left;
-  backdrop-filter: blur(8px);
   transition: background var(--fast), border-color var(--fast);
 }
 
 .library-stat:hover {
-  border-color: rgba(var(--accent-rgb), 0.36);
-  background: rgba(var(--accent-rgb), 0.08);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .library-stat strong {
   color: var(--text);
   font-family: var(--font-display);
   font-size: 21px;
-  font-weight: 750;
+  font-weight: 600;
   line-height: 1.1;
 }
 
@@ -1107,9 +1202,9 @@ html.is-android .quick-rail .quick-card {
   overflow-x: auto;
   margin-bottom: 26px;
   padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg-soft);
   scrollbar-width: none;
 }
 
@@ -1151,8 +1246,8 @@ html.is-android .quick-rail .quick-card {
 }
 
 .library-tab.is-active .tab-count {
-  background: rgba(var(--accent-rgb), 0.14);
-  color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text-secondary);
 }
 
 .library-section {
@@ -1204,8 +1299,8 @@ html.is-android .quick-rail .quick-card {
 }
 
 .create-playlist-card:hover {
-  border-color: rgba(var(--accent-rgb), 0.5);
-  background: rgba(var(--accent-rgb), 0.06);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .create-playlist-icon {
@@ -1214,15 +1309,15 @@ html.is-android .quick-rail .quick-card {
   height: 58px;
   margin-bottom: 8px;
   place-items: center;
-  border-radius: 17px;
-  background: rgba(var(--accent-rgb), 0.1);
-  color: var(--accent);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
 }
 
 .create-playlist-card strong {
   color: var(--text-secondary);
   font-size: 12.5px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .create-playlist-card > span:last-child {
@@ -1247,14 +1342,15 @@ html.is-android .quick-rail .quick-card {
 /* -------------------------------------------------------------------------- */
 
 .downloads-hero {
-  padding: clamp(27px, 3.5vw, 42px);
-  background:
-    radial-gradient(80% 160% at 2% 0%, rgba(var(--accent-rgb), 0.16), transparent 55%),
-    linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  padding: clamp(27px, 3.5vw, 40px);
+  border-color: var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .downloads-hero h1 {
-  font-size: clamp(38px, 5vw, 60px);
+  font-size: clamp(32px, 4vw, 44px);
 }
 
 .downloads-stats {
@@ -1270,10 +1366,9 @@ html.is-android .quick-rail .quick-card {
   gap: 10px;
   min-width: 138px;
   padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(var(--surface-rgb), 0.4);
-  backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg-soft);
 }
 
 .download-stat.is-warning {
@@ -1286,9 +1381,9 @@ html.is-android .quick-rail .quick-card {
   height: 35px;
   flex: 0 0 35px;
   place-items: center;
-  border-radius: 10px;
-  background: rgba(var(--accent-rgb), 0.11);
-  color: var(--accent);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
 }
 
 .download-stat.is-warning .download-stat-icon {
@@ -1305,7 +1400,7 @@ html.is-android .quick-rail .quick-card {
   color: var(--text);
   font-family: var(--font-display);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -1402,7 +1497,7 @@ html.is-android .quick-rail .quick-card {
 }
 
 .download-row.is-active {
-  border-color: rgba(var(--accent-rgb), 0.24);
+  border-color: var(--border-strong);
 }
 
 .download-row.is-error {
@@ -1474,7 +1569,7 @@ html.is-android .quick-rail .quick-card {
   overflow: hidden;
   color: var(--text);
   font-size: 12.5px;
-  font-weight: 650;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1533,13 +1628,13 @@ html.is-android .quick-rail .quick-card {
   background: var(--surface-3);
   color: var(--muted);
   font-size: 9px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .download-status.status-done {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text-secondary);
 }
 
 .download-status.status-downloading,
@@ -1627,7 +1722,7 @@ html.is-android .quick-rail .quick-card {
   border-radius: 50%;
   background: var(--accent);
   color: var(--accent-contrast);
-  box-shadow: 0 12px 30px rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
   transition: transform var(--fast), filter var(--fast);
 }
 
@@ -1657,5 +1752,5 @@ html.is-android .quick-rail .quick-card {
 
 .liked-page .detail-copy h1,
 .recent-page .detail-copy h1 {
-  font-size: clamp(36px, 4.8vw, 60px);
+  font-size: clamp(32px, 4.2vw, 48px);
 }

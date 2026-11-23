@@ -12,11 +12,14 @@ export function MediaCard({
   queue,
   index = 0,
   variant = 'carousel',
+  radioOnPlay = false,
 }: {
   card: Card;
   queue?: Track[];
   index?: number;
   variant?: 'carousel' | 'grid';
+  /** Play this card as a related-songs radio instead of its shelf queue. */
+  radioOnPlay?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const round = Boolean(card.round) || card.type === 'artist' || card.type === 'profile';
@@ -27,7 +30,7 @@ export function MediaCard({
       <button
         type="button"
         className={`media-card mood-card ${variant === 'grid' ? 'mood-card-grid' : ''}`}
-        style={{ '--mood-color': card.color || '#8ab4f8' } as CSSProperties}
+        style={{ '--mood-color': card.color || '#10b981' } as CSSProperties}
         onClick={() => openCard(card)}
         title={`Open ${card.title}`}
       >
@@ -39,6 +42,10 @@ export function MediaCard({
   }
 
   const activate = async () => {
+    if (card.track && radioOnPlay) {
+      void usePlayerStore.getState().startRadio(card.track);
+      return;
+    }
     if (card.track && queue?.length) {
       usePlayerStore.getState().playQueue(queue, index);
       return;
@@ -129,9 +136,12 @@ export function MediaCard({
 export function Shelf({
   shelf,
   grid,
+  radioOnPlay,
 }: {
   shelf: ShelfType;
   grid?: boolean;
+  /** Play any track card as a related-songs radio instead of this shelf's queue. */
+  radioOnPlay?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigateEndpoint = useNavStore((state) => state.navigateEndpoint);
@@ -170,7 +180,7 @@ export function Shelf({
       </header>
       {showAsList ? (
         <div className="shelf-list-card">
-          <TrackList tracks={tracks} showAlbum showArt={false} />
+          <TrackList tracks={tracks} showAlbum showArt={false} radioOnPlay={radioOnPlay} />
         </div>
       ) : (
         <div ref={scrollRef} className={`shelf-row ${grid || style === 'grid' ? 'is-grid' : ''}`}>
@@ -181,6 +191,7 @@ export function Shelf({
               queue={card.track ? queue : undefined}
               index={card.track ? Math.max(0, tracks.findIndex((track) => track.id === card.track?.id)) : index}
               variant={grid || style === 'grid' ? 'grid' : 'carousel'}
+              radioOnPlay={radioOnPlay}
             />
           ))}
         </div>

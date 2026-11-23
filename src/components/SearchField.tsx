@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock3, Mic, Search, X } from 'lucide-react';
+import { AudioLines, Clock3, Mic, Search, X } from 'lucide-react';
 import type { SearchSuggestion } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
@@ -27,10 +27,12 @@ export function SearchField({
   autoFocus,
   large,
   onSubmitted,
+  onIdentify,
 }: {
   autoFocus?: boolean;
   large?: boolean;
   onSubmitted?: () => void;
+  onIdentify?: () => void;
 }) {
   const route = useNavStore((state) => state.entries[state.index]);
   const navigate = useNavStore((state) => state.navigate);
@@ -82,7 +84,12 @@ export function SearchField({
       setLoading(false);
       return;
     }
-    if (!open) return;
+    if (!open) {
+      // Closing the popover cancels the request below. Clear the spinner too,
+      // otherwise it keeps spinning long after the search field lost focus.
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setSuggestions([]);
     setLoading(true);
@@ -221,6 +228,24 @@ export function SearchField({
         >
           <X size={15} />
         </IconButton>
+      ) : null}
+      {onIdentify ? (
+        <>
+          <span className="search-identify-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="recognize-pill search-identify"
+            title="Identify a song"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setOpen(false);
+              onIdentify();
+            }}
+          >
+            <AudioLines size={16} />
+            <span>Identify</span>
+          </button>
+        </>
       ) : null}
       {open && (items.length > 0 || loading) ? (
         <div className="search-popover">

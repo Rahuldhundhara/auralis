@@ -4,6 +4,8 @@ import { useNavStore } from '../stores/nav';
 import { useAsync } from '../lib/useAsync';
 import { Button, Chips, ErrorPanel, PageSkeleton } from '../components/primitives';
 import { ShelfGrid } from '../components/MediaCard';
+import { ExploreFeature } from '../components/explore/ExploreFeature';
+import { MoodGrid } from '../components/explore/MoodGrid';
 
 type ExploreTab = 'explore' | 'charts' | 'new' | 'moods';
 
@@ -49,18 +51,27 @@ export function ExplorePage({ tab: initialTab }: { tab?: ExploreTab }) {
     return window.auralis.yt.explore();
   }, [tab]);
   const meta = TABS.find((entry) => entry.id === tab) || TABS[0];
+  // The curated 15-tile mood grid replaces the payload's small untitled
+  // mood strip on the main Explore tab.
+  const shelves = (data?.shelves || []).filter(
+    (shelf) => !(tab === 'explore' && !shelf.title && shelf.items.length > 0 && shelf.items.every((item) => item.type === 'mood')),
+  );
 
   return (
-    <div className="page explore-page">
-      <header className="page-hero compact-hero">
-        <div>
-          <span className="eyebrow">
-            {tab === 'charts' ? <Flame size={14} /> : <Sparkles size={14} />} Discover
-          </span>
-          <h1>{meta.title}</h1>
-          <p>{meta.subtitle}</p>
-        </div>
-      </header>
+    <div className={`page explore-page ${tab === 'explore' ? 'is-feature' : ''}`}>
+      {tab === 'explore' ? <ExploreFeature /> : null}
+
+      {tab !== 'explore' ? (
+        <header className="page-hero compact-hero">
+          <div>
+            <span className="eyebrow">
+              {tab === 'charts' ? <Flame size={14} /> : <Sparkles size={14} />} Discover
+            </span>
+            <h1>{meta.title}</h1>
+            <p>{meta.subtitle}</p>
+          </div>
+        </header>
+      ) : null}
 
       <div className="explore-tabs" role="tablist" aria-label="Explore sections">
         {TABS.map((entry) => (
@@ -95,7 +106,8 @@ export function ExplorePage({ tab: initialTab }: { tab?: ExploreTab }) {
 
       {loading && !data ? <PageSkeleton /> : null}
       {error && !data ? <ErrorPanel message={error} retry={reload} /> : null}
-      {data ? <ShelfGrid shelves={data.shelves} /> : null}
+      {tab === 'explore' && !error ? <MoodGrid /> : null}
+      {data ? <ShelfGrid shelves={shelves} /> : null}
       {data && !data.shelves.length ? (
         <div className="load-more-row">
           <Button variant="outline" onClick={reload}>

@@ -59,10 +59,13 @@ interface AppState {
 
 const EMPTY_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#8ab4f8',
+  accent: '#10b981',
   language: 'en',
   region: 'US',
   startPage: 'home',
+  tasteLanguages: [],
+  tasteArtists: [],
+  onboardingComplete: false,
   audioQuality: 'auto',
   volume: 0.9,
   muted: false,
@@ -123,18 +126,33 @@ function hexToRgb(hex: string): [number, number, number] | null {
   return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
 }
 
+function channelLuminance(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+/** Picks whichever text colour has the stronger WCAG ratio on the accent. */
+function accentContrast(rgb: [number, number, number]): string {
+  const luminance =
+    0.2126 * channelLuminance(rgb[0]) +
+    0.7152 * channelLuminance(rgb[1]) +
+    0.0722 * channelLuminance(rgb[2]);
+  const onWhite = 1.05 / (luminance + 0.05);
+  const onDark = (luminance + 0.05) / 0.05;
+  return onDark >= onWhite ? '#04140d' : '#ffffff';
+}
+
 export function applyAppearance(settings: Settings) {
   const theme = resolvedTheme(settings.theme);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
-  const accent = settings.accent || '#8ab4f8';
+  const accent = settings.accent || '#10b981';
   document.documentElement.style.setProperty('--accent', accent);
-  const rgb = hexToRgb(accent) || [138, 180, 248];
+  const rgb = hexToRgb(accent) || [16, 185, 129];
   document.documentElement.style.setProperty('--accent-rgb', rgb.join(', '));
-  const luminance = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
-  document.documentElement.style.setProperty('--accent-contrast', luminance > 0.62 ? '#101014' : '#ffffff');
+  document.documentElement.style.setProperty('--accent-contrast', accentContrast(rgb));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'light' ? '#f7f6fa' : '#0b0b10');
+  if (meta) meta.setAttribute('content', theme === 'light' ? '#f5f4f8' : '#090b0e');
 }
 
 let initialized = false;
@@ -456,9 +474,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   login: async () => {
+    const previous = get().session;
     const session = await window.auralis.yt.login();
     set({ session });
-    if (session.hasCookies) toast('Signed in to YouTube Music.', 'success');
+    if (session.hasCookies) {
+      if (!previous.hasCookies) toast('Signed in to YouTube Music.', 'success');
+    } else {
+      toast('Sign-in window closed before completing. Try again anytime.', 'info');
+    }
     return session;
   },
 

@@ -12,7 +12,7 @@ const launch = () =>
   electron.launch({
     args: ['.', `--user-data-dir=${userData}`],
     cwd: process.cwd(),
-    env: { ...process.env, AURALIS_FORCE_PROD: '1' },
+    env: { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_SKIP_LOGIN: '1' },
     timeout: 60000,
   });
 
@@ -76,31 +76,45 @@ async function sidebar(label) {
   await waitIdle(700);
 }
 
+async function waitSearchResults() {
+  await page.waitForFunction(
+    () => {
+      if (document.querySelector('.search-page .skeleton')) return false;
+      return document.querySelectorAll('.search-page .track-row, .search-page .media-card').length > 0;
+    },
+    { timeout: 60000 },
+  );
+}
+
 async function searchFor(query) {
   const input = page.locator('.top-search input').first();
   await input.fill(query);
   await input.press('Enter');
   await page.waitForSelector('.search-page', { timeout: 25000 });
-  await waitIdle(800);
+  await waitIdle(500);
+  await waitSearchResults();
+  await waitIdle(300);
 }
 
 async function chip(label) {
   await page.locator('.chips .chip', { hasText: label }).first().click();
-  // Switching filters keeps the previous response on screen while the new
-  // request is in flight. Wait for the selected chip and real result rows
-  // instead of counting immediately, otherwise fast filters race the request.
+  // The previous filter's rows stay on screen for a frame while the new
+  // request starts. Without this settle the wait below can pass on the old
+  // filter's cards, and the next step reads rows that belong to another tab.
+  await page.waitForTimeout(700);
   await page.waitForFunction(
     (value) => {
       const selected = Array.from(document.querySelectorAll('.chips .chip')).find(
         (element) => element.textContent?.trim() === value,
       );
       if (!selected?.classList.contains('is-selected')) return false;
+      if (document.querySelector('.search-page .skeleton')) return false;
       return document.querySelectorAll('.search-page .track-row, .search-page .media-card').length > 0;
     },
     label,
-    { timeout: 30000 },
+    { timeout: 60000 },
   );
-  await waitIdle(400);
+  await waitIdle(300);
 }
 
 async function back() {

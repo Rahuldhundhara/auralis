@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { create } from 'zustand';
 import { initials } from '../lib/format';
+import { proxiedArtwork } from '../lib/artwork';
 
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
@@ -88,6 +89,7 @@ export function Artwork({
   className = '',
   style,
   size,
+  eager,
 }: {
   src?: string;
   alt: string;
@@ -95,22 +97,40 @@ export function Artwork({
   className?: string;
   style?: CSSProperties;
   size?: number;
+  eager?: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+  const resolved = proxiedArtwork(src);
+  // Keyed on the resolved src: a previous broken image can never stick to a
+  // new track, and the skeleton reappears while the next one decodes.
+  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>(() => (resolved ? 'loading' : 'error'));
+  useEffect(() => {
+    setStatus(resolved ? 'loading' : 'error');
+  }, [resolved]);
   return (
     <div
       className={`artwork ${round ? 'is-round' : ''} ${className}`}
       style={{ ...(size ? { width: size, height: size } : {}), ...style }}
+      data-artwork-status={status}
     >
-      {src && !failed ? (
-        <img src={src} alt={alt} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
+      {resolved && status !== 'error' ? (
+        <img
+          key={resolved}
+          src={resolved}
+          alt={alt}
+          loading={eager ? 'eager' : 'lazy'}
+          decoding="async"
+          draggable={false}
+          className={`artwork-img ${status === 'loaded' ? 'is-loaded' : ''}`}
+          onLoad={() => setStatus('loaded')}
+          onError={() => setStatus('error')}
+        />
       ) : (
         <div className="artwork-fallback" aria-hidden="true">
           <span>{initials(alt)}</span>
           <Music2 size={18} />
         </div>
       )}
+      {resolved && status === 'loading' ? <span className="artwork-skeleton" aria-hidden="true" /> : null}
     </div>
   );
 }

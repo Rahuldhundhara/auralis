@@ -6,6 +6,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
+import { proxiedArtwork } from '../lib/artwork';
 import { Artwork, Button, EmptyState, IconButton, Spinner } from '../components/primitives';
 import { TrackList } from '../components/TrackList';
 
@@ -140,7 +141,7 @@ export function LocalPlaylistPage({ id }: { id: string }) {
       <section className="detail-hero detail-hero-playlist local-playlist-hero">
         <div
           className="detail-hero-bg"
-          style={covers[0] ? { backgroundImage: `url(${covers[0]})` } : undefined}
+          style={covers[0] ? { backgroundImage: `url(${proxiedArtwork(covers[0])})` } : undefined}
           aria-hidden="true"
         />
         <div className="detail-hero-inner">

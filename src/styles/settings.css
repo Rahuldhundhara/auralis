@@ -7,14 +7,15 @@
 }
 
 .settings-hero {
-  padding: clamp(28px, 3.4vw, 42px);
-  background:
-    radial-gradient(75% 170% at 2% 0%, rgba(var(--accent-rgb), 0.17), transparent 57%),
-    linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  padding: clamp(28px, 3.4vw, 40px);
+  border-color: var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .settings-hero h1 {
-  font-size: clamp(38px, 5vw, 60px);
+  font-size: clamp(32px, 4vw, 44px);
 }
 
 .settings-layout {
@@ -31,9 +32,11 @@
   flex-direction: column;
   gap: 2px;
   padding: 7px;
-  border: 1px solid var(--border);
-  border-radius: 15px;
-  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--glass-bg-soft);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .settings-nav-item {
@@ -41,12 +44,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 39px;
+  height: 36px;
   padding: 0 10px;
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   transition: background var(--fast), color var(--fast);
 }
@@ -57,18 +60,13 @@
 }
 
 .settings-nav-item.is-active {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
 }
 
-.settings-nav-item.is-active::before {
-  position: absolute;
-  left: 0;
-  width: 3px;
-  height: 17px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-  content: '';
+.settings-nav-item.is-active .settings-nav-icon {
+  color: var(--accent);
 }
 
 .settings-nav-icon {
@@ -96,10 +94,10 @@
   height: 43px;
   flex: 0 0 43px;
   place-items: center;
-  border: 1px solid rgba(var(--accent-rgb), 0.19);
-  border-radius: 12px;
-  background: rgba(var(--accent-rgb), 0.09);
-  color: var(--accent);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg-soft);
+  color: var(--text-secondary);
 }
 
 .settings-panel-head h2 {
@@ -143,7 +141,7 @@
 .settings-card-head h2 {
   margin-top: 1px;
   font-size: 15.5px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.015em;
 }
 
@@ -486,7 +484,7 @@
   gap: 6px;
   color: var(--text-secondary);
   font-size: 11.5px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .theme-card-label svg:first-child {
@@ -548,7 +546,7 @@
 }
 
 .accent-custom:hover {
-  border-color: rgba(var(--accent-rgb), 0.45);
+  border-color: var(--border-strong);
   color: var(--text-secondary);
 }
 
@@ -631,14 +629,13 @@
   background: var(--surface);
   color: var(--muted);
   font-size: 9.5px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-weight: 600;
   cursor: pointer;
   transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
 
 .eq-preset:hover {
-  border-color: rgba(var(--accent-rgb), 0.45);
+  border-color: var(--border-strong);
   background: var(--surface-2);
   color: var(--text);
 }
@@ -965,6 +962,7 @@
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1026,11 +1024,11 @@
   gap: 22px;
   margin-bottom: 15px;
   padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background:
-    radial-gradient(80% 160% at 5% 0%, rgba(var(--accent-rgb), 0.15), transparent 58%),
-    linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-seam);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .about-logo {
@@ -1051,7 +1049,7 @@
 
 .about-hero h1 {
   margin-top: 3px;
-  font-size: 35px;
+  font-size: 30px;
   line-height: 1;
 }
 
@@ -1100,10 +1098,8 @@
 
 .about-grid span {
   color: var(--faint);
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .about-grid code {

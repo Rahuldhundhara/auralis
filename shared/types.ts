@@ -186,6 +186,8 @@ export interface AppInfo {
   downloadsDir: string;
   ytDlpVersion?: string;
   ffmpegAvailable: boolean;
+  /** Test/automation launch that should go straight to the app. */
+  skipLogin?: boolean;
 }
 
 export type ThemeMode = 'dark' | 'light' | 'black' | 'system';
@@ -230,12 +232,25 @@ export interface TranslationSettings {
   openaiModel: string;
 }
 
+export interface TasteArtist {
+  id: string;
+  name: string;
+  thumbnail?: string;
+  subtitle?: string;
+}
+
 export interface Settings {
   theme: ThemeMode;
   accent: string;
   language: string;
   region: string;
   startPage: 'home' | 'explore' | 'library';
+  /** Language ids picked in the two-step taste onboarding. */
+  tasteLanguages: string[];
+  /** Artists picked in the two-step taste onboarding. */
+  tasteArtists: TasteArtist[];
+  /** False until the taste onboarding is finished or skipped once. */
+  onboardingComplete: boolean;
   audioQuality: AudioQuality;
   volume: number;
   muted: boolean;

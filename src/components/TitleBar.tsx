@@ -1,23 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Copy, Minus, Square, X } from 'lucide-react';
+import { WindowControls } from './WindowControls';
 
+/**
+ * Compact window chrome for the splash and sign-in screens only. The app shell
+ * moves these controls into the top bar so content can start at the window's
+ * top edge.
+ */
 export function TitleBar() {
-  const [maximized, setMaximized] = useState(false);
-
-  useEffect(() => {
-    const unsubscribe = window.auralis.window.onStateChange((state) => {
-      if (state === 'maximized') setMaximized(true);
-      if (state === 'unmaximized') setMaximized(false);
-    });
-    return unsubscribe;
-  }, []);
-
   return (
     <header
       className="titlebar"
       onDoubleClick={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
-        void window.auralis.app.toggleMaximize().then(setMaximized);
+        void window.auralis.app.toggleMaximize();
       }}
     >
       <div className="titlebar-brand">
@@ -26,35 +20,7 @@ export function TitleBar() {
         <span className="titlebar-tag">Music</span>
       </div>
       <div className="titlebar-drag" />
-      <div className="window-controls">
-        <button
-          type="button"
-          className="window-btn"
-          aria-label="Minimize"
-          title="Minimize"
-          onClick={() => void window.auralis.app.minimize()}
-        >
-          <Minus size={16} />
-        </button>
-        <button
-          type="button"
-          className="window-btn"
-          aria-label={maximized ? 'Restore' : 'Maximize'}
-          title={maximized ? 'Restore' : 'Maximize'}
-          onClick={() => void window.auralis.app.toggleMaximize().then(setMaximized)}
-        >
-          {maximized ? <Copy size={13} /> : <Square size={12} />}
-        </button>
-        <button
-          type="button"
-          className="window-btn is-close"
-          aria-label="Close"
-          title="Close"
-          onClick={() => void window.auralis.app.close()}
-        >
-          <X size={16} />
-        </button>
-      </div>
+      <WindowControls />
     </header>
   );
 }

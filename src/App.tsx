@@ -23,16 +23,19 @@ import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
 import { DialogHost } from './components/Dialogs';
 import { Splash } from './components/Splash';
+import { Onboarding } from './pages/Onboarding';
 import { HomePage } from './pages/Home';
 import { ExplorePage } from './pages/Explore';
 import { SearchPage } from './pages/Search';
 import { DetailPage } from './pages/Detail';
 import { LibraryPage } from './pages/Library';
 import { LikedPage } from './pages/Liked';
-import { RecentPage, HistoryPage } from './pages/Recent';
+import { RecentPage } from './pages/Recent';
 import { DownloadsPage } from './pages/Downloads';
 import { LocalPlaylistPage } from './pages/LocalPlaylist';
 import { SettingsPage } from './pages/Settings';
+import { LoginPage } from './pages/Login';
+import { YouTubePage } from './pages/YouTube';
 
 /* ------------------------------------------------------------------ */
 /* Error boundary                                                      */
@@ -110,12 +113,14 @@ function RouteView({ route }: { route: Route }) {
       return <DetailPage kind="browse" id={route.id} params={route.params} title={route.title} />;
     case 'library':
       return <LibraryPage tab={route.tab} />;
+    case 'youtube':
+      return <YouTubePage tab={route.tab} />;
     case 'liked':
       return <LikedPage />;
     case 'recent':
       return <RecentPage />;
     case 'history':
-      return <HistoryPage />;
+      return <YouTubePage tab="history" />;
     case 'downloads':
       return <DownloadsPage />;
     case 'local':
@@ -137,8 +142,12 @@ function routeKey(route: Route): string {
 
 export default function App() {
   const ready = useAppStore((state) => state.ready);
+  const appInfo = useAppStore((state) => state.appInfo);
+  const session = useAppStore((state) => state.session);
   const startPage = useAppStore((state) => state.settings.startPage);
   const sidebarSetting = useAppStore((state) => state.settings.sidebarCollapsed);
+  const onboardingComplete = useAppStore((state) => state.settings.onboardingComplete);
+  const onboardingOpen = useUiStore((state) => state.onboardingOpen);
   const entries = useNavStore((state) => state.entries);
   const index = useNavStore((state) => state.index);
   const route = entries[index] || { page: 'home' as const };
@@ -146,6 +155,10 @@ export default function App() {
   const startApplied = useRef(false);
   const [splashDone, setSplashDone] = useState(false);
   const showApp = ready && splashDone;
+  const showLogin = showApp && !session.hasCookies && !appInfo?.skipLogin;
+  const showShell = showApp && !showLogin;
+  const showOnboarding =
+    showShell && (onboardingOpen || (!onboardingComplete && !appInfo?.skipLogin));
   const key = routeKey(route);
 
   useEffect(() => {
@@ -171,6 +184,7 @@ export default function App() {
       else if (path === '/downloads') nav.navigate({ page: 'downloads' });
       else if (path === '/liked') nav.navigate({ page: 'liked' });
       else if (path === '/recent') nav.navigate({ page: 'recent' });
+      else if (path === '/youtube') nav.navigate({ page: 'youtube' });
       else if (path === '/settings') nav.navigate({ page: 'settings' });
     });
 
@@ -262,8 +276,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <TitleBar />
-      {showApp ? (
+      {!showApp || showLogin ? <TitleBar /> : null}
+      {showLogin ? (
+        <LoginPage />
+      ) : showApp ? (
         <div className="app-body">
           <Sidebar />
           <div className="main-frame">
@@ -285,7 +301,7 @@ export default function App() {
       ) : (
         <Splash />
       )}
-      {showApp ? (
+      {showShell ? (
         <>
           <PlayerBar />
           <MobileNav />
@@ -293,6 +309,7 @@ export default function App() {
           <NowPlaying />
         </>
       ) : null}
+      {showOnboarding ? <Onboarding /> : null}
       <DialogHost />
       <Toasts />
       <ContextMenu />

@@ -21,6 +21,7 @@ export type Route =
   | { page: 'podcast'; id: string }
   | { page: 'browse'; id?: string; params?: string; title?: string }
   | { page: 'library'; tab?: 'playlists' | 'songs' | 'albums' | 'artists' | 'downloads' | 'youtube' }
+  | { page: 'youtube'; tab?: 'history' | 'playlists' }
   | { page: 'liked' }
   | { page: 'recent' }
   | { page: 'history' }

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>Windows 1.1.2</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
+  <strong>Windows 1.1.3</strong> · Android 1.0.3 · <strong>Linux 1.0.2</strong> · GPL-3.0-or-later
 </p>
 
 <p align="center">
@@ -34,7 +34,8 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **Player** | Seek, volume, speed, repeat, shuffle, queue, radio/automix with queue-end autoplay, prefetch, sleep timer, streaming quality and media keys |
 | **Now Playing** | Queue-first panel, full-screen artwork, accessible tabs, synced lyrics and original/translated language switching |
 | **Lyrics** | Seven providers, including BetterLyrics, LyricsPlus, LRCLIB, KuGou and YouTube, plus optional DeepL/OpenAI translation with your own key |
-| **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history |
+| **Library** | Likes, local playlists, saved albums and artists, recently played, history and search history; account playlists are merged under **From YouTube Music** |
+| **YouTube Music** | Signed-in account history and every account playlist in a songs-only view, with private playlists and inline track lists |
 | **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
 | **Desktop** | Frameless window, animated cold-start logo, tray icon, close-to-tray, keyboard shortcuts and Windows media controls; the separate Linux 1.0.2 builds add MPRIS |
@@ -60,8 +61,8 @@ Download the latest Windows x64 build from the [GitHub Releases page](https://gi
 
 | Build | File | Use it when |
 | --- | --- | --- |
-| Installer | [`Auralis-Setup-1.1.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.2.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
-| Portable | [`Auralis-Portable-1.1.2.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.2.exe) | You want a single executable that does not need installation |
+| Installer | [`Auralis-Setup-1.1.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Setup-1.1.3.exe) | You want Start menu and desktop shortcuts, and an uninstaller |
+| Portable | [`Auralis-Portable-1.1.3.exe`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-Portable-1.1.3.exe) | You want a single executable that does not need installation |
 
 The installer is per-user by default, so it does not need administrator rights. Both builds are self-contained: Electron provides the runtime and the audio tools travel inside the app, so no separate browser runtime is required.
 
@@ -103,12 +104,29 @@ for Wayland, keyring, sandbox and troubleshooting details.
 
 ### First run
 
-1. Open **Settings → Appearance** and choose a theme and accent.
-2. Open **Settings → Downloads** to manage offline audio. The Windows default is `%USERPROFILE%\Music\Auralis` (configurable); the separate Linux 1.0.2 build stores downloads under `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline`.
-3. Optionally connect an account under **Settings → Account**, or configure Last.fm and Discord under **Settings → Integrations**.
-4. Start typing in the search bar, or pick something from Home.
+1. Sign in with Google on the welcome screen. Auralis opens a separate, visible Chrome window for the Google form and then reads the session from its dedicated profile; the app cannot be used without an account. Sign out from **Settings → Account** to return to this screen.
+2. Open **Settings → Appearance** and choose a theme and accent.
+3. Open **Settings → Downloads** to manage offline audio. The Windows default is `%USERPROFILE%\Music\Auralis` (configurable); the separate Linux 1.0.2 build stores downloads under `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline`.
+4. Configure Last.fm and Discord under **Settings → Integrations** if you use them.
+5. Start typing in the search bar, open **YouTube Music**, or pick something from Home.
 
-Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
+Every section runs on the signed-in session: Home, Search, the cloud library, account history and private playlists. There is no anonymous mode; `AURALIS_SKIP_LOGIN=1` exists only as a local QA bypass.
+
+### YouTube Music account section
+
+The **YouTube Music** item in the sidebar opens a songs-only view of the signed-in account:
+
+- **History** lists recently played songs. Official music videos, UGC clips and podcast episodes are excluded.
+- **Playlists** lists every playlist in the account, including private playlists, and opens each one inline. The track list stops at the playlist's real track count, so YouTube's recommendation tail never gets appended.
+- The same playlists appear in **Library → Playlists** under **From YouTube Music** and are deduplicated against local playlists by their YouTube id. Official music videos are kept in playlists, while UGC clips and episodes are filtered out.
+
+### What's new in 1.1.3
+
+- Home shelves and long track rows now paint lazily. Off-screen rows skip layout and paint through `content-visibility`, so a full Home feed decodes about 60% fewer artwork pixels: 11.1 MP after scrolling the whole feed versus 27.8 MP before, and 4.8 MP while sitting on an idle shelf.
+- Thumbnails are clamped to 320 px at parse time; Now Playing asks for a 640 px cover on desktop and 960 px on Android. Home shelf art no longer downloads 544 px or 1200 px variants.
+- The disk caches are bounded: 128 MB HTTP cache, 64 MB media cache, and an artwork cache capped at 16 MB / 400 files. Upgrading clears the old oversized files once, through `.cache-version` and `image-cache/.version`.
+- The window keeps playing in the tray with Chromium background throttling, and DevTools is opt-in with `AURALIS_DEVTOOLS=1`.
+- The Windows packages got smaller: 133.33 MB portable and 145.41 MB installer, down from 140.89 MB and 153.81 MB. Only the `en-US` Electron locale ships, and `app.asar` no longer contains source maps.
 
 ### What's new in 1.1.2
 
@@ -148,11 +166,58 @@ Anonymous browsing works immediately. A YouTube Music account unlocks your cloud
 | Settings and local library | `%APPDATA%\Auralis\settings.json`, `library.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/settings.json`, `library.json` |
 | YouTube Music session | `%APPDATA%\Auralis\session.json` | `${XDG_CONFIG_HOME:-~/.config}/Auralis/session.json` |
 | Downloads | `%USERPROFILE%\Music\Auralis` (configurable, plain M4A) | `${XDG_CONFIG_HOME:-~/.config}/Auralis/offline` (app-private) |
-| Playback cache | Electron's per-user cache folder | Electron's per-user cache folder |
+| Artwork cache | `image-cache/` inside the user-data folder (at most 400 files) | `image-cache/` inside the user-data folder |
+| Playback cache | Electron's per-user cache folder (128 MB HTTP, 64 MB media) | Electron's per-user cache folder |
 
 Cookies are encrypted at rest with Electron `safeStorage`: DPAPI on Windows,
 libsecret/GNOME Keyring or KWallet on Linux. The session is never encrypted with
 a hard-coded key and is not uploaded anywhere.
+
+### Performance and disk use
+
+Auralis clamps artwork at parse time instead of decoding whatever size YouTube
+returns:
+
+- Cards, rows and the queue request the 320 px variant; video posters use
+  `mqdefault` (320×180). The first Home render no longer decodes 576 px and
+  1200 px covers for 180 px cards.
+- Now Playing asks for a 640 px variant (960 px on Android) from the same URL,
+  so only the open cover is large.
+- The main process keeps a 16 MB in-memory artwork cache and at most 400 files
+  on disk, pruning oldest-first. Chromium's HTTP cache is capped at 128 MB and
+  the media cache at 64 MB.
+- A one-time cleanup removes caches written before these limits. It is tracked
+  by `.cache-version` in the user-data folder and `image-cache/.version`, so the
+  first launch after upgrading clears the old oversized files only once.
+- Home shelves and long track lists use `content-visibility: auto`; off-screen
+  rows skip layout and paint. The tray uses Chromium background throttling, so
+  audio keeps playing while a hidden window stops rendering at full rate.
+- DevTools is opt-in (`AURALIS_DEVTOOLS=1`) instead of opening on every
+  `npm run dev`.
+- Release packaging uses maximum compression, ships only the `en-US` Electron
+  locale and excludes source maps. FFmpeg (100.5 MB) and yt-dlp (17.1 MB)
+  remain the largest bundled files.
+
+Measured on Windows 11 with the production renderer and a real signed-in
+session: decoded artwork fell from 27.8 MP to 11.1 MP after scrolling the whole
+Home feed (about 60% less), and an idle Home shelf view holds 4.8 MP / 40 images.
+The idle renderer working set measured 178 MB; after a full feed scroll it was
+236–243 MB, so most of the saving is for content that is off screen. Total
+working set stays around 718–772 MB because the Electron/Chromium baseline
+(Browser, GPU and utility processes) dominates. Minimizing the window drops the
+GPU process from about 310 MB to 250 MB. Hardware acceleration stays on by
+default; turning it off saved roughly 40–85 MB in testing but moved work to the
+renderer (295 MB idle versus 178 MB) and reduced UI smoothness.
+
+A real profile measured 480 MB before these limits: 307 MB Chromium cache,
+103 MB dedicated Chrome login profile, 41 MB artwork and 18 MB partitions. The
+one-time cleanup runs on the first launch after upgrading; after that the HTTP,
+media and artwork caches stay bounded.
+
+The rebuilt portable measures **133.33 MB**, down from **140.89 MB**
+(−7.56 MB, −5.4%), and the rebuilt Setup installer measures **145.41 MB**,
+down from **153.81 MB** (−8.40 MB, −5.5%). Both ship only the `en-US` Electron
+locale and no source maps in `app.asar`.
 
 ## Build from source
 
@@ -194,9 +259,15 @@ npm run preview
 ### Installer and portable builds
 
 ```powershell
-npm run dist            # release/<version>/Auralis-Setup-<version>.exe
-npm run dist:portable   # release/<version>/Auralis-Portable-<version>.exe
+npm run dist            # Setup + portable in one run (portable comes out ~12 MB larger)
+npm run dist:portable   # portable only, maximum compression
+npx electron-builder --win nsis   # Setup only
 ```
+
+`electron-builder` compresses the portable target better when it is the only
+target in the run: a combined `--win` run produced a 145.17 MB portable, while
+`--win portable` produced 133.33 MB from the same `win-unpacked` payload. Build
+the two artifacts separately for release.
 
 Packaging uses `electron-builder` with `npmRebuild: false`; the Electron main process is bundled by esbuild, so no native modules are rebuilt at package time. The bundled tools in `resources/bin` are copied into the app's `resources/bin` directory.
 
@@ -255,11 +326,11 @@ The current version is shown in **Settings → About**.
 
 **Downloads finish but the file will not play.** Keep FFmpeg in the app's `resources/bin` folder. Do not move the portable EXE out of its unpacked directory while it is running.
 
-**YouTube Music login did not stick.** Close the sign-in window after the account name appears, then restart. If the embedded Google sign-in is blocked, paste a `Cookie` header value under **Settings → Account → Manual cookie**. Do not share cookies with anyone.
+**YouTube Music login did not stick.** Click **Continue with Google** on the sign-in screen, or use **Settings → Account → Sign in with Google**. Auralis opens a separate, visible Chrome window for the login; finish the Google form there and the window closes itself after YouTube Music loads. The first sign-in asks for your password/2FA because this dedicated profile is separate from your main Chrome; it stays signed in until you sign out. If Chrome is not installed, the embedded Google window is used instead. Manual cookie paste remains under the cookie dialog. On the next cold start the session is decrypted after Electron finishes initialising, so the app should no longer bounce back to the sign-in screen. Do not share cookies with anyone.
 
 **The window is blank on a GPU driver.** Open **Settings → General**, turn off **Hardware acceleration**, and restart.
 
-**Search works but Home is slow on first launch.** The first feed request can take several seconds while YouTube Music builds a fresh anonymous session. Subsequent requests are cached for the session.
+**Search works but Home is slow on first launch.** The first feed request can take several seconds while YouTube Music builds a fresh feed session. Subsequent requests are cached for the session.
 
 ## Project layout
 

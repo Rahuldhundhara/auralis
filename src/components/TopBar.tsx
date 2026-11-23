@@ -1,11 +1,13 @@
-import { AudioLines, ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, ListMusic, UserRound } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
+import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
 import { isAndroidShell } from '../lib/platform';
 import { Artwork, IconButton } from './primitives';
 import { AndroidSearchLauncher, SearchField } from './SearchField';
+import { WindowControls } from './WindowControls';
 
 export function TopBar() {
   const canBack = useNavStore((state) => state.index > 0);
@@ -22,6 +24,9 @@ export function TopBar() {
   const hideMobileSearch = isAndroidShell && route.page === 'search';
   const session = useAppStore((state) => state.session);
   const openDialog = useUiStore((state) => state.openDialog);
+  const queueOpen = useUiStore((state) => state.queueOpen);
+  const setQueueOpen = useUiStore((state) => state.setQueueOpen);
+  const queueCount = usePlayerStore((state) => state.queue.length);
 
   return (
     <header className="top-bar">
@@ -43,13 +48,36 @@ export function TopBar() {
         </IconButton>
       </div>
       <div className="top-search">
-        {hideMobileSearch ? null : isAndroidShell ? <AndroidSearchLauncher /> : <SearchField />}
+        {hideMobileSearch ? null : isAndroidShell ? (
+          <AndroidSearchLauncher />
+        ) : (
+          <SearchField onIdentify={() => openDialog({ type: 'recognition' })} />
+        )}
       </div>
       <div className="top-actions">
-        <button type="button" className="recognize-pill" onClick={() => openDialog({ type: 'recognition' })} title="Identify a song">
-          <AudioLines size={17} />
-          <span>Identify</span>
-        </button>
+        {isAndroidShell ? (
+          <button
+            type="button"
+            className="recognize-pill"
+            onClick={() => openDialog({ type: 'recognition' })}
+            title="Identify a song"
+          >
+            <AudioLines size={17} />
+            <span>Identify</span>
+          </button>
+        ) : null}
+        {!isAndroidShell ? (
+          <button
+            type="button"
+            className={`queue-pill ${queueOpen ? 'is-active' : ''}`}
+            onClick={() => setQueueOpen(!queueOpen)}
+            title="Playing queue"
+          >
+            <ListMusic size={17} />
+            <span>Playing Queue</span>
+            {queueCount > 0 ? <em>{queueCount > 99 ? '99+' : queueCount}</em> : null}
+          </button>
+        ) : null}
         <button
           type="button"
           className="account-chip"
@@ -66,6 +94,7 @@ export function TopBar() {
           </span>
         </button>
       </div>
+      {!isAndroidShell ? <WindowControls className="is-topbar" /> : null}
     </header>
   );
 }

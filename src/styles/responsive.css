@@ -329,9 +329,28 @@ html.is-android .modal-layer {
   backdrop-filter: none !important;
 }
 
-html.is-android .track-row {
+/* No backdrop blur on Android: use opaque surfaces so text keeps its contrast. */
+html.is-android .top-bar,
+html.is-android .player-bar,
+html.is-android .mobile-nav,
+html.is-android .settings-nav {
+  background: var(--bg-elevated);
+}
+
+html.is-android .search-popover,
+html.is-android .toast,
+html.is-android .queue-drawer,
+html.is-android .modal,
+html.is-android .np-tabs,
+html.is-android .np-panel {
+  background: var(--bg-elevated);
+}
+
+/* Playlists can hold thousands of rows. Skip layout and paint for rows that
+   are off screen on every platform, not only the Android WebView. */
+.track-row {
   content-visibility: auto;
-  contain-intrinsic-size: auto 56px;
+  contain-intrinsic-size: auto 52px;
 }
 
 html.is-android .queue-row-actions {
@@ -345,16 +364,6 @@ html.is-android .queue-row-actions {
 }
 
 @media (max-width: 1380px) {
-  .home-hero-art {
-    right: 30px;
-    transform: translateY(-50%) scale(0.9);
-    transform-origin: center right;
-  }
-
-  .home-hero-copy {
-    width: min(590px, 62%);
-  }
-
   .player-bar {
     grid-template-columns: minmax(210px, 1fr) minmax(360px, 1.7fr) minmax(235px, 1fr);
     gap: 12px;
@@ -374,28 +383,33 @@ html.is-android .queue-row-actions {
     padding-inline: 26px;
   }
 
-  .home-hero {
-    min-height: 290px;
-    padding: 36px 34px;
+  .home-vibe-stage {
+    min-height: 280px;
+    padding: 28px 30px;
   }
 
-  .home-hero-copy {
-    width: min(570px, 68%);
+  .vibe-art {
+    width: 120px;
+    height: 120px;
+    flex-basis: 120px;
   }
 
-  .home-hero h1 {
-    font-size: clamp(38px, 5vw, 56px);
+  .vibe-title {
+    font-size: clamp(30px, 3.4vw, 44px);
   }
 
-  .home-hero-art {
-    right: 8px;
-    opacity: 0.78;
-    transform: translateY(-50%) scale(0.82);
+  .quick-grid {
+    gap: 9px;
   }
 
   .quick-card {
-    flex-basis: 285px;
-    width: 285px;
+    height: 70px;
+  }
+
+  .quick-art {
+    width: 60px;
+    height: 60px;
+    flex-basis: 60px;
   }
 
   .library-hero-art {
@@ -456,18 +470,21 @@ html.is-android .queue-row-actions {
     padding: 0;
   }
 
-  .home-hero-art {
+  .queue-pill {
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .queue-pill span,
+  .queue-pill em {
     display: none;
   }
 
-  .home-hero-copy {
-    width: min(680px, 100%);
-  }
-
-  .home-hero {
-    background:
-      radial-gradient(90% 160% at 8% 10%, rgba(var(--accent-rgb), 0.2), transparent 60%),
-      linear-gradient(145deg, var(--surface), var(--bg-elevated));
+  .vibe-art {
+    width: 104px;
+    height: 104px;
+    flex-basis: 104px;
   }
 
   .library-hero-art {
@@ -542,6 +559,35 @@ html.is-android .queue-row-actions {
   }
 }
 
+@media (max-width: 960px) {
+  .mood-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .mood-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mood-grid-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .vibe-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .vibe-art {
+    width: 120px;
+    height: 120px;
+    flex-basis: 120px;
+  }
+}
+
 @media (max-width: 920px) {
   :root {
     --sidebar-w: 78px;
@@ -556,11 +602,23 @@ html.is-android .queue-row-actions {
   .sidebar-label,
   .sidebar-badge,
   .sidebar-section-title,
+  .sidebar-brand-copy,
   .sidebar-playlist-text,
   .sidebar-create-card > span:last-child,
   .sidebar-signature,
   .sidebar-footer span {
     display: none;
+  }
+
+  .sidebar-brand {
+    justify-content: center;
+    padding: 4px 0 14px;
+  }
+
+  .sidebar-brand-logo {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
   }
 
   .sidebar-item {
@@ -603,6 +661,16 @@ html.is-android .queue-row-actions {
     padding: 0;
   }
 
+  .sidebar-account {
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  .sidebar-account .sidebar-account-copy,
+  .sidebar-account .sidebar-account-state {
+    display: none;
+  }
+
   .detail-cover {
     width: clamp(150px, 22vw, 185px);
   }
@@ -633,7 +701,7 @@ html.is-android .queue-row-actions {
   }
 
   .queue-drawer {
-    width: min(360px, 92vw);
+    width: min(404px, 94vw);
   }
 
   .np-layout {
@@ -703,36 +771,56 @@ html.is-android .queue-row-actions {
     display: none;
   }
 
-  .home-hero {
-    min-height: 260px;
-    padding: 28px;
-    border-radius: 23px;
+  .home-vibe-stage {
+    min-height: 210px;
+    padding: 22px;
+    border-radius: 18px;
   }
 
-  .home-hero h1 {
-    font-size: clamp(34px, 7.4vw, 48px);
+  .vibe-title {
+    font-size: clamp(26px, 6.2vw, 34px);
   }
 
-  .home-hero-copy > p {
+  .vibe-artists {
     font-size: 12.5px;
   }
 
-  .home-hero-actions .btn {
-    height: 36px;
+  .vibe-actions {
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  .vibe-play,
+  .vibe-radio {
+    height: 38px;
     padding-inline: 14px;
-    font-size: 11.5px;
+    font-size: 12px;
+  }
+
+  .quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .quick-card {
-    flex-basis: 252px;
-    width: 252px;
-    height: 56px;
+    height: 70px;
   }
 
   .quick-art {
-    width: 44px;
-    height: 44px;
-    flex-basis: 44px;
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+  }
+
+  .quick-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .quick-heading-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .detail-hero {
@@ -1270,10 +1358,10 @@ html.is-android .np-panel {
   }
 
   html.is-android .quick-card {
-    height: 64px;
+    height: 70px;
   }
 
-  html.is-android .home-hero {
+  html.is-android .home-vibe-stage {
     min-height: 270px;
     padding: 30px;
   }
@@ -1368,16 +1456,16 @@ html.is-android .np-panel {
     padding: 4px 14px 26px;
   }
 
-  html.is-android .home-hero {
+  html.is-android .home-vibe-stage {
     min-height: 220px;
     padding: 24px 26px;
   }
 
-  html.is-android .home-hero h1 {
-    font-size: clamp(32px, 6vh, 40px);
+  html.is-android .vibe-title {
+    font-size: clamp(26px, 5vh, 34px);
   }
 
-  html.is-android .home-hero-copy > p {
+  html.is-android .vibe-artists {
     max-width: 520px;
   }
 
@@ -1643,6 +1731,97 @@ html.is-android .eq-range {
 html.is-android .eq-frequency,
 html.is-android .eq-band .eq-value {
   font-size: 7.5px;
+}
+
+@media (max-height: 780px) {
+  .sidebar-brand {
+    padding: 2px 8px 10px;
+  }
+
+  .sidebar-brand-logo {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+    border-radius: 11px;
+  }
+
+  .sidebar-brand-copy strong {
+    font-size: 18px;
+  }
+
+  .sidebar-section {
+    gap: 2px;
+    padding: 5px 0;
+  }
+
+  /* At the 1024x680 minimum the two group labels cost more than they give.
+     Keep the Playlists label and let the nav breathe instead. */
+  .sidebar-top .sidebar-section-title {
+    display: none;
+  }
+
+  .sidebar-section-title {
+    padding: 7px 11px 3px;
+  }
+
+  .sidebar-item {
+    min-height: 35px;
+  }
+
+  .sidebar-playlists {
+    padding-top: 6px;
+  }
+
+  .playlist-scroll {
+    padding-bottom: 4px;
+  }
+
+  .sidebar-create-card {
+    margin-block: 2px;
+    padding: 7px 9px;
+  }
+
+  .sidebar-create-icon {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .sidebar-create-card span span {
+    display: none;
+  }
+
+  .sidebar-footer {
+    padding-top: 4px;
+  }
+
+  .sidebar-collapse {
+    height: 30px;
+  }
+
+  .sidebar-signature {
+    display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .quick-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-heading-actions {
+    flex-wrap: wrap;
+  }
+
+  .queue-now {
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 11px;
+  }
+
+  .queue-now-art-wrap {
+    width: 104px;
+    height: 104px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

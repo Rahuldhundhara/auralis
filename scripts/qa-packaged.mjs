@@ -16,6 +16,7 @@ const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-packaged-d
 const app = await electron.launch({
   executablePath,
   args: [`--user-data-dir=${userData}`],
+  env: { ...process.env, AURALIS_SKIP_LOGIN: '1' },
   timeout: 90000,
 });
 const page = await app.firstWindow({ timeout: 90000 });
@@ -35,7 +36,7 @@ async function idle(timeout = 30000) {
 }
 
 try {
-  await page.waitForSelector('.home-hero', { timeout: 90000 });
+  await page.waitForSelector('.home-vibe-stage', { timeout: 90000 });
   await idle();
   const info = await page.evaluate(() => window.auralis.app.info());
   console.log('[packaged info]', JSON.stringify({
@@ -139,5 +140,10 @@ try {
   await page.screenshot({ path: 'qa/packaged-final.png' });
   console.log('[packaged issues]', issues);
 } finally {
-  await app.close();
+  await app.close().catch(() => {});
+  try {
+    app.process().kill();
+  } catch {
+    // already exited
+  }
 }

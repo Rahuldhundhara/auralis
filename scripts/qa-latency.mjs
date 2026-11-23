@@ -6,7 +6,7 @@ import path from 'node:path';
 const outDir = path.resolve('qa', 'latency');
 fs.mkdirSync(outDir, { recursive: true });
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-qa-latency-'));
-const env = { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_DEBUG_STREAM: '1' };
+const env = { ...process.env, AURALIS_FORCE_PROD: '1', AURALIS_DEBUG_STREAM: '1', AURALIS_SKIP_LOGIN: '1' };
 
 const app = await electron.launch({
   args: ['.', `--user-data-dir=${userData}`],
