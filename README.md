@@ -122,6 +122,41 @@ The **YouTube Music** item in the sidebar opens a songs-only view of the signed-
 
 ### What's new in 1.1.3
 
+1.1.3 is the biggest UI and feature update since 1.1.0, together with a performance and package-size pass. Playback, downloads, the library and your saved settings keep working as before.
+
+#### New look and shell
+
+- One design system across the app: emerald `#10b981` as the new-install accent, `#090b0e` background, 256 px sidebar (78 px collapsed), 96 px player and a 64 px top bar. Saved user accents are untouched.
+- Manrope for UI and Bricolage Grotesque for display are bundled as WOFF2 with their SIL OFL texts, so no font is fetched at runtime.
+- Smoked-glass chrome: title bar, sidebar, top bar, search, player rail, dialogs, menus, toasts, Now Playing and the queue drawer are translucent and blurred (28-34 px) with a 1 px light seam; cards and lists stay flat. Opaque fallback when `backdrop-filter` is unavailable.
+- The Electron window is frameless and its minimize/maximize/close buttons now live in the top bar, which doubles as the drag region.
+- New Home hero: a thought line that rotates every 10 minutes from the current song and time of day, a live status kicker, and a now-playing card with real artwork, a four-bar level indicator, real progress and elapsed/total time plus **Open player**. The two actions are **Shuffle library** and **Start radio**.
+- Jump Back In is a compact real-history grid with **See all** and refresh; an empty library hides it instead of faking content.
+- The queue drawer is now **Now playing & queue** with a large current-track card (play/pause, like, open player, more, real progress). The top bar carries a live **Playing Queue** pill, and **Identify** moved into the search field.
+- Explore opens on a featured-track hero driven by the player store: real cover, a canvas palette from the artwork, a live waveform from an `AnalyserNode`, an idle **Auralis Discover** state, layouts down to 560 px and reduced-motion support.
+- Explore mood grid: 15 bundled CC0/CC-BY photos, each tile opening a real YouTube Music browse endpoint, 4/3/2 responsive columns and a hover lift.
+
+#### First run and account
+
+- Mandatory welcome screen: the shell and routes are not mounted until a YouTube Music account is connected, and signing out returns there.
+- Taste onboarding on first run: 18 curated languages, up to eight artists picked from the real charts and per-language artist search, a **Your artists** shelf on Home and **Edit preferences** in Settings. It can be skipped and never invents artists.
+- Sign-in is visible everywhere: a permanent sidebar account card and the top-bar chip. Signed in, the card shows the real avatar, display name, channel handle and a connection dot.
+- Chrome-window sign-in opens a visible real Chrome window with an Auralis-owned profile at `userData/chrome-login`; your own Chrome profile is never opened, copied or modified. Sign-in runs with no DevTools port, cookies are read by a short-lived headless Chrome after a graceful close, and a 5-minute timeout cancels. The embedded Google window remains as a fallback and the manual cookie dialog stays available.
+
+#### YouTube Music section
+
+- New **YouTube Music** page with two tabs. **History** is songs only, so official music videos, UGC clips and episodes never appear. **Playlists** lists every account playlist, including private ones.
+- Playlists open inline and stop at the header's real track count, so YouTube's recommendation tail is never appended. They also appear in **Library → Playlists** under **From YouTube Music**, deduplicated by id.
+
+#### Smarter playback
+
+- A local recommendation engine learns from play events (completed versus skipped), likes, downloads and recents with a 14-day half-life. It builds **On repeat** and **Discover mix** shelves, and hides them on a fresh install instead of faking personalisation.
+- Radio curation removes duplicate songs and same-name covers, avoids tracks played in the last 7 days, drops skip-prone artists, caps an artist at three rows per page, prevents back-to-back repeats and anchors loved artists at the front.
+- Stations re-seed themselves up to twice when they run dry instead of stopping with "the radio station has ended".
+- Playing from search always starts a related radio (top result and video cards included), and the queue auto-continues at the end.
+
+#### Performance and package size
+
 - Home shelves and long track rows now paint lazily. Off-screen rows skip layout and paint through `content-visibility`, so a full Home feed decodes about 60% fewer artwork pixels: 11.1 MP after scrolling the whole feed versus 27.8 MP before, and 4.8 MP while sitting on an idle shelf.
 - Thumbnails are clamped to 320 px at parse time; Now Playing asks for a 640 px cover on desktop and 960 px on Android. Home shelf art no longer downloads 544 px or 1200 px variants.
 - The disk caches are bounded: 128 MB HTTP cache, 64 MB media cache, and an artwork cache capped at 16 MB / 400 files. Upgrading clears the old oversized files once, through `.cache-version` and `image-cache/.version`.
