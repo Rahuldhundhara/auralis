@@ -52,17 +52,66 @@ export function queueForShelf(cards: Card[]): Track[] {
   return cards.map((card) => card.track).filter((track): track is Track => Boolean(track?.id));
 }
 
+const prefetchedAt = new Map<string, number>();
+
+/**
+ * Warm the stream URL before the user commits to a click. The main process
+ * deduplicates concurrent resolves, so a hover prefetch and the following
+ * click share one yt-dlp process instead of racing.
+ */
+export function prefetchTrack(track: Track | undefined) {
+  if (!track?.id || track.localPath) return;
+  const current = usePlayerStore.getState().current;
+  if (current?.id === track.id) return;
+  const last = prefetchedAt.get(track.id);
+  if (last && Date.now() - last < 90_000) return;
+  prefetchedAt.set(track.id, Date.now());
+  void window.auralis.player.prefetch(track).catch(() => {
+    prefetchedAt.delete(track.id);
+  });
+}
+
+const TYPE_LABELS = new Set([
+  'song',
+  'video',
+  'album',
+  'single',
+  'ep',
+  'playlist',
+  'podcast',
+  'episode',
+  'artist',
+  'profile',
+  'mix',
+]);
+
+/** Best-effort artist from a card subtitle; skip type labels, years and durations. */
+function artistsFromSubtitle(subtitle: string | undefined): Track['artists'] {
+  if (!subtitle) return [];
+  const parts = subtitle
+    .split(/[•·|]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const name = parts.find(
+    (part) =>
+      !TYPE_LABELS.has(part.toLowerCase()) &&
+      !/^\d{4}$/.test(part) &&
+      !/^\d+(?::\d+){1,2}$/.test(part),
+  );
+  return name ? [{ name }] : [];
+}
+
 export function trackFromCard(card: Card): Track | undefined {
   if (card.track) return card.track;
   if (['song', 'video', 'episode'].includes(card.type)) {
     return {
       id: card.id,
-      type: card.type === 'video' ? 'video' : card.type === 'episode' ? 'episode' : 'song',
+      type: card.type === 'episode' ? 'episode' : 'song',
       title: card.title,
-      artists: card.artists || (card.subtitle ? [{ name: card.subtitle.split('•')[0].trim() }] : []),
+      artists: card.artists?.length ? card.artists : artistsFromSubtitle(card.subtitle),
       thumbnail: card.thumbnail,
       duration: 0,
-      isVideo: card.type === 'video',
+      isVideo: false,
     };
   }
   return undefined;
@@ -94,7 +143,7 @@ async function fetchPageForCard(card: Card): Promise<BrowsePage | undefined> {
   if (card.type === 'album' || card.type === 'single' || card.type === 'ep') return window.auralis.yt.album(id);
   if (card.type === 'playlist') return window.auralis.yt.playlist(id);
   if (card.type === 'artist') return window.auralis.yt.artist(id);
-  if (card.type === 'podcast') return window.auralis.yt.browse(id);
+  if (card.type === 'podcast') return window.auralis.yt.podcast(id);
   return undefined;
 }
 
@@ -218,7 +267,22 @@ export async function toggleLikeTrack(track: Track) {
   }
 }
 
+/** Downloads are only meaningful for remote YouTube-backed tracks. */
+export function canDownloadTrack(track: Track): boolean {
+  if (track.localPath || track.source === 'local' || track.source === 'download') return false;
+  return Boolean(track.id);
+}
+
 export async function downloadTrackAction(track: Track) {
+  if (!canDownloadTrack(track)) {
+    toast(
+      track.localPath || track.source === 'local' || track.source === 'download'
+        ? 'This track is already available offline.'
+        : 'Downloads are not available for this track.',
+      'info',
+    );
+    return;
+  }
   await useAppStore.getState().downloadTrack(track);
 }
 
@@ -273,14 +337,18 @@ export function showTrackMenu(track: Track, event: { clientX: number; clientY: n
         ]
       : []),
     {
-      label: downloaded ? 'Show downloaded file' : 'Download',
+      label: downloaded
+        ? 'Show downloaded file'
+        : canDownloadTrack(track)
+          ? 'Download'
+          : 'Download unavailable',
       icon: downloaded ? FolderCheck : Download,
       onClick: () => {
         if (downloaded) {
           const item = app.library.downloads.find((entry) => entry.track.id === track.id && entry.status === 'done');
           if (item?.path) void window.auralis.app.showItemInFolder(item.path);
         } else {
-          void app.downloadTrack(track);
+          void downloadTrackAction(track);
         }
       },
     },

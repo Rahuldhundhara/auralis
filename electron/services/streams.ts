@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
 import { innertube } from './innertube';
+import { playableVideoId } from './ytm-parse';
 import { ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
@@ -232,7 +233,7 @@ export class StreamService {
       '-f',
       qualityFormat(quality),
       '-g',
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+      `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(track.id) || track.id)}`,
     ];
     const { stdout } = await runYtdlp(args);
     const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
@@ -261,7 +262,7 @@ export class StreamService {
     if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
     fastLastRequestAt = Date.now();
     try {
-      const payload = await innertube.playerMedia(track.id);
+      const payload = await innertube.playerMedia(playableVideoId(track.id) || track.id);
       const format = pickMediaFormat(payload, quality);
       if (!format) {
         if (process.env.AURALIS_DEBUG_STREAM) {
@@ -409,7 +410,7 @@ export class StreamService {
       'vtt',
       '-o',
       path.join(dir, '%(id)s.%(ext)s'),
-      `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+      `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(videoId) || videoId)}`,
     ];
     try {
       await runYtdlp(args, 120_000);
@@ -441,7 +442,7 @@ export class StreamService {
       qualityFormat(settingsStore.get().downloadQuality === 'high' ? 'high' : settingsStore.get().downloadQuality),
       '-o',
       output,
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+      `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(track.id) || track.id)}`,
     ];
 
     const id = newId('dl');

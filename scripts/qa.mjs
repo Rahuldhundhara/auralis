@@ -1,8 +1,9 @@
 import { _electron as electron } from 'playwright-core';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const shotsDir = path.resolve('qa');
+const shotsDir = path.resolve(process.env.AURALIS_QA_SHOTS || (process.platform === 'linux' ? 'qa/linux' : 'qa'));
 fs.mkdirSync(shotsDir, { recursive: true });
 const issues = [];
 let step = 0;
@@ -16,7 +17,11 @@ async function shot(page, name) {
 }
 
 const app = await electron.launch({
-  args: ['.', `--user-data-dir=${path.join(process.env.TEMP || '.', 'auralis-qa-userdata')}`],
+  args: [
+    '.',
+    `--user-data-dir=${path.join(os.tmpdir(), 'auralis-qa-userdata')}`,
+    ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+  ],
   cwd: process.cwd(),
   env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', AURALIS_FORCE_PROD: '1', AURALIS_SKIP_LOGIN: '1' },
   timeout: 60000,
@@ -38,7 +43,7 @@ page.on('console', (message) => {
 await page.waitForLoadState('domcontentloaded');
 await page.waitForSelector('.app-shell', { timeout: 60000 });
 try {
-  await page.waitForSelector('.home-hero', { timeout: 30000 });
+  await page.waitForSelector('.dynamic-hero', { timeout: 30000 });
 } catch {
   issues.push('[home] hero did not appear');
 }
@@ -67,7 +72,7 @@ console.log('[shell]', JSON.stringify(shell, null, 2));
 await shot(page, 'home');
 
 async function clickSidebar(text) {
-  const item = page.locator('.sidebar-item', { hasText: text }).first();
+  const item = page.locator('.sidebar-item, .sidebar-settings', { hasText: text }).first();
   await item.click();
   await page.waitForTimeout(1800);
 }

@@ -94,6 +94,7 @@ export function TopBar() {
           </span>
         </button>
       </div>
+      {!isAndroidShell ? <div className="topbar-drag-region" aria-hidden="true" /> : null}
       {!isAndroidShell ? <WindowControls className="is-topbar" /> : null}
     </header>
   );

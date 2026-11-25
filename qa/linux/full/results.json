@@ -1,0 +1,366 @@
+{
+  "checks": [
+    {
+      "name": "home renders hero and shelves",
+      "ok": true,
+      "detail": {
+        "shelves": 6,
+        "cards": 122
+      }
+    },
+    {
+      "name": "explore tabs render live shelves",
+      "ok": true,
+      "detail": {
+        "Explore": {
+          "shelves": 5,
+          "cards": 96
+        },
+        "Charts": {
+          "shelves": 3,
+          "cards": 50
+        },
+        "New": {
+          "shelves": 1,
+          "cards": 131
+        },
+        "Moods": {
+          "shelves": 2,
+          "cards": 49
+        },
+        "moodCards": 49
+      }
+    },
+    {
+      "name": "search all filters return results",
+      "ok": true,
+      "detail": {
+        "all": 26,
+        "Songs": 5,
+        "Videos": 3,
+        "Albums": 3,
+        "Artists": 3,
+        "Playlists": 6,
+        "Podcasts": 6
+      }
+    },
+    {
+      "name": "song playback starts and advances",
+      "ok": true,
+      "detail": {
+        "before": "",
+        "title": "Tera Yaar Hoon Main",
+        "time": "0:01"
+      }
+    },
+    {
+      "name": "liked song appears in library and can be unliked",
+      "ok": true,
+      "detail": {
+        "before": 0,
+        "afterLike": 1,
+        "afterUnlike": 0
+      }
+    },
+    {
+      "name": "search result starts related radio and auto-continues",
+      "ok": true,
+      "detail": {
+        "results": 5,
+        "rows": 50,
+        "remaining": 0,
+        "before": "Tainu Khabar Nahi (From \"Munjya\")",
+        "after": "Apna Bana Le (From \"Bhediya\")",
+        "radioRows": 49
+      }
+    },
+    {
+      "name": "album detail opens with tracks and back works",
+      "ok": true,
+      "detail": {
+        "hero": "Kesariya",
+        "rows": 1
+      }
+    },
+    {
+      "name": "artist detail opens with sections",
+      "ok": true,
+      "detail": {
+        "hero": "Atif Aslam",
+        "shelves": 9
+      }
+    },
+    {
+      "name": "playlist detail opens live playlist",
+      "ok": true,
+      "detail": {
+        "hero": "Bollywood Hitlist",
+        "rows": 50
+      }
+    },
+    {
+      "name": "podcast detail opens episodes",
+      "ok": true,
+      "detail": {
+        "hero": "The Daily",
+        "rows": 20
+      }
+    },
+    {
+      "name": "queue can reorder and remove upcoming tracks",
+      "ok": true,
+      "detail": {
+        "before": [
+          "Zamaana Lage",
+          "Nazar Lagi",
+          "Yeh Mausam Ki Baarish - Trending",
+          "Tum Ho Toh - Acoustic (Female Version)",
+          "Tumhara Mera Milna Likha Toh Hoga Kahi (One Side Love 樗)",
+          "Kaafi Hai Na",
+          "Sirf Tum",
+          "May 13 May 13 - Kalank Trending Viral Version",
+          "Tainu Khabar Nahi (From \"Munjya\")",
+          "Arz Kiya Hai | Coke Studio Bharat",
+          "Paro",
+          "Humsafar Humraaz Tu",
+          "Jaan Nisaar (Arijit) - Trending Version",
+          "Barbaad (Movie: Saiyaara)",
+          "Ishq (From \"Lost;Found\")",
+          "sun saawariya",
+          "Gehra Hua (From \"Dhurandhar\")",
+          "Hum tere pyar mein (Reprise)",
+          "Man Chala",
+          "Teri Jhuki Nazar (Film Version)",
+          "Sitaare (From \"Ikkis\")",
+          "Tu Hain Toh (From \"Mr. And Mrs. Mahi\")",
+          "Raanjhan",
+          "Meri Banogi Kya (Reprise)",
+          "O Maahi",
+          "Rang Lageya",
+          "Akhiyaan Gulaab",
+          "Jhol (Acoustic)",
+          "Sajni",
+          "Khat",
+          "Mile Jo Sukoon",
+          "Mann Mera",
+          "Kalank (Title Track)",
+          "Kaise Ab Kahein [From \"Gutar Gu\"] (feat. Hrishi Giridhar & Pratik Gangavane)",
+          "Jeena Jeena",
+          "Marham (Pehle Bhi Main)",
+          "Dhun (Movie: Saiyaara)",
+          "Qayde Se - Film Version",
+          "Barbaad Reprise - Female (Movie: Saiyaara)",
+          "Vaaroon Forever (From “Mirzapur The Movie”)",
+          "Apna Bana Le (From \"Bhediya\")",
+          "Sahiba",
+          "Hai Shaam Tu Tareef Mai",
+          "Tere Aas Paas Din Saara (From \"Gutar Gu Season 3\", Reprised)",
+          "Tumse Behtar (From \"Sunny Sanskari Ki Tulsi Kumari\")",
+          "Tum Se",
+          "Dooriyan",
+          "Khuda Jaane - Happily Ever After (From \"Bachna Ae Haseeno\")",
+          "Qaafirana"
+        ],
+        "after": [
+          "Nazar Lagi",
+          "Zamaana Lage",
+          "Yeh Mausam Ki Baarish - Trending",
+          "Tum Ho Toh - Acoustic (Female Version)",
+          "Tumhara Mera Milna Likha Toh Hoga Kahi (One Side Love 樗)",
+          "Kaafi Hai Na",
+          "Sirf Tum",
+          "May 13 May 13 - Kalank Trending Viral Version",
+          "Tainu Khabar Nahi (From \"Munjya\")",
+          "Arz Kiya Hai | Coke Studio Bharat",
+          "Paro",
+          "Humsafar Humraaz Tu",
+          "Jaan Nisaar (Arijit) - Trending Version",
+          "Barbaad (Movie: Saiyaara)",
+          "Ishq (From \"Lost;Found\")",
+          "sun saawariya",
+          "Gehra Hua (From \"Dhurandhar\")",
+          "Hum tere pyar mein (Reprise)",
+          "Man Chala",
+          "Teri Jhuki Nazar (Film Version)",
+          "Sitaare (From \"Ikkis\")",
+          "Tu Hain Toh (From \"Mr. And Mrs. Mahi\")",
+          "Raanjhan",
+          "Meri Banogi Kya (Reprise)",
+          "O Maahi",
+          "Rang Lageya",
+          "Akhiyaan Gulaab",
+          "Jhol (Acoustic)",
+          "Sajni",
+          "Khat",
+          "Mile Jo Sukoon",
+          "Mann Mera",
+          "Kalank (Title Track)",
+          "Kaise Ab Kahein [From \"Gutar Gu\"] (feat. Hrishi Giridhar & Pratik Gangavane)",
+          "Jeena Jeena",
+          "Marham (Pehle Bhi Main)",
+          "Dhun (Movie: Saiyaara)",
+          "Qayde Se - Film Version",
+          "Barbaad Reprise - Female (Movie: Saiyaara)",
+          "Vaaroon Forever (From “Mirzapur The Movie”)",
+          "Apna Bana Le (From \"Bhediya\")",
+          "Sahiba",
+          "Hai Shaam Tu Tareef Mai",
+          "Tere Aas Paas Din Saara (From \"Gutar Gu Season 3\", Reprised)",
+          "Tumse Behtar (From \"Sunny Sanskari Ki Tulsi Kumari\")",
+          "Tum Se",
+          "Dooriyan",
+          "Khuda Jaane - Happily Ever After (From \"Bachna Ae Haseeno\")",
+          "Qaafirana"
+        ],
+        "afterRemove": [
+          "Zamaana Lage",
+          "Yeh Mausam Ki Baarish - Trending",
+          "Tum Ho Toh - Acoustic (Female Version)",
+          "Tumhara Mera Milna Likha Toh Hoga Kahi (One Side Love 樗)",
+          "Kaafi Hai Na",
+          "Sirf Tum",
+          "May 13 May 13 - Kalank Trending Viral Version",
+          "Tainu Khabar Nahi (From \"Munjya\")",
+          "Arz Kiya Hai | Coke Studio Bharat",
+          "Paro",
+          "Humsafar Humraaz Tu",
+          "Jaan Nisaar (Arijit) - Trending Version",
+          "Barbaad (Movie: Saiyaara)",
+          "Ishq (From \"Lost;Found\")",
+          "sun saawariya",
+          "Gehra Hua (From \"Dhurandhar\")",
+          "Hum tere pyar mein (Reprise)",
+          "Man Chala",
+          "Teri Jhuki Nazar (Film Version)",
+          "Sitaare (From \"Ikkis\")",
+          "Tu Hain Toh (From \"Mr. And Mrs. Mahi\")",
+          "Raanjhan",
+          "Meri Banogi Kya (Reprise)",
+          "O Maahi",
+          "Rang Lageya",
+          "Akhiyaan Gulaab",
+          "Jhol (Acoustic)",
+          "Sajni",
+          "Khat",
+          "Mile Jo Sukoon",
+          "Mann Mera",
+          "Kalank (Title Track)",
+          "Kaise Ab Kahein [From \"Gutar Gu\"] (feat. Hrishi Giridhar & Pratik Gangavane)",
+          "Jeena Jeena",
+          "Marham (Pehle Bhi Main)",
+          "Dhun (Movie: Saiyaara)",
+          "Qayde Se - Film Version",
+          "Barbaad Reprise - Female (Movie: Saiyaara)",
+          "Vaaroon Forever (From “Mirzapur The Movie”)",
+          "Apna Bana Le (From \"Bhediya\")",
+          "Sahiba",
+          "Hai Shaam Tu Tareef Mai",
+          "Tere Aas Paas Din Saara (From \"Gutar Gu Season 3\", Reprised)",
+          "Tumse Behtar (From \"Sunny Sanskari Ki Tulsi Kumari\")",
+          "Tum Se",
+          "Dooriyan",
+          "Khuda Jaane - Happily Ever After (From \"Bachna Ae Haseeno\")",
+          "Qaafirana"
+        ]
+      }
+    },
+    {
+      "name": "sleep timer sets, expires and clears",
+      "ok": true,
+      "detail": {
+        "label": "Sleep timer: 5 min left",
+        "afterExpiry": "Sleep timer",
+        "playLabel": "Play"
+      }
+    },
+    {
+      "name": "local playlist create, add, reorder and remove",
+      "ok": true,
+      "detail": {
+        "before": [
+          "Tainu Khabar Nahi (From \"Munjya\")",
+          "Tainu Khabar Nahi - Arijit Singh Vocals Only"
+        ],
+        "moved": [
+          "Tainu Khabar Nahi - Arijit Singh Vocals Only",
+          "Tainu Khabar Nahi (From \"Munjya\")"
+        ],
+        "afterRemove": [
+          "Tainu Khabar Nahi - Arijit Singh Vocals Only"
+        ]
+      }
+    },
+    {
+      "name": "download completes and plays from disk",
+      "ok": true,
+      "detail": {
+        "title": "Tainu Khabar Nahi (From \"Munjya\")",
+        "path": "/tmp/auralis-qa-full-dl-kD3tlK/8zkUFoXku0Y.m4a",
+        "size": 3048719
+      }
+    },
+    {
+      "name": "settings tabs and theme persist",
+      "ok": true,
+      "detail": {
+        "tabs": {
+          "General": 3,
+          "Appearance": 3,
+          "Playback & EQ": 3,
+          "Lyrics": 2,
+          "Downloads": 2,
+          "Integrations": 3,
+          "Account": 3,
+          "About": 2
+        },
+        "light": "light",
+        "dark": "dark"
+      }
+    },
+    {
+      "name": "lyrics panel loads a real provider",
+      "ok": true,
+      "detail": {
+        "provider": "LyricsPlus",
+        "preview": "LyricsPlus\nTranslate\nV1\nMaine chaha tujhe meri khata nahi\nV1\nMeri khata hai ki tujhe pata nahi\nV1\nMaine chaha tujhe meri khata nahi\nV1\nMeri "
+      }
+    },
+    {
+      "name": "now playing queue tab opens",
+      "ok": true,
+      "detail": {
+        "queueRows": 1
+      }
+    },
+    {
+      "name": "search history is recorded",
+      "ok": true,
+      "detail": {
+        "chips": 6
+      }
+    },
+    {
+      "name": "downloads page filters and stats",
+      "ok": true,
+      "detail": {
+        "rows": 1,
+        "stats": 3
+      }
+    },
+    {
+      "name": "signed-out account UI opens safely",
+      "ok": true,
+      "detail": "PREFERENCES\nSettings\n\nShape Auralis around your library, your audio gear and the way you listen.\n\nGeneral\nAppearance\nPlayback & EQ\nLyrics\nDownloads\nIntegrations\nAccount\nAbout\nAccou"
+    },
+    {
+      "name": "restart restores queue and theme",
+      "ok": true,
+      "detail": {
+        "title": "Tainu Khabar Nahi (From \"Munjya\")",
+        "savedQueueTitle": "Tainu Khabar Nahi (From \"Munjya\")",
+        "theme": "dark"
+      }
+    }
+  ],
+  "issues": []
+}

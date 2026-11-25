@@ -19,6 +19,7 @@ export type Route =
   | { page: 'playlist'; id: string }
   | { page: 'artist'; id: string }
   | { page: 'podcast'; id: string }
+  | { page: 'podcasts' }
   | { page: 'browse'; id?: string; params?: string; title?: string }
   | { page: 'library'; tab?: 'playlists' | 'songs' | 'albums' | 'artists' | 'downloads' | 'youtube' }
   | { page: 'youtube'; tab?: 'history' | 'playlists' }

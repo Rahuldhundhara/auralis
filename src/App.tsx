@@ -26,6 +26,7 @@ import { Splash } from './components/Splash';
 import { Onboarding } from './pages/Onboarding';
 import { HomePage } from './pages/Home';
 import { ExplorePage } from './pages/Explore';
+import { PodcastsPage } from './pages/Podcasts';
 import { SearchPage } from './pages/Search';
 import { DetailPage } from './pages/Detail';
 import { LibraryPage } from './pages/Library';
@@ -109,6 +110,8 @@ function RouteView({ route }: { route: Route }) {
       return <DetailPage kind="artist" id={route.id} />;
     case 'podcast':
       return <DetailPage kind="podcast" id={route.id} />;
+    case 'podcasts':
+      return <PodcastsPage />;
     case 'browse':
       return <DetailPage kind="browse" id={route.id} params={route.params} title={route.title} />;
     case 'library':

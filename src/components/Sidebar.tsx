@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Podcast,
   Plus,
   Search,
   Settings,
@@ -136,6 +137,13 @@ export function Sidebar() {
             collapsed={collapsed}
             active={route.page === 'search'}
             onClick={() => navigate({ page: 'search' })}
+          />
+          <NavItem
+            icon={<Podcast size={20} />}
+            label="Podcasts"
+            collapsed={collapsed}
+            active={route.page === 'podcasts'}
+            onClick={() => navigate({ page: 'podcasts' })}
           />
         </nav>
 

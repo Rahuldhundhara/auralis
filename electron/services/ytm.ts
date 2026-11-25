@@ -27,16 +27,16 @@ import { settingsStore, sessionStore } from './store';
 import { streams } from './streams';
 
 export const SEARCH_FILTERS: Record<string, string> = {
-  songs: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D',
-  videos: 'EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D',
-  albums: 'EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D',
-  artists: 'EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D',
-  playlists: 'EgWKAQIoAWoKEAkQChAFEAMQBA%3D%3D',
+  songs: 'EgWKAQIIAWoMEA4QChADEAQQCRAF',
+  videos: 'EgWKAQIQAWoMEA4QChADEAQQCRAF',
+  albums: 'EgWKAQIYAWoMEA4QChADEAQQCRAF',
+  artists: 'EgWKAQIgAWoMEA4QChADEAQQCRAF',
+  playlists: 'Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D',
   featuredPlaylists: 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D',
   communityPlaylists: 'EgeKAQQoAEABagoQAxAEEAoQCRAF',
-  podcasts: 'EgWKAQJQAWoKEAkQChAFEAMQBA%3D%3D',
-  episodes: 'EgWKAQJYAWoKEAkQChAFEAMQBA%3D%3D',
-  profiles: 'EgWKAQJYAWoSEAUQCRADEAQQEBAVEAoQDhAR',
+  podcasts: 'EgWKAQJQAWoMEA4QChADEAQQCRAF',
+  episodes: 'EgWKAQJIAWoMEA4QChADEAQQCRAF',
+  profiles: 'EgWKAQJYAWoMEA4QChADEAQQCRAF',
 };
 
 function syncLocale() {
@@ -52,6 +52,8 @@ function looksEmpty(page: BrowsePage): boolean {
 
 export class YtmService {
   private homeCache?: { at: number; page: BrowsePage };
+  private searchCache = new Map<string, { at: number; result: SearchResults }>();
+  private suggestionCache = new Map<string, { at: number; result: SearchSuggestion[] }>();
 
   private async browse(id?: string, params?: string, continuation?: string, login = false): Promise<any> {
     syncLocale();
@@ -119,6 +121,7 @@ export class YtmService {
       return parseBrowseContinuation(raw);
     }
     if (endpoint.browseId) return this.browsePage(endpoint.browseId, endpoint.params);
+    if (endpoint.params) return this.browsePage(undefined, endpoint.params);
     if (endpoint.playlistId) return this.playlist(endpoint.playlistId);
     if (endpoint.videoId) {
       const next = await this.next(endpoint);
@@ -266,14 +269,32 @@ export class YtmService {
       const raw = await innertube.search(query, filter, continuation);
       return parseSearchContinuation(raw);
     }
+    const key = `${query.trim().toLowerCase()}\u0000${filter || ''}`;
+    const cached = this.searchCache.get(key);
+    if (cached && Date.now() - cached.at < 2 * 60_000) return structuredClone(cached.result);
     const params = filter ? SEARCH_FILTERS[filter] || filter : undefined;
     const raw = await innertube.search(query, params);
-    return parseSearch(raw);
+    const result = parseSearch(raw);
+    this.searchCache.set(key, { at: Date.now(), result });
+    if (this.searchCache.size > 40) {
+      const oldest = [...this.searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) this.searchCache.delete(oldest[0]);
+    }
+    return structuredClone(result);
   }
 
   async searchSuggestions(query: string): Promise<SearchSuggestion[]> {
+    const key = query.trim().toLowerCase();
+    const cached = this.suggestionCache.get(key);
+    if (cached && Date.now() - cached.at < 60_000) return cached.result;
     const suggestions = await innertube.searchSuggestions(query);
-    return suggestions.map((text) => ({ text }));
+    const result = suggestions.map((text) => ({ text }));
+    this.suggestionCache.set(key, { at: Date.now(), result });
+    if (this.suggestionCache.size > 80) {
+      const oldest = [...this.suggestionCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) this.suggestionCache.delete(oldest[0]);
+    }
+    return result;
   }
 
   async next(endpoint: NavEndpoint, continuation?: string): Promise<NextResult> {

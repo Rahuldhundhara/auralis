@@ -581,3 +581,39 @@
     transform: none;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Native window controls — Linux packaged app                                 */
+/* -------------------------------------------------------------------------- */
+
+/* The titlebar is the only drag surface. The top bar must never swallow native
+   clicks after Home mounts, and Chromium does not inherit -webkit-app-region
+   into button/icon children, so opt every descendant out explicitly. */
+.titlebar {
+  z-index: 9999;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+
+.titlebar *,
+.titlebar .window-controls,
+.titlebar .window-btn,
+.top-bar,
+.top-bar * {
+  -webkit-app-region: no-drag;
+}
+
+.app-shell:has(.now-playing) .titlebar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Main's app shell hosts the window buttons in the top bar rather than a
+   separate titlebar. Keep that bar clickable and provide a dedicated strip for
+   dragging the frameless window. */
+.topbar-drag-region {
+  flex: 1;
+  min-width: 14px;
+  height: 100%;
+  -webkit-app-region: drag;
+}
