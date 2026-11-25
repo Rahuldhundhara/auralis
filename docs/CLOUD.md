@@ -86,3 +86,18 @@ When a domain is added later, put it in the nginx `server_name` and run certbot 
 ## Landing page
 
 `site/` is a static dark landing page with download links to the GitHub release, feature summary and API status card. nginx serves it from `/`; no build step is required.
+
+## Verification (25 November 2026)
+
+| Check | Result |
+| --- | --- |
+| `supabase/schema.sql` in SQL Editor | Success; all nine tables visible in Table Editor |
+| Email auth and user signups, `auralis://auth-callback` redirect | Enabled / added in dashboard |
+| Cloud sync tab at 1024x680 | Both cards render, horizontal overflow 0, panel overflow 0 |
+| End-to-end sign-in with a temporary user, then **Sync now** | UI showed `Signed in as`, `Sync complete.`, and a `lastSync` stamp |
+| Supabase `user_settings` row after sync | 1 record with the settings snapshot and matching `updatedAt` |
+| `GET /api/search?q=kesariya&limit=5` | 5 real results, including `NJAv_7lHUIU` (Kesariya from Brahmastra) |
+| Temporary QA user after verification | Deleted (`delete from auth.users where email = 'auralis-qa@example.com'`) |
+| `npm run typecheck` / `npm run build` | Pass |
+
+The QA user was created only for this check and removed afterwards; no real account data was used.
