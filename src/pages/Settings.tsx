@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Cloud,
   Disc3,
   Download,
   ExternalLink,
@@ -21,6 +22,7 @@ import {
   Music2,
   Palette,
   Play,
+  RefreshCw,
   RotateCcw,
   Settings2,
   ShieldCheck,
@@ -28,6 +30,7 @@ import {
   Sun,
   Terminal,
   Trash2,
+  Upload,
   UserRound,
   CirclePlay,
   Zap,
@@ -41,6 +44,21 @@ import { proxiedArtwork } from '../lib/artwork';
 import { TRANSLATION_LANGUAGES } from '../lib/languages';
 import { languageSummary } from '../lib/onboarding';
 import { isAndroidShell } from '../lib/platform';
+import {
+  applySnapshot,
+  backendHealth,
+  cloudConfig,
+  cloudSignIn,
+  cloudSignOut,
+  cloudSignUp,
+  cloudUser,
+  fetchSnapshot,
+  formatSyncTime,
+  lastSyncedAt,
+  pushSnapshot,
+  saveCloudConfig,
+  syncNow,
+} from '../lib/cloud';
 import { Button, IconButton, Range } from '../components/primitives';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
@@ -50,6 +68,7 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
   { id: 'lyrics', label: 'Lyrics', icon: <Music2 size={17} /> },
   { id: 'downloads', label: 'Downloads', icon: <Download size={17} /> },
   { id: 'integrations', label: 'Integrations', icon: <Link2 size={17} /> },
+  { id: 'cloud', label: 'Cloud sync', icon: <Cloud size={17} /> },
   { id: 'account', label: 'Account', icon: <UserRound size={17} /> },
   { id: 'about', label: 'About', icon: <ShieldCheck size={17} /> },
 ];
@@ -1064,6 +1083,184 @@ function IntegrationsTab() {
   );
 }
 
+function CloudTab() {
+  const [config, setConfig] = useState(cloudConfig);
+  const [account, setAccount] = useState<Awaited<ReturnType<typeof cloudUser>>>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [apiOnline, setApiOnline] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([cloudUser().catch(() => null), backendHealth()]).then(([user, healthy]) => {
+      if (!alive) return;
+      setAccount(user);
+      setApiOnline(healthy);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const run = async (label: string, action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await action();
+      setMessage(`${label} complete.`);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeConfig = (patch: Partial<ReturnType<typeof cloudConfig>>) => {
+    setConfig(saveCloudConfig(patch));
+  };
+
+  return (
+    <>
+      <SettingsCard
+        title="Cloud sync"
+        description="Optional. Your YouTube Music session stays separate; downloads stay on this device."
+        icon={<Cloud size={19} />}
+      >
+        {account ? (
+          <>
+            <SettingRow label="Signed in as" description={account.email || account.id}>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() =>
+                  void run('Sign out', async () => {
+                    await cloudSignOut();
+                    setAccount(null);
+                  })
+                }
+              >
+                <LogOut size={15} /> Sign out
+              </Button>
+            </SettingRow>
+            <SettingRow label="Last synced" description={formatSyncTime(lastSyncedAt())} />
+            <div className="settings-inline-actions">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<RefreshCw size={15} />}
+                disabled={busy}
+                onClick={() => void run('Sync', async () => void (await syncNow()))}
+              >
+                Sync now
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Upload size={15} />}
+                disabled={busy}
+                onClick={() => void run('Upload', async () => void (await pushSnapshot()))}
+              >
+                Upload
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Download size={15} />}
+                disabled={busy}
+                onClick={() =>
+                  void run('Download', async () => {
+                    const remote = await fetchSnapshot();
+                    if (!remote) throw new Error('No cloud data yet. Upload first.');
+                    await applySnapshot(remote.snapshot);
+                  })
+                }
+              >
+                Download
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <SettingRow label="Email" description="Use your Supabase Auth account.">
+              <input
+                className="text-input"
+                type="email"
+                value={email}
+                placeholder="you@example.com"
+                autoComplete="email"
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Password">
+              <input
+                className="text-input"
+                type="password"
+                value={password}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </SettingRow>
+            <div className="settings-inline-actions">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<LogIn size={15} />}
+                disabled={busy || !email || !password}
+                onClick={() =>
+                  void run('Sign in', async () => {
+                    setAccount(await cloudSignIn(email, password));
+                  })
+                }
+              >
+                Sign in
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !email || !password}
+                onClick={() =>
+                  void run('Account created', async () => {
+                    setAccount(await cloudSignUp(email, password));
+                  })
+                }
+              >
+                Create account
+              </Button>
+            </div>
+          </>
+        )}
+        {message ? <p className="setting-description">{message}</p> : null}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Your own backend"
+        description="Point Auralis at your Supabase project and VPS API. Publishable keys are safe to keep here."
+        icon={<Terminal size={19} />}
+      >
+        <SettingRow label="Supabase URL" description={config.url}>
+          <TextSetting value={config.url} placeholder="https://your-project.supabase.co" onSave={(url) => changeConfig({ url })} />
+        </SettingRow>
+        <SettingRow label="Publishable key" description="Stored only in this app.">
+          <TextSetting
+            value={config.anonKey}
+            type="password"
+            placeholder="sb_publishable_…"
+            onSave={(anonKey) => changeConfig({ anonKey })}
+          />
+        </SettingRow>
+        <SettingRow label="Backend API URL" description={apiOnline ? 'Backend reachable' : 'Backend not configured or offline'}>
+          <TextSetting value={config.apiUrl} placeholder="http://your-vps:8787" onSave={(apiUrl) => changeConfig({ apiUrl })} />
+        </SettingRow>
+      </SettingsCard>
+    </>
+  );
+}
+
 function AccountTab() {
   const session = useAppStore((state) => state.session);
   const login = useAppStore((state) => state.login);
@@ -1367,6 +1564,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
           {tab === 'lyrics' ? <LyricsTab /> : null}
           {tab === 'downloads' ? <DownloadsTab /> : null}
           {tab === 'integrations' ? <IntegrationsTab /> : null}
+          {tab === 'cloud' ? <CloudTab /> : null}
           {tab === 'account' ? <AccountTab /> : null}
           {tab === 'about' ? <AboutTab /> : null}
         </div>
@@ -1382,6 +1580,7 @@ const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
   lyrics: 'Provider order, translations and lyric keys.',
   downloads: 'Offline storage, quality and network proxy.',
   integrations: 'Last.fm, Discord and your YouTube Music session.',
+  cloud: 'Optional Supabase sign-in and library sync across devices.',
   account: 'Your connected account and local library.',
   about: 'Versions, bundled tools and open-source credits.',
 };

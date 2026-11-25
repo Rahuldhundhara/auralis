@@ -32,6 +32,7 @@ const api: AuralisApi = {
   },
   library: {
     get: () => invoke('library:get'),
+    replace: (data) => invoke('library:replace', data),
     like: (track) => invoke('library:like', track),
     unlike: (trackId) => invoke('library:unlike', trackId),
     isLiked: (trackId) => invoke('library:is-liked', trackId),

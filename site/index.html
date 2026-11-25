@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auralis — music, without the noise</title>
+    <meta name="description" content="A calm desktop client for your YouTube Music library. Playback, playlists, lyrics and cloud sync." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%23090b0e'/%3E%3Cpath d='M120 392 236 92h68l80 214 28-70 40 24-56 132h-64l-22-62h-52l-18 62z' fill='%2310b981'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="#top"><span class="brand-mark">A</span> Auralis</a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="https://github.com/Rahuldhundhara/auralis#readme">Docs</a>
+        <a class="nav-cta" href="https://github.com/Rahuldhundhara/auralis/releases/latest">Download</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <span class="eyebrow">Windows · Android · Linux</span>
+        <h1>Your music.<br /><em>Without the noise.</em></h1>
+        <p>
+          Auralis is a calm, fast desktop client for YouTube Music. Your history, playlists,
+          radios and lyrics stay in one place — and optional cloud sync keeps them together on every device.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/Rahuldhundhara/auralis/releases/latest">Download for Windows</a>
+          <a class="button ghost" href="https://github.com/Rahuldhundhara/auralis">View on GitHub</a>
+        </div>
+        <p class="fineprint">GPL-3.0 · Not affiliated with YouTube or Google.</p>
+      </section>
+
+      <section class="features" id="features">
+        <article>
+          <span class="feature-icon">◉</span>
+          <h2>Everything you play</h2>
+          <p>Home, Explore, Search, a 15-mood grid, YouTube Music history and private playlists — all on your own account.</p>
+        </article>
+        <article>
+          <span class="feature-icon">≋</span>
+          <h2>Player that listens</h2>
+          <p>Queue-first Now Playing, synced lyrics, a 10-band EQ, sleep timer, radio and gapless playback.</p>
+        </article>
+        <article>
+          <span class="feature-icon">⤓</span>
+          <h2>Yours to keep</h2>
+          <p>Offline downloads and local playlists stay on your PC. Optional Supabase sync carries settings and library across devices.</p>
+        </article>
+      </section>
+
+      <section class="sync">
+        <div>
+          <span class="eyebrow">Optional cloud sync</span>
+          <h2>One library, every device.</h2>
+          <p>Sign in with your own Supabase Auth account in Settings → Cloud sync. Row-level security keeps your data private; your YouTube Music session and downloaded audio never leave the device.</p>
+        </div>
+        <div class="code-card">
+          <span>GET /health</span>
+          <code>{"ok":true,"service":"auralis-api"}</code>
+          <span>GET /api/search?q=…</span>
+          <code>{"query":"…","results":[…]}</code>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Auralis · Music, without the noise</span>
+      <a href="https://github.com/Rahuldhundhara/auralis/releases/latest">Latest release →</a>
+    </footer>
+  </body>
+</html>

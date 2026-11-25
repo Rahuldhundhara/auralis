@@ -43,6 +43,7 @@ export interface AuralisApi {
   };
   library: {
     get(): Promise<LibraryData>;
+    replace(data: LibraryData): Promise<LibraryData>;
     like(track: Track): Promise<LibraryData>;
     unlike(trackId: string): Promise<LibraryData>;
     isLiked(trackId: string): Promise<boolean>;

@@ -818,6 +818,9 @@ function registerIpc() {
   settingsPatchHandlers();
 
   ipcMain.handle('library:get', () => libraryService.get());
+  ipcMain.handle('library:replace', (_event, data: Parameters<typeof libraryService.replace>[0]) =>
+    libraryService.replace(data),
+  );
   ipcMain.handle('library:like', async (_event, track: Track) => {
     const data = libraryService.like(track);
     if (settingsStore.get().autoDownloadLiked) {

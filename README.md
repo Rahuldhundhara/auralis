@@ -39,6 +39,7 @@ Auralis is a complete desktop front end for YouTube Music. It talks to the same 
 | **YouTube Music** | Signed-in account history and every account playlist in a songs-only view, with private playlists and inline track lists |
 | **Downloads** | Offline audio downloads with live progress, cancel, delete and auto-download for liked songs |
 | **Integrations** | YouTube Music account, Last.fm scrobbling, Discord Rich Presence and Shazam recognition |
+| **Cloud sync** | Optional Supabase Auth sign-in and private settings/library sync across devices; YouTube Music session and downloads stay local — see [docs/CLOUD.md](docs/CLOUD.md) |
 | **Desktop** | Frameless window, animated cold-start logo, tray icon, close-to-tray, keyboard shortcuts and Windows media controls; the separate Linux 1.0.2 builds add MPRIS |
 | **Look and feel** | Smoked-glass shell over flat content, bundled Manrope and Bricolage Grotesque, emerald default accent, dark/black/light/system themes, eight accent colours, 10-band EQ with presets and bass boost |
 

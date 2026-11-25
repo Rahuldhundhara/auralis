@@ -8,6 +8,7 @@ export type SettingsTab =
   | 'lyrics'
   | 'downloads'
   | 'integrations'
+  | 'cloud'
   | 'account'
   | 'about';
 

@@ -216,6 +216,7 @@ const api: AuralisApi = {
 
   library: {
     get: async () => libraryService.get(),
+    replace: async (data) => libraryService.replace(data),
     like: async (track) => {
       const data = libraryService.like(track);
       if (settingsStore.get().autoDownloadLiked) {

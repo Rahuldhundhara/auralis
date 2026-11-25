@@ -6,6 +6,7 @@ resources/bin/*.exe
 *.log
 .env
 .env.*
+!.env.example
 
 # Android release artifacts are distributed through GitHub Releases.
 Auralis-*-android.apk
