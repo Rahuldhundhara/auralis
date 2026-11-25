@@ -15,6 +15,13 @@ import type {
 
 export type Raw = any;
 
+/** Normalize YouTube Music browse wrappers into a playable video id. */
+export function playableVideoId(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const id = value.startsWith('MPED') && value.length === 15 ? value.slice(4) : value;
+  return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : undefined;
+}
+
 export const textOf = (value: Raw): string => {
   if (!value) return '';
   if (typeof value === 'string') return value;
@@ -330,7 +337,8 @@ export function parseResponsiveItem(
     .map((c: Raw) => textOf(c?.musicResponsiveListItemFixedColumnRenderer?.text))
     .join(' ');
   const duration = parsedSubtitle.duration || parseDuration(fixed);
-  const id = watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId;
+  const rawId = watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId;
+  const id = playableVideoId(rawId) || rawId;
   if (!id) return undefined;
   const context = parsePlaylistContext(renderer);
   return {
@@ -459,7 +467,7 @@ function parseMultiRowItem(renderer: Raw): Track | undefined {
     title,
     artists: [],
     duration: humanDurationSeconds(durationText),
-    thumbnail: thumbnailsOf(renderer?.thumbnail),
+    thumbnail: thumbnailsOf(renderer),
     isVideo: false,
     source: 'youtube',
   };

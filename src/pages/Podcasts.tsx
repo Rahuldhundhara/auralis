@@ -24,8 +24,7 @@ import type { SearchResults, Shelf as ShelfType } from '@shared/types';
 import { useAsync } from '../lib/useAsync';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
-import { proxiedArtwork } from '../lib/image';
-import { Button, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
+import { Artwork, Button, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 import { PodcastScene } from '../components/PodcastScene';
@@ -133,7 +132,13 @@ export function PodcastsPage() {
     };
   }, [data, submitted, activeTheme.label]);
 
-  const episodes = useMemo(() => (data ? dedupe(data.episodes.episodes || []) : []), [data]);
+  const episodes = useMemo(() => {
+    if (!data) return [];
+    const fallbackArt = (data.shows.podcasts || []).find((show) => show.thumbnail)?.thumbnail;
+    return dedupe(data.episodes.episodes || []).map((episode) =>
+      episode.thumbnail ? episode : { ...episode, thumbnail: fallbackArt },
+    );
+  }, [data]);
   const latestShows = useMemo(() => (data ? dedupe(data.shows.podcasts || []).slice(0, 6) : []), [data]);
   const featuredEpisode = episodes[0];
   const categoryNumber = Math.max(
@@ -306,7 +311,7 @@ export function PodcastsPage() {
                 onClick={() => navigate({ page: 'podcast', id: show.browseId || show.id })}
               >
                 <span className="podcast-quick-art">
-                  {show.thumbnail ? <img src={proxiedArtwork(show.thumbnail)} alt="" loading="lazy" /> : <Podcast size={22} />}
+                  {show.thumbnail ? <Artwork src={show.thumbnail} alt="" /> : <Podcast size={22} />}
                 </span>
                 <span className="podcast-quick-text">
                   <strong>{show.title}</strong>

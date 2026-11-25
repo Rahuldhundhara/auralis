@@ -2091,17 +2091,13 @@
   text-transform: uppercase;
 }
 
-.podcasts-hero-scene .pc-drift {
-  animation: podcasts-scene-drift 18s ease-in-out infinite alternate;
-  transform-origin: center;
-}
-
-.podcasts-hero-scene .pc-pulse {
-  animation: podcasts-scene-pulse 4.2s ease-in-out infinite;
-}
-
+/* Keep the scene static between category crossfades. Continuous transform
+   animations on a full-bleed SVG force repaints and were the main source of
+   scroll jank on the podcast page. */
+.podcasts-hero-scene .pc-drift,
+.podcasts-hero-scene .pc-pulse,
 .podcasts-hero-scene .pc-float {
-  animation: podcasts-scene-float 7s ease-in-out infinite alternate;
+  animation: none;
 }
 
 @keyframes podcasts-scene-drift {

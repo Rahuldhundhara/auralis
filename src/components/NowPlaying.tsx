@@ -9,7 +9,6 @@ import {
   ListMusic,
   ListPlus,
   MicVocal,
-  MoreHorizontal,
   Radio,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
@@ -19,7 +18,7 @@ import { useUiStore } from '../stores/ui';
 import { artistsLine, formatDuration, formatLongDuration } from '../lib/format';
 import { isAndroidShell } from '../lib/platform';
 import { proxiedArtwork, sizedArtwork } from '../lib/artwork';
-import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
+import { downloadTrackAction, toggleLikeTrack } from '../lib/actions';
 import { Artwork, Button, IconButton } from './primitives';
 import { SeekBar, TransportControls, VolumeControl } from './PlayerBar';
 import { LyricsPanel } from './LyricsPanel';
@@ -233,20 +232,13 @@ export function NowPlaying() {
           dragStart.current = null;
         }}
       >
-        <IconButton label="Close now playing" size="md" onClick={() => setOpen(false)}>
+        <IconButton label="Back to player" size="md" onClick={() => setOpen(false)}>
           <ChevronDown size={22} />
         </IconButton>
         <span className="np-header-title">Now playing</span>
         <div className="np-header-actions">
           <IconButton label="Queue" size="sm" active={tab === 'queue'} onClick={() => setTab('queue')}>
             <ListMusic size={18} />
-          </IconButton>
-          <IconButton
-            label="More options"
-            size="sm"
-            onClick={(event) => showTrackMenu(current, event)}
-          >
-            <MoreHorizontal size={18} />
           </IconButton>
         </div>
       </header>
@@ -330,9 +322,6 @@ export function NowPlaying() {
             </IconButton>
             <IconButton label="Add to playlist" size="md" onClick={() => openDialog({ type: 'add-to-playlist', track: current })}>
               <ListPlus size={21} />
-            </IconButton>
-            <IconButton label="More options" size="md" onClick={(event) => showTrackMenu(current, event)}>
-              <MoreHorizontal size={21} />
             </IconButton>
           </div>
           <SeekBar />

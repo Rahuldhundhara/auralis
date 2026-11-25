@@ -27,16 +27,16 @@ import { settingsStore, sessionStore } from './store';
 import { streams } from './streams';
 
 export const SEARCH_FILTERS: Record<string, string> = {
-  songs: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D',
-  videos: 'EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D',
-  albums: 'EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D',
-  artists: 'EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D',
-  playlists: 'EgWKAQIoAWoKEAkQChAFEAMQBA%3D%3D',
+  songs: 'EgWKAQIIAWoMEA4QChADEAQQCRAF',
+  videos: 'EgWKAQIQAWoMEA4QChADEAQQCRAF',
+  albums: 'EgWKAQIYAWoMEA4QChADEAQQCRAF',
+  artists: 'EgWKAQIgAWoMEA4QChADEAQQCRAF',
+  playlists: 'Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D',
   featuredPlaylists: 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D',
   communityPlaylists: 'EgeKAQQoAEABagoQAxAEEAoQCRAF',
-  podcasts: 'EgWKAQJQAWoKEAkQChAFEAMQBA%3D%3D',
-  episodes: 'EgWKAQJYAWoKEAkQChAFEAMQBA%3D%3D',
-  profiles: 'EgWKAQJYAWoSEAUQCRADEAQQEBAVEAoQDhAR',
+  podcasts: 'EgWKAQJQAWoMEA4QChADEAQQCRAF',
+  episodes: 'EgWKAQJIAWoMEA4QChADEAQQCRAF',
+  profiles: 'EgWKAQJYAWoMEA4QChADEAQQCRAF',
 };
 
 function syncLocale() {
