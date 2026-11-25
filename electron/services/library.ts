@@ -30,6 +30,10 @@ export const libraryService = {
     return libraryStore.get();
   },
 
+  replace(data: LibraryData): LibraryData {
+    return commit(data);
+  },
+
   like(track: Track): LibraryData {
     const data = libraryStore.get();
     if (data.liked.some((item) => item.id === track.id)) return data;
