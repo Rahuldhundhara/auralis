@@ -132,6 +132,18 @@ Sign-in is now visible from everywhere instead of being buried in Settings. The 
 
 The Google window is still available as the fallback flow when Chrome is not installed. The app opens `accounts.google.com`, keeps only `youtube.com` cookies in the `persist:auralis-login` partition and never sees the password. Completion detection polls that partition every 1.5 s, listens to `did-navigate`, `did-navigate-in-page` and `did-redirect-navigation`, and attempts one last cookie capture when the window closes, so Google's client-side redirect cannot be missed. Closing the window without finishing restores the signed-out state and shows “Sign-in window closed before completing.” The manual cookies.txt / `name=value` path remains under **Paste cookies**.
 
+## Sign-in background watermark (25 November 2026)
+
+The mandatory sign-in screen now layers a large Auralis mark behind the existing ambient orbs: the standalone green logo from `src/assets/splash/a.png`, sized to `min(72vw, 820px)`, blurred 18 px and drawn at 0.12 opacity. It sits in the already clipped, `aria-hidden` `.login-atmosphere` with `pointer-events: none`, so it cannot intercept clicks or add scroll width; the foreground copy and sign-in card are unchanged.
+
+| Check | Result |
+| --- | --- |
+| Fresh profile opens the sign-in screen | Pass |
+| 1024x680: visible soft mark behind the orbs, horizontal overflow 0 | Pass |
+| 1440x900: mark capped at 820 px, horizontal overflow 0 | Pass |
+| 900x700: horizontal overflow 0 | Pass |
+| `npm run typecheck` and `npm run build` | Pass |
+
 ## Chrome-window sign-in (18 November 2026)
 
 Chrome 136+ refuses remote debugging on the default Chrome data directory (“DevTools remote debugging requires a non-default data directory”), and its app-bound v20 cookies cannot be decrypted outside that directory. Importing the user's main Chrome profile is therefore impossible by design — and copying or junctioning it can destroy the live cookie database, so that code was removed completely.
@@ -804,10 +816,10 @@ Re-run on the rebuilt 1.1.4 artifacts (21 November 2026, temp profile): version 
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `Auralis-Setup-1.1.3.exe` | 152,471,723 bytes | `6C0DFB4DC26845ECAA2E7A0C6737307758E2493E9D3FC3AA6D64F78115303B3D` |
-| `Auralis-Portable-1.1.3.exe` | 139,802,706 bytes | `AB9D5D63449AD6F560774DB758F989DC56B075DC6125D141A42B285C6CAC36D2` |
+| `Auralis-Setup-1.1.3.exe` | 152,472,082 bytes | `6AE54A3D7D51F701BCB9F3D6FB89E70FA99D5393FC3E94DB3151C27F97371A5E` |
+| `Auralis-Portable-1.1.3.exe` | 139,800,925 bytes | `04AF540ABEB6EBE701A0AFD73F0AA9B3811C8897C9AC62D04B95B77211C993C6` |
 
-Built from `main` with `npx electron-builder --win portable` and `npx electron-builder --win nsis` as two separate runs (see the packaging note above; a combined run gives a 145.17 MB portable). The portable is 133.33 MB, down from 140.89 MB, and the installer is 145.41 MB, down from 153.81 MB. Packaged smoke on `release/1.1.3/win-unpacked/Auralis.exe` with a temp profile: version 1.1.3, 6 shelves / 122 cards, Kesariya playback at 0:11 with no player error, radio 43 rows, download 4.34 MB, 50 mood cards, The Daily 20 episodes, `[packaged issues] []`.
+Built from `main` with `npx electron-builder --win portable` and `npx electron-builder --win nsis` as two separate runs (see the packaging note above; a combined run gives a 145.17 MB portable). The portable is 133.32 MB, down from 140.89 MB, and the installer is 145.41 MB, down from 153.81 MB. Both artifacts were rebuilt on 25 November 2026 to include the sign-in background watermark; the hashes above are the published ones. Packaged smoke on `release/1.1.3/win-unpacked/Auralis.exe` with a temp profile: version 1.1.3, 6 shelves / 122 cards, Kesariya playback at 0:11 with no player error, radio 43 rows, download 4.34 MB, 50 mood cards, The Daily 20 episodes, `[packaged issues] []`.
 
 Packaged smoke test on `release/1.1.1/win-unpacked/Auralis.exe`:
 
