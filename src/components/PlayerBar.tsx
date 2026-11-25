@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Download,
-  FolderCheck,
+  ChevronUp,
+  Gauge,
   Heart,
+  ListMusic,
   Loader2,
   MicVocal,
   MoreHorizontal,
@@ -13,152 +14,77 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
-  Speaker,
   Timer,
   Volume1,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type { Track } from '@shared/types';
+import type { Settings, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { beginSeekDrag, endSeekDrag, usePlayerStore } from '../stores/player';
-import { toast, useUiStore, type MenuItem } from '../stores/ui';
+import { usePlayerStore, currentPlaybackPosition } from '../stores/player';
+import { useUiStore, type MenuItem } from '../stores/ui';
 import { artistsLine, formatDuration } from '../lib/format';
-import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
+import { isAndroidShell } from '../lib/platform';
+import { useDelayedFlag } from '../lib/useDelayedFlag';
+import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton, Range } from './primitives';
 
-export function SeekBar({ compact = false, remaining = false }: { compact?: boolean; remaining?: boolean }) {
+export function MiniProgress() {
   const position = usePlayerStore((state) => state.position);
   const duration = usePlayerStore((state) => state.duration);
-  const buffered = usePlayerStore((state) => state.buffered);
-  const loading = usePlayerStore((state) => state.loading);
+  const playing = usePlayerStore((state) => state.playing);
+  const currentId = usePlayerStore((state) => state.current?.id);
   const seek = usePlayerStore((state) => state.seek);
-  const [localPos, setLocalPos] = useState<number | null>(null);
-  const dragPos = useRef<number | null>(null);
-  // True only between pointerdown and pointerup/cancel of an actual drag.
-  // Keyboard (or other non-drag input) also fires onValueChange, but never
-  // sets this — see the release effect below.
-  const draggingRef = useRef(false);
-  const safeDuration = duration > 0 ? duration : 1;
-  const displayedPos = localPos ?? position;
-
-  // While the user is dragging, the thumb follows `localPos` (the finger),
-  // never the store position, so re-renders from playback events can never
-  // move or abort the native drag.
-  const handleSeek = (newPos: number) => {
-    dragPos.current = newPos;
-    setLocalPos(newPos);
-    seek(newPos);
-  };
-  const startDrag = () => {
-    draggingRef.current = true;
-    dragPos.current = null;
-    beginSeekDrag();
-  };
-  const endDrag = () => {
-    // Re-stamp the exact final pointer value on release. `localPos` state can
-    // lag the last input event by one render; the ref cannot.
-    const target = dragPos.current;
-    dragPos.current = null;
-    if (target !== null) seek(target);
-    setLocalPos(null);
-    draggingRef.current = false;
-    endSeekDrag();
-  };
-
-  // Release a keyboard (or other non-drag) transient as soon as the store has
-  // converged on it. Without this, `localPos` stays pinned forever — the thumb
-  // and time labels freeze at the previous track's position even after the
-  // store resets for the next track. Never releases mid-drag, so slow drags
-  // cannot jump.
-  useEffect(() => {
-    if (localPos === null || draggingRef.current) return;
-    if (Math.abs(position - localPos) <= 1.5) {
-      dragPos.current = null;
-      setLocalPos(null);
-    }
-  }, [localPos, position]);
+  const knownDuration = Number.isFinite(duration) && duration > 0;
+  const percent = knownDuration ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0;
 
   return (
+    <div
+      className={`mini-progress ${playing ? 'is-playing' : ''}`}
+      role="group"
+      aria-label="Song progress"
+    >
+      <div key={currentId || 'none'} className="mini-progress-fill" style={{ width: `${percent}%` }} />
+      <Range
+        className="mini-progress-range"
+        min={0}
+        max={knownDuration ? duration : 1}
+        step={0.25}
+        value={knownDuration ? Math.min(position, duration) : 0}
+        onValueChange={seek}
+        disabled={!knownDuration}
+        aria-label="Song progress"
+        aria-valuetext={`${formatDuration(position)} of ${knownDuration ? formatDuration(duration) : 'unknown duration'}`}
+      />
+    </div>
+  );
+}
+
+export function SeekBar({ compact = false }: { compact?: boolean }) {
+  const position = usePlayerStore((state) => state.position);
+  const duration = usePlayerStore((state) => state.duration);
+  const trackDuration = usePlayerStore((state) => state.current?.duration);
+  const seek = usePlayerStore((state) => state.seek);
+  // A restored local track may not have reported its media duration yet.
+  // Fall back to the catalog duration instead of showing a full, unknown bar.
+  const effectiveDuration = duration > 0 ? duration : trackDuration && trackDuration > 0 ? trackDuration : 0;
+  const safeDuration = effectiveDuration > 0 ? effectiveDuration : 1;
+  return (
     <div className={`seek-bar ${compact ? 'is-compact' : ''}`}>
-      {!compact ? <span className="time">{formatDuration(displayedPos)}</span> : null}
+      {!compact ? <span className="time">{formatDuration(position)}</span> : null}
       <Range
         className="seek-range"
         min={0}
         max={safeDuration}
         step={0.25}
-        value={Math.min(displayedPos, safeDuration)}
-        buffer={Math.max(displayedPos, Math.min(buffered, safeDuration))}
-        onValueChange={handleSeek}
-        onPointerDown={startDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        value={effectiveDuration > 0 ? Math.min(position, safeDuration) : 0}
+        onValueChange={seek}
         aria-label="Seek"
-        aria-valuetext={`${formatDuration(displayedPos)} of ${formatDuration(duration)}`}
-        disabled={duration <= 0 || (loading && localPos === null)}
+        disabled={effectiveDuration <= 0}
       />
-      {!compact ? (
-        <span className="time">{remaining ? `-${formatDuration(Math.max(0, duration - displayedPos))}` : formatDuration(duration)}</span>
-      ) : null}
+      {!compact ? <span className="time">{formatDuration(effectiveDuration)}</span> : null}
     </div>
-  );
-}
-
-function MiniProgress() {
-  const position = usePlayerStore((state) => state.position);
-  const duration = usePlayerStore((state) => state.duration);
-  const buffered = usePlayerStore((state) => state.buffered);
-  const seek = usePlayerStore((state) => state.seek);
-  const [localPos, setLocalPos] = useState<number | null>(null);
-  const dragPos = useRef<number | null>(null);
-  const draggingRef = useRef(false);
-  const displayedPos = localPos ?? position;
-  // Same drag discipline as SeekBar: while the thumb is under the user's
-  // finger it follows `localPos`, so store races can never move or abort the
-  // native drag. Released on pointer up / cancel, or once the store has
-  // converged for non-drag input (keyboard).
-  const handleSeek = (newPos: number) => {
-    dragPos.current = newPos;
-    setLocalPos(newPos);
-    seek(newPos);
-  };
-  const startDrag = () => {
-    draggingRef.current = true;
-    dragPos.current = null;
-    beginSeekDrag();
-  };
-  const endDrag = () => {
-    const target = dragPos.current;
-    dragPos.current = null;
-    if (target !== null) seek(target);
-    setLocalPos(null);
-    draggingRef.current = false;
-    endSeekDrag();
-  };
-  useEffect(() => {
-    if (localPos === null || draggingRef.current) return;
-    if (Math.abs(position - localPos) <= 1.5) {
-      dragPos.current = null;
-      setLocalPos(null);
-    }
-  }, [localPos, position]);
-  if (!duration || duration <= 0) return null;
-  return (
-    <Range
-      className="player-mini-progress"
-      min={0}
-      max={duration}
-      step={0.25}
-      value={Math.min(displayedPos, duration)}
-      buffer={Math.max(displayedPos, Math.min(buffered, duration))}
-      onValueChange={handleSeek}
-      onPointerDown={startDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      aria-label="Song progress"
-      aria-valuetext={`${formatDuration(displayedPos)} of ${formatDuration(duration)}`}
-    />
   );
 }
 
@@ -170,6 +96,12 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
   const repeat = usePlayerStore((state) => state.repeat);
   const hasQueue = usePlayerStore((state) => state.queue.length > 0);
   const big = size === 'lg';
+  const busy = loading || buffering;
+  // The fast path resolves in a few hundred milliseconds. Showing a spinner
+  // the instant a row is clicked makes playback look slower than it is, so
+  // hold it back; a real stall (slow yt-dlp fallback, buffering mid-song)
+  // still gets a spinner once the wait is long enough to need feedback.
+  const showSpinner = useDelayedFlag(busy, 900);
 
   return (
     <div className={`transport transport-${size}`}>
@@ -180,27 +112,30 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         onClick={() => usePlayerStore.getState().toggleShuffle()}
         disabled={!hasQueue}
       >
-        <Shuffle size={big ? 18 : 16} />
+        <Shuffle size={big ? 20 : 16} />
       </IconButton>
       <IconButton label="Previous" size={big ? 'lg' : 'md'} onClick={() => usePlayerStore.getState().previous()} disabled={!hasQueue}>
-        <SkipBack size={big ? 22 : 19} fill="currentColor" />
+        <SkipBack size={big ? 26 : 19} fill="currentColor" />
       </IconButton>
       <button
         type="button"
         className={`play-button ${big ? 'is-large' : ''}`}
         aria-label={playing ? 'Pause' : 'Play'}
+        aria-busy={busy}
+        data-playing={playing ? 'true' : 'false'}
+        data-loading={loading ? 'true' : 'false'}
         onClick={() => usePlayerStore.getState().toggle()}
       >
-        {loading || buffering ? (
-          <Loader2 size={big ? 26 : 22} className="spin" />
+        {showSpinner ? (
+          <Loader2 size={big ? 30 : 22} className="spin" />
         ) : playing ? (
-          <Pause size={big ? 26 : 22} fill="currentColor" />
+          <Pause size={big ? 30 : 22} fill="currentColor" />
         ) : (
-          <Play size={big ? 26 : 22} fill="currentColor" className="play-icon-offset" />
+          <Play size={big ? 30 : 22} fill="currentColor" className="play-icon-offset" />
         )}
       </button>
       <IconButton label="Next" size={big ? 'lg' : 'md'} onClick={() => usePlayerStore.getState().next()} disabled={!hasQueue}>
-        <SkipForward size={big ? 22 : 19} fill="currentColor" />
+        <SkipForward size={big ? 26 : 19} fill="currentColor" />
       </IconButton>
       <IconButton
         label={repeat === 'one' ? 'Repeat this song' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
@@ -209,7 +144,7 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         onClick={() => usePlayerStore.getState().cycleRepeat()}
         disabled={!hasQueue}
       >
-        {repeat === 'one' ? <Repeat1 size={big ? 18 : 16} /> : <Repeat size={big ? 18 : 16} />}
+        {repeat === 'one' ? <Repeat1 size={big ? 20 : 16} /> : <Repeat size={big ? 20 : 16} />}
       </IconButton>
     </div>
   );
@@ -222,14 +157,8 @@ export function VolumeControl() {
   const toggleMute = usePlayerStore((state) => state.toggleMute);
   const Icon = muted || volume === 0 ? VolumeX : volume < 0.45 ? Volume1 : Volume2;
   return (
-    <div className={`volume-control ${muted || volume === 0 ? 'is-muted' : ''}`}>
-      <IconButton
-        className="volume-toggle"
-        label={muted ? 'Unmute' : 'Mute'}
-        size="sm"
-        active={muted}
-        onClick={() => toggleMute()}
-      >
+    <div className="volume-control">
+      <IconButton label={muted ? 'Unmute' : 'Mute'} size="sm" onClick={() => toggleMute()}>
         <Icon size={18} />
       </IconButton>
       <Range
@@ -241,17 +170,6 @@ export function VolumeControl() {
         onValueChange={setVolume}
         aria-label="Volume"
       />
-      <IconButton
-        className="volume-max"
-        label="Set volume to maximum"
-        size="sm"
-        onClick={() => {
-          if (muted) toggleMute();
-          setVolume(1);
-        }}
-      >
-        <Volume2 size={17} />
-      </IconButton>
     </div>
   );
 }
@@ -297,53 +215,65 @@ function SleepTimerButton() {
   );
 }
 
-function PlayerLikeButton({ track }: { track: Track }) {
-  const liked = useAppStore((state) => state.library.liked.some((item) => item.id === track.id));
-  return (
-    <IconButton
-      label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
-      size="sm"
-      className={`player-like ${liked ? 'is-liked' : ''}`}
-      onClick={() => void toggleLikeTrack(track)}
-    >
-      <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
-    </IconButton>
-  );
-}
+const QUALITY_LABELS: Record<Settings['audioQuality'], string> = {
+  auto: 'Automatic',
+  best: 'Best available',
+  high: 'High (256 kbps)',
+  medium: 'Medium (128 kbps)',
+  low: 'Data saver',
+};
 
-function PlayerDownloadButton({ track }: { track: Track }) {
-  const downloads = useAppStore((state) => state.library.downloads);
-  const item = downloads.find((entry) => entry.track.id === track.id && entry.status === 'done');
+function QualityButton() {
+  const quality = useAppStore((state) => state.settings.audioQuality);
+  const selectQuality = async (value: Settings['audioQuality']) => {
+    await useAppStore.getState().updateSettings({ audioQuality: value });
+    const current = usePlayerStore.getState().current;
+    if (!current) return;
+    await window.auralis.player.invalidate(current.id).catch(() => {});
+    usePlayerStore.getState().reloadCurrent();
+  };
+  const openMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const items: MenuItem[] = (Object.keys(QUALITY_LABELS) as Array<Settings['audioQuality']>).map((value) => ({
+      label: QUALITY_LABELS[value],
+      checked: quality === value,
+      onClick: () => void selectQuality(value),
+    }));
+    useUiStore.getState().openMenu(event.clientX, event.clientY, items);
+  };
   return (
     <IconButton
-      label={item ? 'Show downloaded file' : 'Download'}
+      label={`Streaming quality: ${QUALITY_LABELS[quality] || quality}`}
       size="sm"
-      className="player-download"
-      onClick={() => {
-        if (item?.path) void window.auralis.app.showItemInFolder(item.path);
-        else void downloadTrackAction(track);
-      }}
+      active={quality !== 'auto'}
+      onClick={openMenu}
     >
-      {item ? <FolderCheck size={18} /> : <Download size={18} />}
+      <Gauge size={18} />
     </IconButton>
   );
 }
 
 export function PlayerTrackInfo({ track, compact = false }: { track: Track; compact?: boolean }) {
+  const liked = useAppStore((state) => state.library.liked.some((item) => item.id === track.id));
+  const toggleLike = useAppStore((state) => state.toggleLike);
   const navigate = useNavStore((state) => state.navigate);
   return (
     <div className={`player-track-info ${compact ? 'is-compact' : ''}`}>
       <button
         type="button"
         className="player-art-button"
-        onClick={() => useUiStore.getState().setNowPlayingOpen(true, 'lyrics')}
+        onClick={() => {
+          useUiStore.getState().openNowPlaying();
+        }}
         title="Open now playing"
       >
         <Artwork src={track.thumbnail} alt={track.title} className="player-art" />
+        <span className="player-art-expand">
+          <ChevronUp size={18} />
+        </span>
       </button>
       <div className="player-track-text">
         <div className="player-title-line">
-          <span className="player-title" title={track.title}>
+          <span className="player-title" data-track-id={track.id} title={track.title}>
             {track.title}
           </span>
         </div>
@@ -367,12 +297,232 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
             : 'Unknown artist'}
         </div>
       </div>
+      <IconButton
+        label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
+        size="sm"
+        className={liked ? 'is-liked' : ''}
+        onClick={() => void toggleLikeTrack(track)}
+      >
+        <Heart size={17} fill={liked ? 'currentColor' : 'none'} />
+      </IconButton>
+    </div>
+  );
+}
+
+function AndroidMiniProgress() {
+  const duration = usePlayerStore((state) => state.duration);
+  const playing = usePlayerStore((state) => state.playing);
+  const trackId = usePlayerStore((state) => state.current?.id);
+  const barRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLSpanElement>(null);
+  const seekingRef = useRef(false);
+  const previewRef = useRef(0);
+  const known = Number.isFinite(duration) && duration > 0;
+
+  const paint = (ratio: number) => {
+    const safe = Math.max(0, Math.min(1, ratio));
+    if (fillRef.current) fillRef.current.style.transform = `scaleX(${safe})`;
+    if (barRef.current) {
+      const seconds = Math.round(safe * (duration || 0));
+      barRef.current.setAttribute('aria-valuenow', String(seconds));
+      barRef.current.setAttribute('aria-valuetext', `${formatDuration(seconds)} of ${formatDuration(duration || 0)}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!playing || !known) {
+      paint(known ? currentPlaybackPosition() / duration : 0);
+      return;
+    }
+    let frame = 0;
+    let lastPaint = 0;
+    const tick = (time: number) => {
+      frame = window.requestAnimationFrame(tick);
+      if (seekingRef.current || time - lastPaint < 80) return;
+      lastPaint = time;
+      const state = usePlayerStore.getState();
+      const total = state.duration || duration;
+      if (!total) return;
+      paint(currentPlaybackPosition() / total);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, known, duration, trackId]);
+
+  const ratioAt = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return 0;
+    return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  };
+
+  const begin = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!known) return;
+    event.preventDefault();
+    event.stopPropagation();
+    seekingRef.current = true;
+    previewRef.current = ratioAt(event);
+    paint(previewRef.current);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Older WebViews may not support pointer capture.
+    }
+  };
+
+  const move = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekingRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    previewRef.current = ratioAt(event);
+    paint(previewRef.current);
+  };
+
+  const finish = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekingRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    seekingRef.current = false;
+    const target = previewRef.current * (usePlayerStore.getState().duration || duration || 0);
+    if (Number.isFinite(target)) usePlayerStore.getState().seek(target);
+  };
+
+  return (
+    <div
+      ref={barRef}
+      className="player-mini-progress"
+      role="slider"
+      aria-label="Song progress"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration || 0)}
+      aria-valuenow={0}
+      aria-valuetext={`${formatDuration(currentPlaybackPosition())} of ${formatDuration(duration || 0)}`}
+      tabIndex={known ? 0 : -1}
+      onPointerDown={begin}
+      onPointerMove={move}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onKeyDown={(event) => {
+        if (!known) return;
+        const state = usePlayerStore.getState();
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+          event.preventDefault();
+          event.stopPropagation();
+          state.seekBy(event.key === 'ArrowRight' ? 10 : -10);
+        } else if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          event.stopPropagation();
+          state.seek(event.key === 'Home' ? 0 : duration);
+        }
+      }}
+    >
+      <span className="player-mini-track">
+        <span ref={fillRef} className="player-mini-fill" />
+      </span>
+    </div>
+  );
+}
+
+function MobilePlayerControls() {
+  const playing = usePlayerStore((state) => state.playing);
+  const loading = usePlayerStore((state) => state.loading);
+  const buffering = usePlayerStore((state) => state.buffering);
+  const hasQueue = usePlayerStore((state) => state.queue.length > 0);
+  const busy = loading || buffering;
+  const showSpinner = useDelayedFlag(busy, 900);
+
+  return (
+    <div className="player-mobile-actions">
+      <IconButton
+        label="Previous"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().previous()}
+        disabled={!hasQueue}
+      >
+        <SkipBack size={19} fill="currentColor" />
+      </IconButton>
+      <button
+        type="button"
+        className="player-mobile-play"
+        aria-label={playing ? 'Pause' : 'Play'}
+        aria-busy={busy}
+        data-playing={playing ? 'true' : 'false'}
+        data-loading={loading ? 'true' : 'false'}
+        onClick={() => usePlayerStore.getState().toggle()}
+      >
+        {showSpinner ? (
+          <Loader2 size={20} className="spin" />
+        ) : playing ? (
+          <Pause size={20} fill="currentColor" />
+        ) : (
+          <Play size={20} fill="currentColor" className="play-icon-offset" />
+        )}
+      </button>
+      <IconButton
+        label="Next"
+        className="player-mobile-skip"
+        onClick={() => usePlayerStore.getState().next()}
+        disabled={!hasQueue}
+      >
+        <SkipForward size={19} fill="currentColor" />
+      </IconButton>
+      <IconButton
+        label="Open now playing"
+        className="player-mobile-expand"
+        onClick={() => useUiStore.getState().openNowPlaying()}
+      >
+        <ChevronUp size={20} />
+      </IconButton>
     </div>
   );
 }
 
 export function PlayerBar() {
   const current = usePlayerStore((state) => state.current);
+  const queueOpen = useUiStore((state) => state.queueOpen);
+  const nowPlayingOpen = useUiStore((state) => state.nowPlayingOpen);
+  const nowPlayingTab = useUiStore((state) => state.nowPlayingTab);
+  const setQueueOpen = useUiStore((state) => state.setQueueOpen);
+  const openNowPlaying = useUiStore((state) => state.openNowPlaying);
+  const swipe = useRef<{ x: number; y: number; ignore: boolean } | null>(null);
+
+  const openFromBar = (event: React.MouseEvent<HTMLElement>) => {
+    // Let artwork, transport buttons, sliders and links keep their own actions.
+    // A tap/click on the song title, artist row or any empty part of the bar
+    // should still open Now Playing, exactly like tapping the artwork does.
+    if ((event.target as HTMLElement).closest('button, a, input, select, textarea, [role="slider"]')) return;
+    openNowPlaying();
+  };
+
+  const beginSwipe = (event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 1) {
+      swipe.current = null;
+      return;
+    }
+    const target = event.target as HTMLElement;
+    const touch = event.touches[0];
+    swipe.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      ignore: Boolean(target.closest('button, a, input, select, textarea, [role="slider"]')),
+    };
+  };
+
+  const endSwipe = (event: React.TouchEvent<HTMLElement>) => {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!start || start.ignore) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    // Swipe up on the bar opens the player panel; a mostly-horizontal gesture
+    // is left to the browser so it never fights a scroll.
+    if (dy < -44 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      event.preventDefault();
+      openNowPlaying();
+    }
+  };
 
   if (!current) {
     return (
@@ -394,34 +544,45 @@ export function PlayerBar() {
   }
 
   return (
-    <footer className="player-bar">
-      <MiniProgress />
+    <footer
+      className="player-bar"
+      {...(isAndroidShell ? { onClick: openFromBar, onTouchStart: beginSwipe, onTouchEnd: endSwipe } : {})}
+    >
+      {isAndroidShell ? <AndroidMiniProgress /> : <MiniProgress />}
       <div className="player-left">
         <PlayerTrackInfo track={current} />
-        <PlayerLikeButton track={current} />
-        <PlayerDownloadButton track={current} />
       </div>
       <div className="player-center">
         <TransportControls />
         <SeekBar />
       </div>
       <div className="player-right">
+        <QualityButton />
+        <SleepTimerButton />
         <IconButton
           label="Lyrics"
           size="sm"
-          onClick={() => useUiStore.getState().setNowPlayingOpen(true, 'lyrics')}
+          active={nowPlayingOpen && nowPlayingTab === 'lyrics'}
+          onClick={() => openNowPlaying('lyrics')}
         >
           <MicVocal size={18} />
         </IconButton>
+        <IconButton label="Queue" size="sm" active={queueOpen} onClick={() => setQueueOpen(!queueOpen)}>
+          <ListMusic size={19} />
+        </IconButton>
         <IconButton
-          label="Connect device"
+          label="More options"
           size="sm"
-          onClick={() => toast('Connect to AirPlay / Spotify Connect speaker', 'info')}
+          onClick={(event) => showTrackMenu(current, event)}
         >
-          <Speaker size={18} />
+          <MoreHorizontal size={19} />
         </IconButton>
         <VolumeControl />
+        <IconButton label="Open now playing" size="sm" onClick={() => openNowPlaying()}>
+          <ChevronUp size={19} />
+        </IconButton>
       </div>
+      <MobilePlayerControls />
     </footer>
   );
 }

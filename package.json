@@ -1,12 +1,11 @@
 {
   "name": "auralis",
   "productName": "Auralis",
-  "version": "1.0.2",
-  "description": "Auralis - a desktop YouTube Music client for Windows and Linux",
+  "version": "1.1.3",
+  "description": "Auralis - a desktop YouTube Music client for Windows",
   "author": "Auralis",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Rahuldhundhara/auralis#readme",
-  "desktopName": "auralis.desktop",
   "repository": {
     "type": "git",
     "url": "https://github.com/Rahuldhundhara/auralis.git"
@@ -20,20 +19,14 @@
     "dev": "concurrently -k \"vite --port 5173 --strictPort\" \"wait-on tcp:5173 && npm run build:main && cross-env AURALIS_DEV=1 electron .\"",
     "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build",
+    "build:android": "npm run build:renderer && node scripts/build-android.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dist": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-builder --win portable",
-    "preview": "npm run build && electron .",
+    "preview": "npm run build && cross-env AURALIS_FORCE_PROD=1 electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
-    "test:api": "tsx scripts/test-api.ts",
-    "fetch:tools:linux": "node scripts/fetch-tools.mjs",
-    "verify:tools:linux": "node scripts/verify-tools.mjs",
-    "dist:linux": "npm run build && npm run verify:tools:linux && electron-builder --linux",
-    "dist:linux:appimage": "npm run build && npm run verify:tools:linux && electron-builder --linux AppImage",
-    "dist:linux:deb": "npm run build && npm run verify:tools:linux && electron-builder --linux deb",
-    "qa:linux": "node scripts/qa.mjs",
-    "qa:linux:full": "node scripts/qa-full.mjs",
-    "qa:linux:packaged": "node scripts/qa-packaged.mjs"
+    "typecheck:android": "tsc --noEmit -p tsconfig.json",
+    "test:api": "tsx scripts/test-api.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
@@ -72,19 +65,40 @@
     "artifactName": "${productName}-${version}-${arch}.${ext}",
     "asar": true,
     "npmRebuild": false,
-    "compression": "normal",
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US"
+    ],
     "directories": {
-      "output": "release",
+      "output": "release/${version}",
       "buildResources": "resources"
     },
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "!dist/**/*.map",
+      "!dist-electron/**/*.map",
       "package.json",
       "LICENSE",
       "!node_modules/**/*"
     ],
-    "afterPack": "scripts/after-pack.cjs",
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "resources/tray.png",
+        "to": "tray.png"
+      }
+    ],
     "win": {
       "target": [
         {
@@ -92,108 +106,16 @@
           "arch": [
             "x64"
           ]
-        }
-      ],
-      "icon": "resources/icon.png",
-      "requestedExecutionLevel": "asInvoker",
-      "extraResources": [
-        {
-          "from": "resources/bin",
-          "to": "bin",
-          "filter": [
-            "**/*",
-            "!yt-dlp",
-            "!ffmpeg"
-          ]
         },
         {
-          "from": "resources/icon.png",
-          "to": "icon.png"
-        },
-        {
-          "from": "resources/tray.png",
-          "to": "tray.png"
-        },
-        {
-          "from": "resources/licenses",
-          "to": "licenses",
-          "filter": [
-            "**/*"
-          ]
-        }
-      ]
-    },
-    "linux": {
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
+          "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ],
-      "category": "AudioVideo;Audio;Player",
       "icon": "resources/icon.png",
-      "executableName": "auralis",
-      "maintainer": "Auralis Maintainers <maintainers@auralis.invalid>",
-      "syncDesktopName": true,
-      "synopsis": "Desktop YouTube Music client",
-      "description": "A desktop YouTube Music client.",
-      "desktop": {
-        "entry": {
-          "Name": "Auralis",
-          "Comment": "Desktop YouTube Music client",
-          "StartupWMClass": "auralis"
-        }
-      },
-      "extraResources": [
-        {
-          "from": "resources/bin",
-          "to": "bin",
-          "filter": [
-            "**/*",
-            "!**/*.exe"
-          ]
-        },
-        {
-          "from": "resources/icon.png",
-          "to": "icon.png"
-        },
-        {
-          "from": "resources/tray.png",
-          "to": "tray.png"
-        },
-        {
-          "from": "resources/licenses",
-          "to": "licenses",
-          "filter": [
-            "**/*"
-          ]
-        }
-      ]
-    },
-    "deb": {
-      "depends": [
-        "libgtk-3-0",
-        "libnotify4",
-        "libnss3",
-        "libxss1",
-        "libxtst6",
-        "libatspi2.0-0",
-        "libuuid1",
-        "libsecret-1-0",
-        "xdg-utils"
-      ],
-      "recommends": [
-        "libayatana-appindicator3-1"
-      ],
-      "packageCategory": "sound"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,

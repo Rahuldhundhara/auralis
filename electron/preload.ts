@@ -15,7 +15,6 @@ const api: AuralisApi = {
   app: {
     info: () => invoke('app:info'),
     minimize: () => invoke('app:minimize'),
-    windowState: () => invoke('app:window-state'),
     toggleMaximize: () => invoke('app:toggle-maximize'),
     close: () => invoke('app:close'),
     openExternal: (url) => invoke('app:open-external', url),
@@ -39,7 +38,6 @@ const api: AuralisApi = {
     addRecent: (track) => invoke('library:add-recent', track),
     recordEvent: (event) => invoke('library:record-event', event),
     createPlaylist: (name, description) => invoke('library:create-playlist', name, description),
-    importPlaylist: (url) => invoke('library:import-playlist', url),
     renamePlaylist: (id, name, description) => invoke('library:rename-playlist', id, name, description),
     deletePlaylist: (id) => invoke('library:delete-playlist', id),
     addToPlaylist: (id, track) => invoke('library:add-to-playlist', id, track),
@@ -97,11 +95,8 @@ const api: AuralisApi = {
   player: {
     resolve: (track) => invoke('player:resolve', track),
     prefetch: (track) => invoke('player:prefetch', track),
-    cache: (track) => invoke('player:cache', track),
     download: (track) => invoke('player:download', track),
     cancelDownload: (id) => invoke('player:cancel-download', id),
-    pauseDownload: (id) => invoke('player:pause-download', id),
-    resumeDownload: (id) => invoke('player:resume-download', id),
     invalidate: (trackId) => invoke('player:invalidate', trackId),
     ffmpegAvailable: () => invoke('player:ffmpeg-available'),
     ytdlpUpdate: () => invoke('player:ytdlp-update'),
@@ -109,9 +104,6 @@ const api: AuralisApi = {
   lyrics: {
     fetch: (track, providers, force) => invoke('lyrics:fetch', track, providers, force),
     translate: (lines, targetLanguage) => invoke('lyrics:translate', lines, targetLanguage),
-  },
-  speech: {
-    transcribe: (audio, mimeType) => invoke('speech:transcribe', audio, mimeType),
   },
   lastfm: {
     state: () => invoke('lastfm:state'),

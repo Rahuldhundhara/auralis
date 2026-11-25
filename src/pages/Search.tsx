@@ -1,21 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Clock3, Play, Search, Sparkles, X } from 'lucide-react';
-import type { Card, SearchResults } from '@shared/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AudioLines, Clock3, Mic, Play, Search, Sparkles, X } from 'lucide-react';
+import type { Card, SearchResults, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { toast } from '../stores/ui';
+import { usePlayerStore } from '../stores/player';
+import { useUiStore } from '../stores/ui';
 import { useAsync } from '../lib/useAsync';
-import { openCard, playCard, prefetchTrack } from '../lib/actions';
+import { openCard, playCard } from '../lib/actions';
 import { formatDuration } from '../lib/format';
-import { Artwork, Button, Chips, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
-import { Shelf } from '../components/MediaCard';
+import { isAndroidShell } from '../lib/platform';
+import { voiceSearchAvailable } from '../android/voice';
+import { Artwork, Button, Chips, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
+import { Shelf, MediaCard } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 import { SearchField } from '../components/SearchField';
 
-const FILTERS = ['All', 'Songs', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
+const FILTERS = ['All', 'Songs', 'Videos', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
 const FILTER_KEYS: Record<string, string | undefined> = {
   All: undefined,
   Songs: 'songs',
+  Videos: 'videos',
   Albums: 'albums',
   Artists: 'artists',
   Playlists: 'playlists',
@@ -24,9 +28,18 @@ const FILTER_KEYS: Record<string, string | undefined> = {
 
 function TopResult({ card }: { card: Card }) {
   const round = card.type === 'artist';
-  const playable = Boolean(card.track) || ['song', 'album', 'playlist', 'episode'].includes(card.type);
+  const playable = Boolean(card.track) || ['song', 'video', 'album', 'playlist', 'episode'].includes(card.type);
+  // A searched song starts its related-songs radio, never a queue of the
+  // other search results; albums and playlists keep their page queue.
+  const play = () => {
+    if (card.track) {
+      void usePlayerStore.getState().startRadio(card.track);
+      return;
+    }
+    void playCard(card);
+  };
   return (
-    <div className="top-result" onClick={() => openCard(card)} role="button" tabIndex={0}>
+    <div className="top-result" onClick={() => (card.track ? play() : openCard(card))} role="button" tabIndex={0}>
       <Artwork src={card.thumbnail} alt={card.title} round={round} className="top-result-art" />
       <div className="top-result-text">
         <span className="eyebrow">Top result</span>
@@ -41,7 +54,7 @@ function TopResult({ card }: { card: Card }) {
           aria-label={`Play ${card.title}`}
           onClick={(event) => {
             event.stopPropagation();
-            void playCard(card);
+            play();
           }}
         >
           <Play size={24} fill="currentColor" />
@@ -53,10 +66,11 @@ function TopResult({ card }: { card: Card }) {
 
 function SearchLanding() {
   const history = useAppStore((state) => state.library.searchHistory);
-  const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
   const removeSearchHistory = useAppStore((state) => state.removeSearchHistory);
+  const clearSearchHistory = useAppStore((state) => state.clearSearchHistory);
   const navigate = useNavStore((state) => state.navigate);
-
+  const openDialog = useUiStore((state) => state.openDialog);
+  const canUseVoice = isAndroidShell && voiceSearchAvailable();
   return (
     <div className="search-landing">
       <div className="search-landing-hero">
@@ -65,8 +79,18 @@ function SearchLanding() {
         </span>
         <h1>What do you want to hear?</h1>
         <p>Songs, albums, artists, playlists and podcasts from YouTube Music.</p>
-        <SearchField large />
-        <p className="search-landing-hint">Use “Identify your song” beside the search bar to name a tune by playing it nearby or singing along.</p>
+        <SearchField autoFocus large />
+        <div className="search-landing-actions">
+          <button type="button" className="search-tool-pill" onClick={() => openDialog({ type: 'recognition' })}>
+            <AudioLines size={16} />
+            Identify a song
+          </button>
+          {canUseVoice ? (
+            <span className="search-tool-hint">
+              <Mic size={14} /> Tap the mic to search by voice
+            </span>
+          ) : null}
+        </div>
       </div>
       {history.length ? (
         <section className="search-history-section">
@@ -78,24 +102,25 @@ function SearchLanding() {
           </div>
           <div className="search-history-chips">
             {history.map((query) => (
-              <span className="search-history-chip" key={query}>
+              <div className="search-history-chip" key={query}>
                 <button
                   type="button"
-                  className="search-history-query"
+                  className="search-history-open"
                   onClick={() => navigate({ page: 'search', q: query })}
                 >
                   <Clock3 size={15} />
-                  {query}
+                  <span>{query}</span>
                 </button>
                 <button
                   type="button"
                   className="search-history-remove"
-                  aria-label={`Remove ${query} from recent searches`}
+                  aria-label={`Remove “${query}” from recent searches`}
+                  title="Remove from recent searches"
                   onClick={() => void removeSearchHistory(query)}
                 >
                   <X size={13} />
                 </button>
-              </span>
+              </div>
             ))}
           </div>
         </section>
@@ -119,101 +144,85 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const [extra, setExtra] = useState<SearchResults | null>(null);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | undefined>();
+  const [loadMoreEnded, setLoadMoreEnded] = useState(false);
   const addHistory = useAppStore((state) => state.addSearchHistory);
+  const player = usePlayerStore();
   const key = FILTER_KEYS[filter];
-  const { data, loading, error, reload, setData } = useAsync<SearchResults>(
-    () => (query ? window.auralis.yt.search(query, key) : Promise.resolve({ songs: [], videos: [], albums: [], artists: [], playlists: [], podcasts: [], episodes: [], profiles: [] })),
+  const requestToken = useRef(0);
+  const loadMoreBusy = useRef(false);
+  const historyQuery = useRef('');
+  const { data, loading, error, reload } = useAsync<SearchResults>(
+    () => (query ? window.auralis.yt.search(query, key) : Promise.resolve(emptySearchResults())),
     [query, key],
+    { resetOnChange: true },
   );
 
   useEffect(() => {
-    if (query) void addHistory(query);
-    setData(undefined);
+    if (query && historyQuery.current !== query) {
+      historyQuery.current = query;
+      void addHistory(query);
+    }
+    requestToken.current += 1;
+    loadMoreBusy.current = false;
     setExtra(null);
     setContinuation(undefined);
-  }, [query, key, addHistory, setData]);
+    setLoadingMore(false);
+    setLoadMoreError(undefined);
+    setLoadMoreEnded(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, key]);
 
   const results = useMemo(() => {
     if (!data) return undefined;
-    if (!extra) return data;
-    return {
-      ...data,
-      songs: [...data.songs, ...extra.songs],
-      videos: [...data.videos, ...extra.videos],
-      albums: dedupeCards([...data.albums, ...extra.albums]),
-      artists: dedupeCards([...data.artists, ...extra.artists]),
-      playlists: dedupeCards([...data.playlists, ...extra.playlists]),
-      podcasts: dedupeCards([...data.podcasts, ...extra.podcasts]),
-      episodes: [...data.episodes, ...extra.episodes],
-    };
+    return extra ? mergeSearchResults(data, extra) : dedupeSearchResults(data);
   }, [data, extra]);
-
-  const topResult = results?.top && results.top.type !== 'video' ? results.top : undefined;
-
-  // Resolve the first few likely results while the user is scanning the page.
-  // The bridge deduplicates these with the click's resolve call, so the common
-  // first/second-row click starts audio without waiting for yt-dlp. Keep this
-  // small: the main process caches URLs and ignores duplicate requests.
-  useEffect(() => {
-    if (!results) return;
-    const candidates = [
-      topResult?.track,
-      ...results.songs.slice(0, 3),
-      ...results.episodes.slice(0, 2),
-    ].filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
-    const seen = new Set<string>();
-    const unique = [];
-    for (const track of candidates) {
-      if (seen.has(track.id)) continue;
-      seen.add(track.id);
-      unique.push(track);
-      if (unique.length === 3) break;
-    }
-    if (!unique.length) return;
-    const timers = unique.map((track, index) => window.setTimeout(() => prefetchTrack(track), 120 + index * 90));
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [results, topResult]);
 
   if (!query) return <SearchLanding />;
 
   const loadMore = async () => {
     const next = continuation || data?.continuation;
-    if (!next || loadingMore || loading || !data) return;
+    if (!next || loadMoreBusy.current || loadMoreEnded) return;
+    const token = requestToken.current;
+    loadMoreBusy.current = true;
     setLoadingMore(true);
+    setLoadMoreError(undefined);
     try {
       const page = await window.auralis.yt.search(query, key, next);
-      setExtra((current) => {
-        if (!current) return page;
-        return {
-          ...current,
-          songs: [...current.songs, ...page.songs],
-          videos: [...current.videos, ...page.videos],
-          albums: dedupeCards([...current.albums, ...page.albums]),
-          artists: dedupeCards([...current.artists, ...page.artists]),
-          playlists: dedupeCards([...current.playlists, ...page.playlists]),
-          podcasts: dedupeCards([...current.podcasts, ...page.podcasts]),
-          episodes: [...current.episodes, ...page.episodes],
-        };
-      });
+      if (token !== requestToken.current) return;
+      const merged = extra ? mergeSearchResults(extra, page) : dedupeSearchResults(page);
+      setExtra(merged);
       setContinuation(page.continuation);
-    } catch (error: any) {
-      toast(`Could not load more results: ${error?.message || error}`, 'error');
+      const currentCount = results ? searchResultCount(results) : 0;
+      const mergedCount = results ? searchResultCount(mergeSearchResults(results, page)) : searchResultCount(merged);
+      if (!page.continuation || page.continuation === next || mergedCount <= currentCount) {
+        setLoadMoreEnded(true);
+      }
+    } catch (err: any) {
+      if (token === requestToken.current) {
+        setLoadMoreError(err?.message || 'Could not load more results.');
+      }
     } finally {
-      setLoadingMore(false);
+      if (token === requestToken.current) {
+        loadMoreBusy.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
-  const resultCount = results
-    ? results.songs.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length
-    : 0;
-  const hasAny = resultCount > 0;
+  const hasAny = results ? searchResultCount(results) > 0 : false;
 
   return (
     <div className="page search-page">
       <header className="page-hero search-hero">
         <span className="eyebrow">Search results</span>
         <h1>{query}</h1>
-        <p>{results ? `${resultCount} ${resultCount === 1 ? 'result' : 'results'}` : 'Searching YouTube Music…'}</p>
+        <p>{results ? `${searchResultCount(results)} results` : 'Searching YouTube Music…'}</p>
+        {isAndroidShell ? (
+          <div className="search-hero-field">
+            <SearchField />
+          </div>
+        ) : null}
       </header>
 
       <Chips items={[...FILTERS]} selected={filter} onSelect={setFilter} />
@@ -232,9 +241,9 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
 
       {results && hasAny ? (
         <div className="search-results">
-          {filter === 'All' && topResult ? (
+          {filter === 'All' && results.top ? (
             <div className="search-top-layout">
-              <TopResult card={topResult} />
+              <TopResult card={results.top} />
               {results.songs.length ? (
                 <section className="top-songs">
                   <div className="section-heading">
@@ -253,6 +262,15 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
             <div className="shelf-list-card">
               <TrackList tracks={results.songs} showArt showAlbum radioOnPlay />
             </div>
+          ) : null}
+
+          {filter === 'All' || filter === 'Videos' ? (
+            results.videos.length ? (
+              <Shelf
+                shelf={{ title: 'Videos', items: results.videos.map((track) => ({ type: 'video', id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track: { ...track, isVideo: true } })) }}
+                radioOnPlay
+              />
+            ) : null
           ) : null}
 
           {filter === 'All' || filter === 'Albums' ? (
@@ -280,7 +298,14 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
             ) : null
           ) : null}
 
-          {data?.continuation || continuation ? (
+          {loadMoreError ? (
+            <div className="load-more-row load-more-error" role="alert">
+              <span>{loadMoreError}</span>
+              <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+                Try again
+              </Button>
+            </div>
+          ) : (data?.continuation || continuation) && !loadMoreEnded ? (
             <div className="load-more-row">
               <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
                 {loadingMore ? 'Loading…' : 'Load more'}
@@ -301,4 +326,69 @@ function dedupeCards(cards: Card[]): Card[] {
     seen.add(key);
     return true;
   });
+}
+
+function dedupeTracks(tracks: Track[]): Track[] {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (!track?.id || seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+}
+
+function emptySearchResults(): SearchResults {
+  return {
+    songs: [],
+    videos: [],
+    albums: [],
+    artists: [],
+    playlists: [],
+    podcasts: [],
+    episodes: [],
+    profiles: [],
+  };
+}
+
+function dedupeSearchResults(results: SearchResults): SearchResults {
+  return {
+    ...results,
+    songs: dedupeTracks(results.songs),
+    videos: dedupeTracks(results.videos),
+    episodes: dedupeTracks(results.episodes),
+    albums: dedupeCards(results.albums),
+    artists: dedupeCards(results.artists),
+    playlists: dedupeCards(results.playlists),
+    podcasts: dedupeCards(results.podcasts),
+    profiles: dedupeCards(results.profiles || []),
+  };
+}
+
+function mergeSearchResults(base: SearchResults, next: SearchResults): SearchResults {
+  return dedupeSearchResults({
+    ...base,
+    top: base.top || next.top,
+    songs: [...base.songs, ...next.songs],
+    videos: [...base.videos, ...next.videos],
+    episodes: [...base.episodes, ...next.episodes],
+    albums: [...base.albums, ...next.albums],
+    artists: [...base.artists, ...next.artists],
+    playlists: [...base.playlists, ...next.playlists],
+    podcasts: [...base.podcasts, ...next.podcasts],
+    profiles: [...(base.profiles || []), ...(next.profiles || [])],
+    continuation: next.continuation,
+  });
+}
+
+function searchResultCount(results: SearchResults): number {
+  return (
+    results.songs.length +
+    results.videos.length +
+    results.albums.length +
+    results.artists.length +
+    results.playlists.length +
+    results.podcasts.length +
+    results.episodes.length +
+    (results.profiles?.length || 0)
+  );
 }

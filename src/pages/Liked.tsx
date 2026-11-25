@@ -5,7 +5,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast } from '../stores/ui';
 import { formatLongDuration, shuffleArray } from '../lib/format';
-import { proxiedArtwork } from '../lib/image';
+import { proxiedArtwork } from '../lib/artwork';
 import { Artwork, Button, EmptyState, IconButton, Spinner } from '../components/primitives';
 import { TrackList } from '../components/TrackList';
 
@@ -35,10 +35,8 @@ export function LikedPage() {
       for (let index = 0; index < pending.length; index++) {
         setDownloading(`${index + 1}/${pending.length}`);
         try {
-          const item = await window.auralis.player.download(pending[index]);
-          if (item.status === 'done') completed++;
-          else if (item.status === 'paused') break;
-          else failed++;
+          await window.auralis.player.download(pending[index]);
+          completed++;
         } catch {
           failed++;
         }

@@ -116,20 +116,28 @@ export interface NavEndpoint {
   continuation?: string;
 }
 
-export interface Chip {
+export interface ChipOption {
   title: string;
   endpoint?: NavEndpoint;
   selected?: boolean;
-  /** Some chips (for example a podcast's "Latest" sort) open a menu instead of reloading directly. */
-  menu?: { title: string; endpoint?: NavEndpoint; selected?: boolean }[];
+}
+
+export interface BrowseChip {
+  title: string;
+  endpoint?: NavEndpoint;
+  selected?: boolean;
+  /** Menu entries for chips that open a sort/filter popup (e.g. podcast "Latest"). */
+  options?: ChipOption[];
 }
 
 export interface BrowsePage {
   header?: PageHeader;
   shelves: Shelf[];
   continuation?: string;
+  /** Human-readable empty state returned by filtered continuations. */
+  message?: string;
   /** chips for explore/library */
-  chips?: Chip[];
+  chips?: BrowseChip[];
 }
 
 export interface SearchResults {
@@ -178,8 +186,8 @@ export interface AppInfo {
   downloadsDir: string;
   ytDlpVersion?: string;
   ffmpegAvailable: boolean;
-  /** False on Linux desktops without a StatusNotifier/AppIndicator host. */
-  trayAvailable: boolean;
+  /** Test/automation launch that should go straight to the app. */
+  skipLogin?: boolean;
 }
 
 export type ThemeMode = 'dark' | 'light' | 'black' | 'system';
@@ -190,8 +198,12 @@ export interface EqSettings {
   /** 10 bands, dB gain -12..12. */
   bands: number[];
   preamp: number;
-  /** Low-shelf bass boost in dB, -12..12. */
-  bassBoost: number;
+  /** Low-shelf bass boost in dB, 0..12. */
+  bassBoost?: number;
+  /** Bass shelf corner frequency in Hz. */
+  bassFrequency?: number;
+  /** Peak limiter after the EQ to prevent clipping. */
+  limiter?: boolean;
 }
 
 export interface LastFmSettings {
@@ -212,7 +224,7 @@ export interface DiscordSettings {
 
 export interface TranslationSettings {
   enabled: boolean;
-  provider: 'deepl' | 'openai';
+  provider: 'auto' | 'deepl' | 'openai';
   targetLanguage: string;
   deeplApiKey: string;
   openaiBaseUrl: string;
@@ -220,13 +232,11 @@ export interface TranslationSettings {
   openaiModel: string;
 }
 
-/** ACRCloud's humming engine recognises sung/hummed melodies. Optional: when
- *  credentials are absent Auralis falls back to the on-device Shazam
- *  fingerprint for recorded audio. */
-export interface RecognitionSettings {
-  acrcloudHost: string;
-  acrcloudAccessKey: string;
-  acrcloudAccessSecret: string;
+export interface TasteArtist {
+  id: string;
+  name: string;
+  thumbnail?: string;
+  subtitle?: string;
 }
 
 export interface Settings {
@@ -235,6 +245,12 @@ export interface Settings {
   language: string;
   region: string;
   startPage: 'home' | 'explore' | 'library';
+  /** Language ids picked in the two-step taste onboarding. */
+  tasteLanguages: string[];
+  /** Artists picked in the two-step taste onboarding. */
+  tasteArtists: TasteArtist[];
+  /** False until the taste onboarding is finished or skipped once. */
+  onboardingComplete: boolean;
   audioQuality: AudioQuality;
   volume: number;
   muted: boolean;
@@ -245,11 +261,10 @@ export interface Settings {
   playbackRate: number;
   skipSilence: boolean;
   showLyricsInPlayer: boolean;
+  /** Android-only: show muted music-video previews in Now Playing. */
+  videoClips?: boolean;
   lyricsProviders: string[];
   translation: TranslationSettings;
-  recognition: RecognitionSettings;
-  /** Ids of notifications the user has already read or dismissed. */
-  notificationsRead: string[];
   downloadDir: string;
   downloadQuality: 'best' | 'high' | 'medium';
   autoDownloadLiked: boolean;
@@ -261,7 +276,6 @@ export interface Settings {
   hardwareAcceleration: boolean;
   scrobbleThreshold: number;
   sidebarCollapsed: boolean;
-  personalization: PersonalizationPreferences;
 }
 
 export interface LocalPlaylist {
@@ -276,13 +290,6 @@ export interface LocalPlaylist {
   remoteId?: string;
 }
 
-export interface PlaylistImportResult {
-  playlist: LocalPlaylist;
-  imported: number;
-  skipped: number;
-  total: number;
-}
-
 export interface DownloadItem {
   id: string;
   track: Track;
@@ -291,7 +298,7 @@ export interface DownloadItem {
   quality: string;
   size?: number;
   createdAt: number;
-  status: 'queued' | 'downloading' | 'paused' | 'done' | 'error' | 'cancelled';
+  status: 'queued' | 'downloading' | 'done' | 'error' | 'cancelled';
   progress?: number;
   error?: string;
 }
@@ -333,6 +340,8 @@ export interface StreamInfo {
   title?: string;
   duration?: number;
   localPath?: string;
+  /** True when the resolved URL carries a video track. */
+  video?: boolean;
 }
 
 export interface LyricsLine {
@@ -369,13 +378,6 @@ export interface LastFmState {
 export interface TranslationResult {
   lines: string[];
   provider: string;
-}
-
-export interface PersonalizationPreferences {
-  onboardingCompleted: boolean;
-  preferredGenres: string[];
-  favoriteArtists: ArtistRef[];
-  uiLanguage: string;
 }
 
 export interface RecognizeResult {

@@ -1,53 +1,53 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Clock3, Search, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AudioLines, Clock3, Mic, Search, X } from 'lucide-react';
 import type { SearchSuggestion } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { usePlayerStore } from '../stores/player';
+import { toast } from '../stores/ui';
+import { isAndroidShell } from '../lib/platform';
+import { cancelVoiceSearch, startVoiceSearch, voiceSearchAvailable } from '../android/voice';
 import { IconButton, Spinner } from './primitives';
-import { taglinesForTrack } from '../lib/vibeTagline';
 
-const VIBE_TAGLINES = [
-  'Lost in the rhythm...',
-  'Let the music find you.',
-  'Your mood. Your music.',
-  'Find your next favourite song.',
-  'Some songs just understand.',
-  'Discover sounds beyond the ordinary.',
-  'A new vibe is waiting.',
-  'Press play. Feel everything.',
-  "What's your next soundtrack?",
-  'Every mood has a melody.',
-];
+export function AndroidSearchLauncher() {
+  const navigate = useNavStore((state) => state.navigate);
+  return (
+    <button
+      type="button"
+      className="search-field android-search-launch"
+      onClick={() => navigate({ page: 'search' })}
+      aria-label="Open search"
+    >
+      <Search size={17} className="search-icon" />
+      <span>Search songs, artists, podcasts</span>
+    </button>
+  );
+}
 
 export function SearchField({
   autoFocus,
   large,
   onSubmitted,
-  onActivate,
-  activateOnFocus = false,
-  trailing,
+  onIdentify,
 }: {
   autoFocus?: boolean;
   large?: boolean;
   onSubmitted?: () => void;
-  onActivate?: () => void;
-  activateOnFocus?: boolean;
-  trailing?: ReactNode;
+  onIdentify?: () => void;
 }) {
   const route = useNavStore((state) => state.entries[state.index]);
   const navigate = useNavStore((state) => state.navigate);
   const history = useAppStore((state) => state.library.searchHistory);
-  const currentTrack = usePlayerStore((state) => state.current);
+  const addHistory = useAppStore((state) => state.addSearchHistory);
   const [value, setValue] = useState(route.page === 'search' ? route.q || '' : '');
   const [open, setOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [taglineIndex, setTaglineIndex] = useState(() => Math.floor(Math.random() * VIBE_TAGLINES.length));
-  const [focused, setFocused] = useState(false);
+  const [listening, setListening] = useState(false);
+  const listeningRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const showVoice = large && isAndroidShell && voiceSearchAvailable();
 
   useEffect(() => {
     if (route.page === 'search') setValue(route.q || '');
@@ -64,42 +64,6 @@ export function SearchField({
     window.addEventListener('mousedown', handler);
     return () => window.removeEventListener('mousedown', handler);
   }, []);
-
-  const taglinePool = currentTrack ? taglinesForTrack(currentTrack) : VIBE_TAGLINES;
-  const activeTagline = taglinePool[taglineIndex % taglinePool.length];
-  const [tagView, setTagView] = useState<{ current: string; previous: string | null; tick: number }>(() => ({
-    current: activeTagline,
-    previous: null,
-    tick: 0,
-  }));
-
-  useEffect(() => {
-    setTagView((prev) =>
-      prev.current === activeTagline
-        ? prev
-        : { current: activeTagline, previous: prev.current, tick: prev.tick + 1 },
-    );
-  }, [activeTagline]);
-
-  useEffect(() => {
-    if (!tagView.previous) return;
-    const timer = window.setTimeout(() => {
-      setTagView((prev) => (prev.previous ? { ...prev, previous: null } : prev));
-    }, 560);
-    return () => window.clearTimeout(timer);
-  }, [tagView.previous, tagView.tick]);
-
-  useEffect(() => {
-    setTaglineIndex(0);
-  }, [currentTrack?.id]);
-
-  useEffect(() => {
-    if (open || focused || value.trim()) return;
-    const timer = window.setInterval(() => {
-      setTaglineIndex((i) => (i + 1) % taglinePool.length);
-    }, 3500);
-    return () => window.clearInterval(timer);
-  }, [taglinePool, open, focused, value]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -120,8 +84,14 @@ export function SearchField({
       setLoading(false);
       return;
     }
-    if (!open) return;
+    if (!open) {
+      // Closing the popover cancels the request below. Clear the spinner too,
+      // otherwise it keeps spinning long after the search field lost focus.
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
+    setSuggestions([]);
     setLoading(true);
     const timer = window.setTimeout(async () => {
       try {
@@ -142,63 +112,82 @@ export function SearchField({
   const submit = (query: string) => {
     const q = query.trim();
     if (!q) return;
+    void addHistory(q);
     navigate({ page: 'search', q });
     setOpen(false);
     inputRef.current?.blur();
     onSubmitted?.();
   };
 
-  const activate = () => {
-    if (activateOnFocus && route.page !== 'search') onActivate?.();
+  const beginVoice = () => {
+    if (listeningRef.current) {
+      cancelVoiceSearch();
+      listeningRef.current = false;
+      setListening(false);
+      return;
+    }
+    listeningRef.current = true;
+    setListening(true);
+    setOpen(true);
+    const started = startVoiceSearch((event) => {
+      if (event.type === 'partial' && event.text) {
+        setValue(event.text);
+        return;
+      }
+      if (event.type === 'final') {
+        listeningRef.current = false;
+        setListening(false);
+        const text = (event.text || '').trim();
+        if (text) {
+          setValue(text);
+          submit(text);
+        }
+        return;
+      }
+      if (event.type === 'error') {
+        listeningRef.current = false;
+        setListening(false);
+        toast(event.message || 'Voice search failed. Try again.', 'error');
+        return;
+      }
+      if (event.type === 'cancelled') {
+        listeningRef.current = false;
+        setListening(false);
+      }
+    });
+    if (!started) {
+      listeningRef.current = false;
+      setListening(false);
+      toast('Voice search is not available on this device.', 'error');
+    }
   };
+
+  useEffect(
+    () => () => {
+      if (listeningRef.current) cancelVoiceSearch();
+    },
+    [],
+  );
 
   const items = value.trim()
     ? suggestions.map((item) => item.text)
     : history.slice(0, 7);
   const heading = value.trim() ? 'Suggestions' : history.length ? 'Recent searches' : '';
-  const showTagline = !open && !focused && !value.trim();
 
   return (
-    <div
-      ref={wrapRef}
-      className={`search-field ${large ? 'is-large' : ''} ${open || focused ? 'is-open' : ''}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        inputRef.current?.focus();
-        activate();
-      }}
-    >
+    <div ref={wrapRef} className={`search-field ${large ? 'is-large' : ''} ${open ? 'is-open' : ''}`}>
       <Search size={large ? 20 : 17} className="search-icon" />
-      {/* Rotating music tagline — only shown while idle */}
-      {showTagline ? (
-        <div className="search-tagline" aria-hidden="true">
-          {tagView.previous ? (
-            <span key={`out-${tagView.tick}`} className="tagline-out">
-              {tagView.previous}
-            </span>
-          ) : null}
-          <span key={`in-${tagView.tick}`} className="tagline-in">
-            {tagView.current}
-          </span>
-        </div>
-      ) : null}
       <input
         ref={inputRef}
         value={value}
-        placeholder=""
+        placeholder="Search songs, albums, artists, podcasts"
         spellCheck={false}
-        autoComplete="off"
         onChange={(event) => {
           setValue(event.target.value);
           setOpen(true);
           setActiveIndex(-1);
         }}
-        onFocus={() => {
-          setFocused(true);
-          setOpen(true);
-          activate();
-        }}
-        onBlur={() => setFocused(false)}
+        onFocus={() => setOpen(true)}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
@@ -211,13 +200,22 @@ export function SearchField({
             submit(activeIndex >= 0 && items[activeIndex] ? items[activeIndex] : value);
           } else if (event.key === 'Escape') {
             setOpen(false);
-            setFocused(false);
             inputRef.current?.blur();
           }
         }}
         aria-label="Search"
       />
       {loading ? <Spinner size={16} className="search-spinner" /> : null}
+      {showVoice ? (
+        <IconButton
+          label={listening ? 'Stop voice search' : 'Search with your voice'}
+          size="xs"
+          className={`search-voice ${listening ? 'is-listening' : ''}`}
+          onClick={beginVoice}
+        >
+          <Mic size={16} />
+        </IconButton>
+      ) : null}
       {value ? (
         <IconButton
           label="Clear search"
@@ -225,14 +223,30 @@ export function SearchField({
           className="search-clear"
           onClick={() => {
             setValue('');
-            setOpen(true);
             inputRef.current?.focus();
           }}
         >
           <X size={15} />
         </IconButton>
       ) : null}
-      {trailing}
+      {onIdentify ? (
+        <>
+          <span className="search-identify-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="recognize-pill search-identify"
+            title="Identify a song"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setOpen(false);
+              onIdentify();
+            }}
+          >
+            <AudioLines size={16} />
+            <span>Identify</span>
+          </button>
+        </>
+      ) : null}
       {open && (items.length > 0 || loading) ? (
         <div className="search-popover">
           {heading ? <div className="search-popover-title">{heading}</div> : null}

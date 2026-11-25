@@ -15,7 +15,6 @@ export interface MenuItem {
 
 export type DialogState =
   | { type: 'create-playlist'; track?: Track }
-  | { type: 'import-playlist' }
   | { type: 'rename-playlist'; playlist: LocalPlaylist }
   | { type: 'add-to-playlist'; track: Track }
   | {
@@ -42,14 +41,17 @@ interface UiState {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (value: boolean) => void;
 
+  queueOpen: boolean;
+  setQueueOpen: (value: boolean) => void;
   nowPlayingOpen: boolean;
-  setNowPlayingOpen: (value: boolean, tab?: 'lyrics' | 'queue' | 'about') => void;
+  setNowPlayingOpen: (value: boolean) => void;
   nowPlayingTab: 'lyrics' | 'queue' | 'about';
   setNowPlayingTab: (tab: 'lyrics' | 'queue' | 'about') => void;
+  openNowPlaying: (tab?: 'lyrics' | 'queue' | 'about') => void;
 
   onboardingOpen: boolean;
+  setOnboardingOpen: (value: boolean) => void;
   openOnboarding: () => void;
-  closeOnboarding: () => void;
 
   toasts: Toast[];
   toast: (message: string, kind?: Toast['kind'], action?: Toast['action']) => void;
@@ -70,14 +72,17 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarCollapsed: false,
   setSidebarCollapsed: (value) => set({ sidebarCollapsed: value }),
 
+  queueOpen: false,
+  setQueueOpen: (value) => set({ queueOpen: value }),
   nowPlayingOpen: false,
-  setNowPlayingOpen: (value, tab) => set(tab ? { nowPlayingOpen: value, nowPlayingTab: tab } : { nowPlayingOpen: value }),
-  nowPlayingTab: 'lyrics',
+  setNowPlayingOpen: (value) => set({ nowPlayingOpen: value }),
+  nowPlayingTab: 'queue',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
+  openNowPlaying: (tab = 'queue') => set({ nowPlayingTab: tab, nowPlayingOpen: true }),
 
   onboardingOpen: false,
+  setOnboardingOpen: (value) => set({ onboardingOpen: value }),
   openOnboarding: () => set({ onboardingOpen: true }),
-  closeOnboarding: () => set({ onboardingOpen: false }),
 
   toasts: [],
   toast: (message, kind = 'info', action) => {

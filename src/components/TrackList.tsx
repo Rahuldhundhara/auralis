@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, MoreHorizontal, Play, X } from 'lucide-react';
+import { useState } from 'react';
+import { Download, MoreHorizontal, Play, Video, X } from 'lucide-react';
 import type { Track } from '@shared/types';
 import {
   openAlbum,
   openArtist,
-  prefetchTrack,
   showTrackMenu,
   type TrackMenuContext,
 } from '../lib/actions';
 import { useAppStore, downloadForTrack } from '../stores/app';
-import { usePlayerStore } from '../stores/player';
+import { prefetchTrackSoon, usePlayerStore } from '../stores/player';
 import { Artwork, ExplicitBadge, IconButton } from './primitives';
 import { formatDuration } from '../lib/format';
 
@@ -23,8 +22,6 @@ interface TrackListProps {
   emptyText?: string;
   hideHeader?: boolean;
   radioOnPlay?: boolean;
-  /** Resolve the first row while the list is idle so the first click is fast. */
-  prefetchFirst?: boolean;
   onRemove?: (track: Track, index: number) => void;
 }
 
@@ -37,45 +34,15 @@ export function TrackList({
   compact = false,
   emptyText = 'No songs here yet.',
   radioOnPlay = false,
-  prefetchFirst = true,
   onRemove,
 }: TrackListProps) {
   const current = usePlayerStore((state) => state.current);
-  const queue = usePlayerStore((state) => state.queue);
   const playing = usePlayerStore((state) => state.playing);
   const loading = usePlayerStore((state) => state.loading);
   const liked = useAppStore((state) => state.library.liked);
   const downloads = useAppStore((state) => state.library.downloads);
   const toggleLike = useAppStore((state) => state.toggleLike);
   const [hovered, setHovered] = useState<number | null>(null);
-  const prefetchTimer = useRef<number | undefined>(undefined);
-
-  // The player hydrates missing cover art for the track it is playing. Mirror
-  // that back onto list rows so a playlist entry that arrived without a
-  // thumbnail picks up its real cover as soon as it starts, without issuing a
-  // second metadata request.
-  const hydratedArt = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of queue) {
-      if (item.thumbnail) map.set(item.id, item.thumbnail);
-    }
-    if (current?.thumbnail) map.set(current.id, current.thumbnail);
-    return map;
-  }, [queue, current]);
-
-  useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
-
-  const firstTrackId = tracks[0]?.id;
-  useEffect(() => {
-    if (!prefetchFirst || !firstTrackId) return;
-    const timer = window.setTimeout(() => {
-      if (tracks[0]) prefetchTrack(tracks[0]);
-    }, 450);
-    return () => window.clearTimeout(timer);
-    // Only react when the first row changes; the array itself is recreated on
-    // every render by callers.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstTrackId, prefetchFirst]);
 
   if (!tracks.length) {
     return <div className="track-list-empty">{emptyText}</div>;
@@ -88,22 +55,18 @@ export function TrackList({
       {tracks.map((track, index) => {
         const isCurrent = current?.id === track.id;
         const isPlaying = isCurrent && playing;
-        const art = hydratedArt.get(track.id) || track.thumbnail;
         const isLiked = likedIds.has(track.id);
         const downloaded = Boolean(downloadForTrack(downloads, track.id));
         const number = index + 1;
         const playRow = () => {
-          prefetchTrack(track);
-          if (radioOnPlay) {
-            void usePlayerStore.getState().startRadio(track);
-          } else {
-            usePlayerStore.getState().playQueue(tracks, index);
-          }
+          if (radioOnPlay) void usePlayerStore.getState().startRadio(track);
+          else usePlayerStore.getState().playQueue(tracks, index);
         };
         return (
           <div
             key={`${track.id}-${index}`}
             className={`track-row ${isCurrent ? 'is-current' : ''} ${loading && isCurrent ? 'is-loading' : ''}`}
+            data-track-id={track.id}
             role="button"
             tabIndex={0}
             onClick={playRow}
@@ -116,14 +79,10 @@ export function TrackList({
             }}
             onMouseEnter={() => {
               setHovered(index);
-              window.clearTimeout(prefetchTimer.current);
-              prefetchTimer.current = window.setTimeout(() => prefetchTrack(track), 80);
+              prefetchTrackSoon(track);
             }}
-            onMouseLeave={() => {
-              setHovered(null);
-              window.clearTimeout(prefetchTimer.current);
-            }}
-            onPointerDown={() => prefetchTrack(track)}
+            onMouseLeave={() => setHovered(null)}
+            onDoubleClick={playRow}
           >
             <div className="track-index">
               {isPlaying ? (
@@ -139,7 +98,7 @@ export function TrackList({
               )}
             </div>
             {showArt ? (
-              <Artwork src={art} alt={track.title} className="track-art" />
+              <Artwork src={track.thumbnail} alt={track.title} className="track-art" />
             ) : null}
             <div className="track-main">
               <div className="track-title-line">
@@ -147,6 +106,11 @@ export function TrackList({
                   {track.title}
                 </span>
                 {track.explicit ? <ExplicitBadge /> : null}
+                {track.isVideo ? (
+                  <span className="track-flag" title="Video">
+                    <Video size={12} />
+                  </span>
+                ) : null}
                 {downloaded ? (
                   <span className="track-flag" title="Downloaded">
                     <Download size={12} />

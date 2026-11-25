@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BarChart3,
   Clock3,
@@ -8,27 +8,31 @@ import {
   History,
   LibraryBig,
   ListMusic,
-  Link2,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Shuffle,
   Trash2,
   UserRound,
   CirclePlay,
 } from 'lucide-react';
-import type { LocalPlaylist } from '@shared/types';
+import type { Card, LocalPlaylist } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore, type Route } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
+import { tracksFromPage } from '../lib/actions';
+import { loadAllYouTubePlaylists } from '../lib/youtube';
 import { useAsync } from '../lib/useAsync';
-import { withoutVideos } from '../lib/shelves';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { MediaCard, ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
+import { YouTubePlaylistCard } from '../components/YouTubePlaylistCard';
 
 type LibraryTab = 'playlists' | 'songs' | 'albums' | 'artists' | 'downloads' | 'youtube';
 
@@ -114,6 +118,81 @@ function YouTubeLibrary() {
         : Promise.resolve({ shelves: [] } as Awaited<ReturnType<typeof window.auralis.yt.library>>),
     [session.hasCookies],
   );
+  const importPlaylist = useAppStore((state) => state.importPlaylist);
+  const refreshLibrary = useAppStore((state) => state.refreshLibrary);
+  const [importing, setImporting] = useState(false);
+
+  const playlistCards = useMemo(() => {
+    const seen = new Set<string>();
+    const output: Card[] = [];
+    for (const shelf of data?.shelves || []) {
+      for (const card of shelf.items) {
+        if (card.type !== 'playlist' || !card.id || seen.has(card.id)) continue;
+        seen.add(card.id);
+        output.push(card);
+      }
+    }
+    return output;
+  }, [data]);
+
+  const migratePlaylists = () => {
+    if (!playlistCards.length) {
+      toast('No YouTube Music playlists found in your library yet.', 'info');
+      return;
+    }
+    confirmDialog({
+      title: 'Import YouTube playlists?',
+      message: `${playlistCards.length} ${playlistCards.length === 1 ? 'playlist will' : 'playlists will'} be copied into your local Auralis library. Re-importing refreshes the same playlists instead of creating duplicates.`,
+      confirmLabel: 'Import',
+      onConfirm: async () => {
+        setImporting(true);
+        let imported = 0;
+        let failed = 0;
+        let copied = 0;
+        for (const card of playlistCards) {
+          try {
+            const page = await window.auralis.yt.playlist(card.id);
+            const seen = new Set<string>();
+            const tracks = tracksFromPage(page).filter((track) => {
+              if (seen.has(track.id)) return false;
+              seen.add(track.id);
+              return true;
+            });
+            let continuation = page.continuation;
+            let pages = 0;
+            while (continuation && pages < 25) {
+              const next = await window.auralis.yt.detailContinuation(continuation);
+              for (const track of next.tracks) {
+                if (seen.has(track.id)) continue;
+                seen.add(track.id);
+                tracks.push(track);
+              }
+              continuation = next.continuation;
+              pages += 1;
+            }
+            if (!tracks.length) {
+              failed += 1;
+              continue;
+            }
+            await importPlaylist(card.title, tracks, 'Imported from YouTube Music', card.id);
+            imported += 1;
+            copied += tracks.length;
+          } catch {
+            failed += 1;
+          }
+        }
+        await refreshLibrary();
+        setImporting(false);
+        if (imported) {
+          toast(
+            `Imported ${imported} ${imported === 1 ? 'playlist' : 'playlists'} with ${copied} songs.`,
+            'success',
+          );
+        }
+        if (failed) toast(`${failed} ${failed === 1 ? 'playlist' : 'playlists'} could not be imported.`, 'error');
+      },
+    });
+  };
 
   if (!session.hasCookies) {
     return (
@@ -138,8 +217,6 @@ function YouTubeLibrary() {
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
 
-  const shelves = data ? withoutVideos(data.shelves) : [];
-
   return (
     <div className="youtube-library">
       <div className="library-subhead">
@@ -148,6 +225,17 @@ function YouTubeLibrary() {
           <p>{session.account?.name ? `Signed in as ${session.account.name}` : 'Your account library'}</p>
         </div>
         <div className="library-subhead-actions">
+          {playlistCards.length ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={importing ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
+              onClick={migratePlaylists}
+              disabled={importing}
+            >
+              {importing ? 'Importing…' : 'Import playlists'}
+            </Button>
+          ) : null}
           <Button variant="ghost" size="sm" icon={<History size={16} />} onClick={() => navigate({ page: 'history' })}>
             History
           </Button>
@@ -156,11 +244,59 @@ function YouTubeLibrary() {
           </Button>
         </div>
       </div>
-      {shelves.length ? (
-        <ShelfGrid shelves={shelves} />
-      ) : (
-        <EmptyState icon={<LibraryBig size={26} />} title="Your library is empty" message="Save songs and playlists on YouTube Music and they will appear here." />
-      )}
+      {data?.shelves.length ? <ShelfGrid shelves={data.shelves} /> : <EmptyState icon={<LibraryBig size={26} />} title="Your library is empty" message="Save songs and playlists on YouTube Music and they will appear here." />}
+    </div>
+  );
+}
+
+function YouTubePlaylistSection({ localPlaylists }: { localPlaylists: LocalPlaylist[] }) {
+  const session = useAppStore((state) => state.session);
+  const { data, loading, error, reload } = useAsync(
+    () => (session.hasCookies ? loadAllYouTubePlaylists() : Promise.resolve([])),
+    [session.hasCookies],
+  );
+  if (!session.hasCookies) return null;
+
+  const linked = new Set(
+    localPlaylists
+      .map((playlist) => playlist.remoteId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const cards = (data || []).filter(
+    (card) => !linked.has(card.id) && !linked.has(card.id.replace(/^VL/, '')),
+  );
+
+  return (
+    <div className="yt-library-playlists">
+      <div className="section-heading">
+        <div>
+          <h2>From YouTube Music</h2>
+          <span className="section-subtitle">
+            Every playlist in your account, live from YouTube Music.
+          </span>
+        </div>
+        <Button variant="outline" size="sm" icon={<RefreshCw size={15} />} onClick={reload} disabled={loading}>
+          Refresh
+        </Button>
+      </div>
+      {loading && !data ? (
+        <div className="yt-inline-loading">
+          <Loader2 size={18} className="spin" /> Loading your YouTube playlists…
+        </div>
+      ) : null}
+      {error && !data ? <ErrorPanel message={error} retry={reload} /> : null}
+      {cards.length ? (
+        <div className="media-grid library-playlist-grid">
+          {cards.map((card) => (
+            <YouTubePlaylistCard key={card.id} card={card} />
+          ))}
+        </div>
+      ) : null}
+      {data && !cards.length && !loading ? (
+        <p className="yt-inline-empty">
+          No YouTube Music playlists found. Playlists you create in YouTube Music will appear here automatically.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -223,7 +359,7 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
               Shuffle liked
             </Button>
             {session.hasCookies ? (
-              <Button variant="ghost" icon={<History size={16} />} onClick={() => navigate({ page: 'history' })}>
+              <Button variant="ghost" icon={<History size={16} />} onClick={() => navigate({ page: 'youtube', tab: 'history' })}>
                 YouTube history
               </Button>
             ) : null}
@@ -269,16 +405,11 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
           <div className="section-heading">
             <div>
               <h2>Playlists</h2>
-              <span className="section-subtitle">Your own collections, ordered however you like.</span>
+              <span className="section-subtitle">Your own collections, plus every playlist from YouTube Music.</span>
             </div>
-            <div className="section-heading-actions">
-              <Button variant="ghost" size="sm" icon={<Link2 size={15} />} onClick={() => openDialog({ type: 'import-playlist' })}>
-                Import
-              </Button>
-              <Button variant="outline" size="sm" icon={<Plus size={16} />} onClick={() => openDialog({ type: 'create-playlist' })}>
-                Create
-              </Button>
-            </div>
+            <Button variant="outline" size="sm" icon={<Plus size={16} />} onClick={() => openDialog({ type: 'create-playlist' })}>
+              Create
+            </Button>
           </div>
           {library.playlists.length ? (
             <div className="media-grid library-playlist-grid">
@@ -307,6 +438,8 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
           )}
         </section>
       ) : null}
+
+      {tab === 'playlists' ? <YouTubePlaylistSection localPlaylists={library.playlists} /> : null}
 
       {tab === 'songs' ? (
         <section className="library-section">
@@ -418,7 +551,7 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
             <div>
               <h2>Downloads</h2>
               <span className="section-subtitle">
-                {downloadedTracks.length} songs ready offline{downloadBytes ? ` · ${formatBytes(downloadBytes)}` : ''}
+                {downloadedTracks.length} {downloadedTracks.length === 1 ? 'song' : 'songs'} ready offline{downloadBytes ? ` · ${formatBytes(downloadBytes)}` : ''}
               </span>
             </div>
             <div className="section-heading-actions">
@@ -444,7 +577,10 @@ export function LibraryPage({ tab: initialTab }: { tab?: LibraryTab }) {
             />
           )}
           <p className="library-footnote">
-            Last refreshed {timeAgo(Date.now())}. Downloads are stored in your chosen folder and never leave your PC.
+            Last refreshed {timeAgo(Date.now())}.{' '}
+            {isAndroidShell
+              ? 'Downloads are stored privately inside Auralis and never leave your device.'
+              : 'Downloads are stored in your chosen folder and never leave your PC.'}
           </p>
           <button type="button" className="text-button" onClick={() => void refreshLibrary()}>
             <Clock3 size={14} /> Refresh library

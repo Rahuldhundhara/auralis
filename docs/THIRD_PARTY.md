@@ -20,13 +20,12 @@ The application depends on the following components. Their licences apply to tho
 
 ## Bundled executables
 
-| Component | Platform | Version | Licence | Source |
-| --- | --- | --- | --- | --- |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Windows/Linux | 2026.10.21 | Unlicense | https://github.com/yt-dlp/yt-dlp |
-| [FFmpeg](https://ffmpeg.org/) | Windows | 9.0.2 essentials build by Gyan | GPL-3.0-or-later (`--enable-gpl --enable-version3`) | https://www.gyan.dev/ffmpeg/builds/ and https://github.com/FFmpeg/FFmpeg |
-| [FFmpeg](https://ffmpeg.org/) | Linux x64 | 7.0.2 static build by John Van Sickle | GPL-3.0-or-later | https://johnvansickle.com/ffmpeg/ and https://github.com/FFmpeg/FFmpeg |
+| Component | Version | Licence | Source |
+| --- | --- | --- | --- |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | 2026.10.21 | Unlicense | https://github.com/yt-dlp/yt-dlp |
+| [FFmpeg](https://ffmpeg.org/) | 9.0.2 essentials build by Gyan | GPL-3.0-or-later (this build is configured with `--enable-gpl --enable-version3`) | https://www.gyan.dev/ffmpeg/builds/ and https://github.com/FFmpeg/FFmpeg |
 
-The bundled FFmpeg binary is used for audio conversion, caption extraction and decoding audio for Shazam fingerprinting. It is distributed unmodified. Corresponding FFmpeg source is available from the upstream project and the build providers linked above. The GPL-3.0 text in [`LICENSE`](../LICENSE) also covers the GPL terms for these builds. Copies of the yt-dlp, FFmpeg, Selawik and Cascadia licences are packaged in `resources/licenses`.
+The bundled FFmpeg binary is used for audio conversion, caption extraction and decoding audio for Shazam fingerprinting. It is distributed unmodified. Corresponding FFmpeg source is available from the upstream project and the build provider linked above. The GPL-3.0 text in [`LICENSE`](../LICENSE) also covers the GPL terms for this build.
 
 ## Development tools
 
@@ -44,23 +43,42 @@ These are used to build and test Auralis but are not shipped in the runtime bund
 
 ## Fonts
 
-On Windows, Auralis uses the fonts installed with the OS:
+Two variable font families are bundled with the app under the SIL Open Font License 1.1:
 
-- Segoe UI Variable / Segoe UI
+| Font | Weights | Licence | Used for |
+| --- | --- | --- | --- |
+| [Manrope](https://github.com/googlefonts/manrope) | 400–800 | SIL OFL 1.1 | Interface text (`--font-ui`) |
+| [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) | 400–800 | SIL OFL 1.1 | Display headings and brand (`--font-display`) |
+
+The WOFF2 subsets and the upstream licence texts are in [`src/assets/fonts`](../src/assets/fonts). They are bundled by Vite, so no font request leaves the machine at runtime.
+
+## Mood tile photos
+
+Fifteen photos are bundled with the app for the Explore mood tiles (`src/assets/moods`). They were sourced via [Openverse](https://openverse.org/) from Flickr, Wikimedia Commons and Rawpixel. JPEGs were resized to 900px wide (quality 82); the Rawpixel sunrise is kept at its CDN 1024px size. Per-image details are also recorded in [`src/assets/moods/credits.json`](../src/assets/moods/credits.json).
+
+| File | Photo | Creator | Licence | Source page |
+| --- | --- | --- | --- | --- |
+| punjabi.jpg | Bhangra Dance punjab | Onef9day | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | https://commons.wikimedia.org/w/index.php?curid=11047556 |
+| hiphop.jpg | Danseurs de Hip Hop sur l'Alexander Platz (Berlin) | Jean-Pierre Dalbéra | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/72746018@N00/2705383805 |
+| edm.jpg | Dj Mix | Anderson Mancini | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/17912374@N06/2931447597 |
+| workout.jpg | Gym Dumbbells For Working Out | sterlinggraham | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/147328181@N07/32184464542 |
+| chill.jpg | Got Hammock? | slgckgc | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/14771153@N04/7433810112 |
+| lofi.jpg | Heavy Metal: TDK MA-R90 Cassette Tape | Schill | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/12289718@N00/7586864728 |
+| focus.jpg | stockport library - books | Holiday Gems | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/117849715@N07/12585538065 |
+| party.jpg | Confetti, Times Square | StuartMoreton | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/47001638@N08/4716778684 |
+| romantic.jpg | dawn-sunset-couple-love | pixellaphoto | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | https://www.flickr.com/photos/137643065@N06/24029710780 |
+| sad.jpg | rain window drive | Yuichiro Haga | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/77324941@N00/6979081135 |
+| driving.jpg | highway night 3 | Oscar E. | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/21583873@N03/2338666395 |
+| morning.webp | Beautiful sunrise field winter | Rawpixel (public domain collection) | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | https://www.rawpixel.com/image/6035941/photo-image-public-domain-pink-sky |
+| dhol.jpg | Dhol Tasha | ramnath bhat | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/31341155@N07/7943196228 |
+| relax.jpg | Spa Accents | kymerastudio | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/11507280@N03/5076738369 |
+| feelgood.jpg | Friends | Greg Walters | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | https://www.flickr.com/photos/51035803402@N01/3175988747 |
+
+Monospace text still uses the fonts installed with Windows:
+
 - Cascadia Code / Cascadia Mono
-- System fallbacks
-
-Linux packages bundle metric-compatible fallbacks so the layout does not depend
-on distribution packages:
-
-| Font | Files | Licence |
-| --- | --- | --- |
-| [Selawik](https://github.com/microsoft/Selawik) 1.01 | `src/assets/fonts/selawik-{regular,semibold,bold}.woff2` | SIL Open Font License 1.1 |
-| [Cascadia Code](https://github.com/microsoft/cascadia-code) 2407.24 | `src/assets/fonts/CascadiaCode.ttf` | SIL Open Font License 1.1 |
-
-The original licence texts are in `resources/licenses` (`Selawik-OFL.txt`,
-`Cascadia-Code-OFL.txt`). Locally installed Segoe UI or Cascadia Code fonts are
-preferred when present; the bundled fonts are used otherwise.
+- Consolas
+- System monospace fallbacks
 
 ## Catalogue content
 

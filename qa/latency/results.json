@@ -1,0 +1,43 @@
+{
+  "resolve": [
+    {
+      "id": "dQw4w9WgXcQ",
+      "ms": 361,
+      "format": "m4a",
+      "quality": "auto",
+      "stream": "auralis-media://stream/aHR0cHM6Ly9ycjQtLS1zbi1nd"
+    }
+  ],
+  "playback": [
+    {
+      "clickToPlayButtonMs": 524,
+      "clickToPositionMs": 1195,
+      "spinnerVisibleRightAfterClick": false,
+      "spinnerSeenWhileStarting": false,
+      "title": "Tainu Khabar Nahi (From \"Munjya\")",
+      "error": null
+    }
+  ],
+  "hover": [
+    {
+      "prefetchedOnHover": true,
+      "clickToPlayButtonMs": 168,
+      "clickToPositionMs": 804,
+      "title": "Tainu Khabar Nahi"
+    }
+  ],
+  "console": [],
+  "main": [
+    "[streams] fast path dQw4w9WgXcQ m4a 130677",
+    "[streams] joined in-flight 8zkUFoXku0Y",
+    "[streams] fast path 8zkUFoXku0Y m4a 131179",
+    "[media] 206 bytes=0- itag=140 c=VISIONOS n=no https://rr1---sn-gwpa-pmjk.googlevideo.com/videoplayback?exp",
+    "[streams] fast path yG0VNQyNNck m4a 131178",
+    "[streams] cached 8zkUFoXku0Y",
+    "[streams] cached yG0VNQyNNck",
+    "[media] 206 bytes=0- itag=140 c=VISIONOS n=no https://rr1---sn-gwpa-pmjes.googlevideo.com/videoplayback?ex",
+    "Debugger ending on ws://127.0.0.1:59062/f89bae88-e958-42c3-866c-998ed29f9320\r\nFor help, see: https://nodejs.org/learn/getting-started/debugging"
+  ],
+  "http": [],
+  "issues": []
+}

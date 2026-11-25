@@ -17,22 +17,26 @@ import { Button, ContextMenu, Toasts, useScrollStore } from './components/primit
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { MobileNav } from './components/MobileNav';
 import { PlayerBar } from './components/PlayerBar';
+import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
 import { DialogHost } from './components/Dialogs';
 import { Splash } from './components/Splash';
+import { Onboarding } from './pages/Onboarding';
 import { HomePage } from './pages/Home';
 import { ExplorePage } from './pages/Explore';
 import { PodcastsPage } from './pages/Podcasts';
-import { Onboarding } from './components/Onboarding';
 import { SearchPage } from './pages/Search';
 import { DetailPage } from './pages/Detail';
 import { LibraryPage } from './pages/Library';
 import { LikedPage } from './pages/Liked';
-import { RecentPage, HistoryPage } from './pages/Recent';
+import { RecentPage } from './pages/Recent';
 import { DownloadsPage } from './pages/Downloads';
 import { LocalPlaylistPage } from './pages/LocalPlaylist';
 import { SettingsPage } from './pages/Settings';
+import { LoginPage } from './pages/Login';
+import { YouTubePage } from './pages/YouTube';
 
 /* ------------------------------------------------------------------ */
 /* Error boundary                                                      */
@@ -112,12 +116,14 @@ function RouteView({ route }: { route: Route }) {
       return <DetailPage kind="browse" id={route.id} params={route.params} title={route.title} />;
     case 'library':
       return <LibraryPage tab={route.tab} />;
+    case 'youtube':
+      return <YouTubePage tab={route.tab} />;
     case 'liked':
       return <LikedPage />;
     case 'recent':
       return <RecentPage />;
     case 'history':
-      return <HistoryPage />;
+      return <YouTubePage tab="history" />;
     case 'downloads':
       return <DownloadsPage />;
     case 'local':
@@ -139,18 +145,23 @@ function routeKey(route: Route): string {
 
 export default function App() {
   const ready = useAppStore((state) => state.ready);
+  const appInfo = useAppStore((state) => state.appInfo);
+  const session = useAppStore((state) => state.session);
   const startPage = useAppStore((state) => state.settings.startPage);
   const sidebarSetting = useAppStore((state) => state.settings.sidebarCollapsed);
+  const onboardingComplete = useAppStore((state) => state.settings.onboardingComplete);
+  const onboardingOpen = useUiStore((state) => state.onboardingOpen);
   const entries = useNavStore((state) => state.entries);
   const index = useNavStore((state) => state.index);
   const route = entries[index] || { page: 'home' as const };
   const scrollRef = useRef<HTMLDivElement>(null);
   const startApplied = useRef(false);
   const [splashDone, setSplashDone] = useState(false);
-  const onboardingCompleted = useAppStore((state) => state.settings.personalization.onboardingCompleted);
-  const onboardingOpen = useUiStore((state) => state.onboardingOpen);
-  const postSplash = ready && splashDone;
-  const showApp = postSplash && onboardingCompleted;
+  const showApp = ready && splashDone;
+  const showLogin = showApp && !session.hasCookies && !appInfo?.skipLogin;
+  const showShell = showApp && !showLogin;
+  const showOnboarding =
+    showShell && (onboardingOpen || (!onboardingComplete && !appInfo?.skipLogin));
   const key = routeKey(route);
 
   useEffect(() => {
@@ -176,6 +187,7 @@ export default function App() {
       else if (path === '/downloads') nav.navigate({ page: 'downloads' });
       else if (path === '/liked') nav.navigate({ page: 'liked' });
       else if (path === '/recent') nav.navigate({ page: 'recent' });
+      else if (path === '/youtube') nav.navigate({ page: 'youtube' });
       else if (path === '/settings') nav.navigate({ page: 'settings' });
     });
 
@@ -198,18 +210,37 @@ export default function App() {
         input?.focus();
         input?.select();
       } else if (event.key === 'Escape') {
+        useUiStore.getState().setQueueOpen(false);
         useUiStore.getState().setNowPlayingOpen(false);
       }
     };
 
     const onKeyDown = (event: KeyboardEvent) => keyboard(event);
     window.addEventListener('keydown', onKeyDown);
+
+    // Android's system back button asks the renderer first. If there is no
+    // in-app history left, the native shell moves the task to the background.
+    const androidWindow = window as unknown as { __auralisAndroidBack?: () => boolean };
+    androidWindow.__auralisAndroidBack = () => {
+      const nav = useNavStore.getState();
+      if (!nav.canBack()) return false;
+      nav.back();
+      return true;
+    };
+
     return () => {
       cancelled = true;
       unsubscribeNav();
       window.removeEventListener('keydown', onKeyDown);
+      delete androidWindow.__auralisAndroidBack;
     };
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const dismiss = (window as unknown as { __auralisDismissSplash?: () => void }).__auralisDismissSplash;
+    dismiss?.();
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || startApplied.current) return;
@@ -240,22 +271,18 @@ export default function App() {
     if (!node) return;
     const saved = useScrollStore.getState().positions[key] ?? 0;
     node.scrollTop = saved;
-    if (!saved) return;
-    // Correct once after paint only if the browser clamped the restore while
-    // the route was still mounting. A second timed assignment used to yank the
-    // viewport back 90ms later if the user had already started scrolling.
-    const frame = window.requestAnimationFrame(() => {
-      if (scrollRef.current && Math.abs(scrollRef.current.scrollTop - saved) > 1) {
-        scrollRef.current.scrollTop = saved;
-      }
-    });
-    return () => window.cancelAnimationFrame(frame);
+    const timer = window.setTimeout(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = useScrollStore.getState().positions[key] ?? 0;
+    }, 90);
+    return () => window.clearTimeout(timer);
   }, [key]);
 
   return (
     <div className="app-shell">
-      <TitleBar />
-      {showApp ? (
+      {!showApp || showLogin ? <TitleBar /> : null}
+      {showLogin ? (
+        <LoginPage />
+      ) : showApp ? (
         <div className="app-body">
           <Sidebar />
           <div className="main-frame">
@@ -274,20 +301,18 @@ export default function App() {
             </main>
           </div>
         </div>
-      ) : postSplash ? (
-        <Onboarding onComplete={() => useUiStore.getState().closeOnboarding()} editing={onboardingCompleted} />
       ) : (
         <Splash />
       )}
-      {showApp && onboardingOpen ? (
-        <Onboarding onComplete={() => useUiStore.getState().closeOnboarding()} editing />
-      ) : null}
-      {showApp ? (
+      {showShell ? (
         <>
           <PlayerBar />
+          <MobileNav />
+          <QueuePanel />
           <NowPlaying />
         </>
       ) : null}
+      {showOnboarding ? <Onboarding /> : null}
       <DialogHost />
       <Toasts />
       <ContextMenu />

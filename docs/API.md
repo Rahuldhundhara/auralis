@@ -44,14 +44,14 @@ const stream = await window.auralis.player.resolve(results.songs[0]);
 
 | Method | Purpose |
 | --- | --- |
-| `info()` | App, Electron, yt-dlp and FFmpeg versions; user-data and downloads paths; tray availability. |
+| `info()` | App, Electron, yt-dlp and FFmpeg versions; user-data and downloads paths. |
 | `minimize()`, `toggleMaximize()`, `close()` | Frameless window controls. |
 | `openExternal(url)` | Opens only `http:`, `https:` and `mailto:` URLs in the default browser. |
-| `showItemInFolder(path)` | Reveals a downloaded file in Explorer (Windows) or the desktop file manager (Linux). |
+| `showItemInFolder(path)` | Reveals a downloaded file in Explorer. |
 | `chooseFolder(defaultPath?)` | Native directory picker for the downloads folder. |
-| `setBadge(text)`, `flashFrame(flag)` | Best-effort taskbar/dock feedback. GNOME has no badge API. |
+| `setBadge(text)`, `flashFrame(flag)` | Taskbar feedback. |
 | `setTheme(dark)` | Keeps the native window chrome in sync with the renderer theme. |
-| `relaunch()` | Restarts to apply graphics changes. On Linux AppImage it restarts the outer AppImage. |
+| `relaunch()` | Restarts to apply graphics changes. |
 
 ### `settings`
 
@@ -74,7 +74,7 @@ All methods return library data or a local playlist object. Writes are debounced
 | `renamePlaylist(id, name, description?)`, `deletePlaylist(id)` | Local playlist editing. |
 | `addToPlaylist(id, track)`, `removeFromPlaylist(id, trackId)` | Playlist membership. |
 | `reorderPlaylist(id, from, to)` | Moves a track and persists the new order. |
-| `addSearchHistory(query)`, `clearSearchHistory()` | Search history. |
+| `addSearchHistory(query)`, `removeSearchHistory(query)`, `clearSearchHistory()` | Search history; individual removal and clear-all both persist. |
 | `saveAlbum(card)`, `removeAlbum(id)` | Locally saved album cards. |
 | `saveArtist(card)`, `removeArtist(id)` | Locally followed artist cards. |
 | `getDownloads()`, `removeDownload(id, deleteFile?)`, `clearDownloads(deleteFiles?)` | Offline file management. |
@@ -86,7 +86,7 @@ Download progress arrives asynchronously through `events.onDownloadProgress`.
 | Method | Endpoint / behaviour |
 | --- | --- |
 | `session()` | Current cookie/account state, visitor data and auth user. |
-| `login()` | Opens the embedded Google sign-in window and captures YouTube cookies. |
+| `login()` | Opens a visible Chrome sign-in window on Auralis's dedicated profile (no DevTools port), detects the YouTube Music redirect, then reads the YouTube cookies with a short-lived headless Chrome. |
 | `setCookies(cookie)` | Validates and stores a manually pasted cookie header. |
 | `clearSession()` | Clears cookies and account metadata. |
 | `home(continuation?)` | `FEmusic_home`; follows continuation tokens. |
@@ -140,7 +140,7 @@ Download progress arrives asynchronously through `events.onDownloadProgress`.
 | `events.onDownloadProgress` | `{ id, progress, status, error?, path? }` |
 | `events.onLibraryChange` | Complete updated `LibraryData`. |
 | `events.onSettingsChange` | Complete updated `Settings`. |
-| `events.onMediaKey` | `play-pause`, `next`, `previous` or `stop` (Windows global shortcuts; Linux uses MPRIS). |
+| `events.onMediaKey` | `play-pause`, `next`, `previous` or `stop`. |
 | `events.onNavigate` | Route string sent by the tray menu. |
 | `events.onLyricsTranslation` | `{ lineIndex, text }` for progressive translation. |
 | `events.onSessionChange` | Updated `SessionState` after login, cookie import or sign-out. |
@@ -184,10 +184,10 @@ The shared domain types are deliberately platform-neutral. Every card carries ei
 1. The renderer calls `player.resolve(track)`.
 2. If `track.localPath` exists, the main process returns `auralis-media://local/<encoded path>` immediately.
 3. Otherwise yt-dlp resolves the best audio URL for the selected quality: `-f`, quality selector, `-g`, YouTube Music watch URL. Cookies and the configured proxy are passed when present.
-4. The URL is cached for 90 minutes per track and quality, and wrapped as `auralis-media://stream/<base64url(remote URL)>`.
-5. The protocol handler in `main.ts` fetches the remote URL with YouTube `Referer`, `Origin`, a desktop user agent and the incoming `Range` header, then returns the response with permissive CORS headers.
-6. The renderer plays that URL through a single `HTMLAudioElement`. It is not appended to the DOM but is connected to a Web Audio graph: preamp → 10 peaking filters → compressor → master gain → destination.
-7. Media Session metadata and transport controls are updated on play, pause and position changes. Windows receives these through its media integration; Linux exposes them as MPRIS.
+4. The URL is cached for 90 minutes per track and quality, registered in the main process's issued-stream set, and wrapped as `auralis-media://stream/<base64url(remote URL)>`.
+5. The protocol handler in `main.ts` only proxies an issued `https:` stream URL. It fetches the remote URL with YouTube `Referer`, `Origin`, a desktop user agent and the incoming `Range` header, then returns the response with permissive CORS headers. Unissued or non-HTTPS stream URLs are rejected with HTTP 403.
+6. The renderer plays that URL through a single `HTMLAudioElement`. It is not appended to the DOM but is connected to a Web Audio graph: preamp → 10 peaking filters → optional bass-boost low shelf → compressor → master gain → destination.
+7. Media Session metadata and Windows transport controls are updated on play, pause and position changes. Changing the streaming quality invalidates the cached stream and reloads at the current position.
 
 The media protocol is what lets the Web Audio EQ inspect the stream. Fetching a cross-origin audio URL directly would taint or block `createMediaElementSource` without CORS.
 
@@ -197,18 +197,21 @@ The media protocol is what lets the Web Audio EQ inspect the stream. Fetching a 
 
 ### Downloads
 
-- Output directory comes from Settings; default `%USERPROFILE%\Music\Auralis` on Windows and `~/Music/Auralis` on Linux.
-- Filename is `<videoId>.<ext>`; existing completed files are reused.
-- yt-dlp runs with `--newline --no-part`, the selected quality selector and the watch URL. `--windows-filenames` is added only on Windows.
+- Output directory comes from Settings; default `%USERPROFILE%\Music\Auralis`.
+- Filenames are sanitized video ids (`A-Z`, `a-z`, `0-9`, `_`, `-`) with a hashed fallback; existing completed files are reused.
+- yt-dlp runs with `--newline --no-part --windows-filenames`, the selected quality selector and the watch URL. TLS verification is not disabled.
 - Progress is parsed from yt-dlp output and broadcast to the renderer.
 - Cancellation kills the process; the library marks the entry `cancelled`.
+- At startup, downloads left `downloading` by a crash are marked with an actionable error, and completed entries whose file has disappeared are flagged instead of silently pretending to be offline.
 - Quality preference maps to yt-dlp audio selectors; `best` keeps the native container (usually M4A/Opus).
 
 ## Lyrics
 
 Provider order is user-configurable and defaults to:
 
-`BetterLyrics → Paxsenix → LyricsPlus → LRCLIB → KuGou → YouTube Music → YouTube captions → Zemer`
+`BetterLyrics → LyricsPlus → LrcLib → KuGou → YouTube → YouTubeSubtitle → Zemer`
+
+Paxsenix is no longer an active provider: it needs an Apple Music token, so it was removed from defaults and the settings UI. Saved configurations that still name it are ignored safely.
 
 - `lyrics.fetch` returns `{ provider, synced, lines, raw }`; translated or romanised text is attached per line.
 - LRCLIB uses its public API.
@@ -217,6 +220,8 @@ Provider order is user-configurable and defaults to:
 - Captions are fetched by yt-dlp and converted from VTT to extended LRC.
 - Word-by-word timing is preserved when a provider supplies it.
 - Translation uses DeepL (including free `:fx` keys) or an OpenAI-compatible endpoint. Lines are translated in batches; progressive results are streamed to the renderer through `lyrics:translation`.
+- Translation validates the returned line count against the source before aligning text, so a malformed provider response cannot shift lyrics out of sync.
+- Without a DeepL or OpenAI key, translation fails with a setup error instead of calling a fake keyless service. The renderer shows the actionable message and a retry action.
 
 No lyrics are bundled with the app.
 
@@ -250,7 +255,7 @@ This is an original implementation, not an embedded third-party binary. It is us
 
 ## Persistence
 
-All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis` on Windows, `${XDG_CONFIG_HOME:-~/.config}/Auralis` on Linux). Writes go through a temporary file and atomic rename; writes are debounced by 120 ms.
+All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis` on Windows). Writes go through a temporary file and atomic rename; writes are debounced by 120 ms.
 
 | File | Contents |
 | --- | --- |
@@ -258,9 +263,9 @@ All state is plain JSON under Electron's user-data directory (`%APPDATA%\Auralis
 | `library.json` | `liked`, `playlists`, `recent`, `events`, `downloads`, `savedAlbums`, `savedArtists`, `searchHistory`. |
 | `session.json` | `cookieEncrypted`, `visitorData`, `dataSyncId`, `authUser`, cached `account`. |
 
-The YouTube cookie is encrypted with Electron `safeStorage`: DPAPI on Windows, libsecret/GNOME Keyring or KWallet on Linux. If encryption is unavailable, the cookie falls back to plain storage in `session.json`; on Linux the selected backend is logged at startup (`basic_text` indicates the fallback). Last.fm, Discord and translation credentials are user-entered settings and are not encrypted separately.
+The YouTube cookie is encrypted with Electron `safeStorage` (DPAPI on Windows). If encryption is unavailable, the cookie falls back to plain storage in `session.json`; this is logged by Electron's storage API behaviour and should be avoided on shared machines. Last.fm, Discord and translation credentials are user-entered settings and are not encrypted separately.
 
-`settings.json` validation clamps volume to 0–1, speed to 0.5–2 and requires exactly 10 EQ bands. Missing library arrays are repaired to empty arrays on load. On non-Windows systems a copied Windows absolute `downloadDir` is ignored at runtime and replaced with the platform default; library entries are not rewritten.
+`settings.json` validation clamps volume to 0–1, speed to 0.5–2 and requires exactly 10 EQ bands. Missing library arrays are repaired to empty arrays on load. Startup mutations are independent: a failed settings, session or library read does not discard the data that did load, and download entries are reconciled against the filesystem.
 
 ## Security model
 
@@ -271,8 +276,9 @@ The YouTube cookie is encrypted with Electron `safeStorage`: DPAPI on Windows, l
 | Login window | Separate persistent partition, sandboxed, no preload, no Node integration. |
 | Cookies | Encrypted at rest with DPAPI when available; never sent anywhere except YouTube Music and yt-dlp's temporary cookie file. |
 | Temporary cookie file | Created with a random name for yt-dlp, removed when the child process exits. |
-| File paths | Local media URLs are decoded and checked for existence; only app-generated URLs reach the protocol handler. |
-| External binaries | Only the bundled `resources/bin` executables are used; on Linux yt-dlp is first copied to the writable user-data directory so `-U` works. User input is passed as arguments, not through a shell. |
+| File paths | Local media URLs are resolved to a real path, restricted to the app's media extension allowlist (`aac`, `flac`, `m4a`, `m4v`, `mkv`, `mp3`, `mp4`, `oga`, `ogg`, `opus`, `wav`, `webm`), and must either be recorded in the library or live under the configured download roots. Everything else returns 404. |
+| Stream proxying | Only `https:` URLs previously issued by `player.resolve`/`prefetch` are proxied; unknown URLs return 403. |
+| External binaries | Only the bundled `resources/bin` executables are used; user input is passed as arguments, not through a shell. TLS certificate checks stay enabled. |
 | Telemetry | None. Auralis has no backend and no analytics endpoint. |
 | Downloads | Written only to the configured folder. No automatic executable execution. |
 
@@ -283,17 +289,15 @@ The YouTube cookie is encrypted with Electron `safeStorage`: DPAPI on Windows, l
 | Main/preload bundle | `npm run build:main` | `dist-electron/main.js`, `preload.js` |
 | Renderer | `npm run build:renderer` | `dist/` |
 | Production preview | `npm run preview` | Runs Electron against `dist/` |
-| NSIS installer | `npm run dist` | `release/Auralis-Setup-1.0.2.exe` |
-| Portable | `npm run dist:portable` | `release/Auralis-Portable-1.0.2.exe` |
-| Linux AppImage | `npm run dist:linux:appimage` | `release/Auralis-1.0.2-x86_64.AppImage` |
-| Linux Debian package | `npm run dist:linux:deb` | `release/Auralis-1.0.2-amd64.deb` |
+| NSIS installer | `npm run dist` | `release/<version>/Auralis-Setup-<version>.exe` |
+| Portable | `npm run dist:portable` | `release/<version>/Auralis-Portable-<version>.exe` |
 
-`electron-builder` packs only `dist`, `dist-electron`, `package.json` and `LICENSE`; `node_modules` is excluded because all runtime dependencies are bundled by esbuild. Icons, `resources/licenses`, and the platform's `resources/bin` tools are copied to `resources/` via per-platform `extraResources`. Linux packaging runs `scripts/after-pack.cjs` to verify `yt-dlp`/`ffmpeg`, make them executable, and fail the build if either is missing. `npmRebuild` is disabled because there are no native Node modules in the packaged runtime.
+`electron-builder` packs only `dist`, `dist-electron`, `package.json` and `LICENSE`; `node_modules` is excluded because all runtime dependencies are bundled by esbuild. Icons and `resources/bin/{yt-dlp,ffmpeg}.exe` are copied to `resources/` via `extraResources`. `npmRebuild` is disabled because there are no native Node modules in the packaged runtime.
 
 ## Compatibility notes
 
 - YouTube Music's web client version and API key change occasionally. If browsing breaks while the website works, update `CLIENT_VERSION` and `API_KEY` in `innertube.ts`.
 - YouTube's stream URLs are short-lived and IP-bound. Auralis caches them for 90 minutes and invalidates on demand; switching networks may require replaying the track.
-- Signing into Google inside an embedded browser can be restricted by Google. Manual cookie import is the supported fallback.
+- Desktop sign-in opens a plain, visible Chrome window with Auralis's own `chrome-login` profile; the user's main Chrome profile is never read or modified, and no DevTools port is used while Google's page is open. When the window title reaches YouTube Music, Auralis closes Chrome gracefully and reads only the YouTube cookies with a short-lived headless Chrome. If Chrome is missing, an embedded Google window is used. Manual cookie import remains available from the cookie dialog.
 - The official transcript endpoint currently responds with HTTP 400 for this client version. Captions through yt-dlp are the fallback.
 - yt-dlp is updated independently of the app. Use Settings → About or replace the binary when formats change.

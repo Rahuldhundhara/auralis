@@ -1,31 +1,6 @@
 # Feature parity
 
-Auralis targets the day-to-day feature set of the reference Android YouTube Music client, rebuilt for desktop (Windows 10/11 and Linux x64). Platform-specific Android features are replaced by native desktop equivalents rather than removed. Most of the matrix is implemented; the five reference features still missing from 1.0.2 are listed under [Remaining gaps](#remaining-gaps-in-102).
-
-## Linux port
-
-The Linux x64 build uses the same renderer, catalogue client, playback pipeline and JSON stores. Windows evidence in this matrix is unchanged. Linux-specific substitutions:
-
-| Windows feature | Linux equivalent |
-| --- | --- |
-| Global media-key shortcuts | MPRIS through the renderer's Media Session handlers |
-| Windows DPAPI cookie encryption | libsecret/GNOME Keyring or KWallet via Electron `safeStorage` |
-| Segoe UI / Cascadia Code | Bundled Selawik / Cascadia Code, with local fonts preferred |
-| Bundled `yt-dlp.exe` / FFmpeg EXE | Native `yt-dlp` / static FFmpeg, with a writable yt-dlp copy for updates |
-| NSIS / portable EXE | AppImage and `.deb` |
-
-The live Linux results are recorded in [`QA-LINUX.md`](QA-LINUX.md). In short,
-the final post-fix packaged `linux-unpacked` suite passed 21/21 with no console
-issues; the unpackaged suite also passed 21/21. Packaged playback, downloads,
-the AppImage and the extracted `.deb` passed; AppImage and `.deb` relaunch,
-tray integration, metadata fonts and MPRIS play/pause were verified; and native
-Wayland passed focused controls/player/page audits. Post-QA regression checks
-covered tray availability when the tray setting is off, close-to-tray with no
-host, invalid download paths, local-store permissions and settings flushing
-before restart. Login, Last.fm, Discord, translation, Shazam, a real `.deb`
-installation and a Windows runtime regression remain unverified or blocked.
-
-
+Auralis targets the day-to-day feature set of the reference Android YouTube Music client, rebuilt for Windows. Platform-specific Android features are replaced by native desktop equivalents rather than removed. Most of the matrix is implemented; the reference features still missing from 1.1.0 are listed under [Remaining gaps](#remaining-gaps-in-110).
 
 **Status key**
 
@@ -44,9 +19,11 @@ installation and a Windows runtime regression remain unverified or blocked.
 | Personalised home with account | **Ready** | The same feed request carries the signed-in cookie set; account-specific ordering cannot be verified without a real session. |
 | Explore page | **Verified** | Live "New albums & singles", "Popular episodes", "Trending" and "New music videos" shelves. |
 | Charts | **Verified** | Video charts, language charts and top artists parsed and rendered. |
-| New releases | **Verified** | 133 live releases returned by the new-releases browse endpoint. |
-| Moods and genres | **Verified** | 49 navigation tiles in two shelves; opening "Chill" loads 13 live category shelves. Added in the final QA pass. |
-| Search suggestions | **Verified** | Live suggestion endpoint with keyboard navigation. |
+| New releases | **Verified** | 128 live releases returned by the new-releases browse endpoint. |
+| Moods and genres | **Verified** | 50 navigation tiles in two shelves; opening "Chill" loads 13 live category shelves. |
+| Search suggestions | **Verified** | Live suggestion endpoint with keyboard navigation and stale-response clearing. |
+| Search history | **Verified** | Individual chip removal and clear-all both persist through the library store. |
+| Dedicated search page | **Verified** | Debounced query, request-token cancellation, stale-result clearing, category chips, pagination, end detection and deduplication. |
 | Search filters | **Verified** | Songs, videos, albums, artists, playlists and podcasts each use their own YouTube Music filter. |
 | Search continuation | **Verified** | Additional result pages are merged by id, including deduplication across shelves. |
 | Album pages | **Verified** | Header, artwork, year, track count, full track list, save action, playback and related shelves. |
@@ -64,21 +41,25 @@ installation and a Windows runtime regression remain unverified or blocked.
 | --- | --- | --- |
 | Live audio streaming | **Verified** | Bundled `yt-dlp` resolves a direct audio URL; real playback and progress verified in the packaged and unpackaged app. |
 | Play / pause / seek / volume | **Verified** | HTML5 audio pipeline, range-capable media protocol and player bar controls. |
+| Mini-player progress | **Verified** | Always-visible rail; becomes seekable when duration metadata arrives. Focused QA seeked to 1:34 and playback continued. |
+| Streaming quality selector | **Verified** | In-player menu persists the choice, invalidates the cached stream and reloads at the current position. |
 | Next / previous | **Verified** | Queue navigation and media-key handlers. |
 | Shuffle and repeat | **Verified** | Shuffle, repeat-one and repeat-all modes. |
 | Queue view | **Verified** | Queue panel, jump to track, reorder, remove track and clear queue. |
+| Queue-first Now Playing | **Verified** | Now Playing defaults to Queue with ARIA tabs and keyboard navigation; switching to Lyrics does not stop playback. |
 | Play next / add to queue | **Verified** | Track context menu and detail-page actions. |
 | Radio / automix | **Verified** | Track radio uses the `RDAMVM<videoId>` playlist and follows continuation tokens for further pages of live recommendations. |
-| Related autoplay | **Verified** | Search picks start a station from the picked song instead of queuing the other search rows. Albums, playlists and one-off queues seed a station from the last track when they end. A Hindi seed produced a 50-track Hindi station; clearing upcoming and pressing Next started `Apna Bana Le` with 49 related rows. |
+| Related autoplay | **Verified** | Search picks start a station from the picked song instead of queuing the other search rows. Albums, playlists and one-off queues seed a station from the last track when they end. A Hindi seed produced a 50-track Hindi station; clearing upcoming and pressing Next started `Chaleya` with 49 related rows. |
 | Gapless prefetch | **Verified** | The next track resolves while the current track is playing. |
 | Playback speed | **Verified** | 0.5x–2x, applied live and persisted. |
-| 10-band equalizer | **Verified** | Web Audio peaking filters, preamp, presets and bypass; verified through the real UI. |
+| 10-band equalizer | **Verified** | Web Audio peaking filters, preamp, six presets, bypass, a numeric 0–12 dB low-shelf bass boost with selectable corner frequency and a peak limiter; preset and slider persistence verified. |
 | Loudness normalisation | **Verified** | Dynamics compressor stage in the Web Audio graph. |
-| Lyrics | **Verified** | Eight providers with fallback; LRCLIB and YouTube Music lyrics verified live, including synced highlighting. |
-| Lyrics auto-translation | **Ready** | OpenAI and DeepL providers implemented; needs an API key to exercise the network call. |
+| Lyrics | **Verified** | Seven active providers with fallback; LRCLIB and YouTube Music lyrics verified live, including synced highlighting. |
+| Lyrics auto-translation | **Ready** | DeepL and OpenAI-compatible providers implemented with language selection, original/translated switching, line-count alignment and retryable errors. The keyless setup error was verified; live translation needs an API key. |
 | YouTube captions fallback | **Ready** | yt-dlp VTT-to-LRC fallback implemented; the official transcript endpoint currently returns HTTP 400, so this path needs a known captioned video to verify. |
 | Sleep timer | **Verified** | 5/10/15/30/45/60-minute timers plus end-of-track; countdown in the player bar, automatic pause and clear. |
 | Session restore | **Verified** | Queue, current track, position, repeat mode and volume survive a restart. |
+| System media progress | **Desktop** | Media Session metadata, playback state and position state are kept in sync with the single audio source. Windows shows the progress its media flyout supports. |
 | Windows media keys | **Desktop** | Play/pause, next, previous and stop are registered globally. |
 | System tray | **Desktop** | Playback controls, navigation and quit; close-to-tray is configurable. |
 | Background playback | **Desktop** | Audio continues when minimised or hidden in the tray. |
@@ -95,9 +76,10 @@ installation and a Windows runtime regression remain unverified or blocked.
 | Saved artists | **Verified** | Follow and unfollow locally, with an artist grid in Library. |
 | Recently played | **Verified** | Ordered history with track metadata and play counts. |
 | Listening history | **Verified** | Play events include completion state, duration and timestamps. |
-| Search history | **Verified** | Local suggestions and clear-history action. |
+| Search history | **Verified** | Individual chip removal and clear-all persist; focused QA removed the only entry (1 → 0) and reloaded the library to confirm. |
 | Downloads | **Verified** | Real 3 MB `.m4a` download completed with live progress; file exists on disk and is registered in Library. |
 | Download cancel / retry / delete | **Verified** | Process cancellation, error state, delete from disk and clear-all. |
+| Download reconciliation | **Verified** | Interrupted `downloading` entries become actionable errors on startup; missing completed files are flagged instead of appearing playable. |
 | Auto-download liked songs | **Verified** | Optional background download when a song is liked. |
 | Offline playback | **Verified** | Downloaded files resolve through `auralis-media://local/...` without a network request. |
 | Download folder selection | **Verified** | Native folder picker and persistence; default is `%USERPROFILE%\Music\Auralis`. |
@@ -110,7 +92,7 @@ installation and a Windows runtime regression remain unverified or blocked.
 
 | Feature | Status | Evidence / notes |
 | --- | --- | --- |
-| Google sign-in window | **Ready** | Embedded Google flow in an isolated `persist:auralis-login` partition; cookie capture completes when YouTube Music redirects. |
+| Google sign-in window | **Ready** | Opens a plain, visible Chrome window with Auralis's own `chrome-login` profile (never the user's Chrome data). No DevTools port is used during sign-in, so Google does not flag the browser. Completion is detected from the YouTube Music window title; Chrome is then closed gracefully and a short-lived headless Chrome reads the YouTube cookies. Embedded Google window remains as the fallback when Chrome is missing. |
 | Manual cookie import | **Ready** | Accepts a `Cookie` header string, validates YouTube cookies and stores it encrypted. |
 | Cookie encryption | **Verified** | `safeStorage`/DPAPI encryption path; cookies are never written in plain text when encryption is available. |
 | Last.fm authentication | **Ready** | Browser-token flow, signing, now-playing and scrobbling implemented; needs the user's own API key/secret. |
@@ -126,6 +108,9 @@ installation and a Windows runtime regression remain unverified or blocked.
 | Feature | Status | Evidence / notes |
 | --- | --- | --- |
 | Frameless window | **Verified** | Custom title bar, drag region and minimise/maximise/close controls. |
+| Animated cold-start logo | **Verified** | Thirteen extracted artwork layers animate on launch; the app initialises behind the reveal and a reduced-motion fallback renders the final composition immediately. |
+| Hidden scrollbars | **Verified** | Visual scrollbars are hidden on real scroll surfaces while wheel, trackpad, keyboard and programmatic scrolling stay enabled. |
+| Jump Back In | **Verified** | Horizontal snap carousel with arrows and keyboard access, backed by real local history; Create a Mix builds a queue from that history. |
 | Dark / Black / Light / System themes | **Verified** | All four modes checked through the real UI; system mode follows Windows. |
 | Dynamic accent colours | **Verified** | Eight original accents applied across controls, focus rings and highlights. |
 | Start page | **Verified** | Home, Explore or Library. |
@@ -142,20 +127,25 @@ installation and a Windows runtime regression remain unverified or blocked.
 | Android Auto | Not applicable; desktop playback plus media keys and tray controls. |
 | Home-screen widgets | Not applicable; the app window and tray provide the same quick access. |
 | Android share sheet | Not applicable; copy link and open in browser are available instead. |
-| Mobile downloads directory | Uses the Windows Music library, configurable in Settings. |
-| Android equalizer / audio effects | Replaced by a 10-band Web Audio equalizer with preamp and loudness normalisation. |
-| Android notification controls | Replaced by Windows SMTC/media keys and the tray menu. |
+| Mobile downloads directory | Uses the Windows Music library, configurable in Settings. Downloads are ordinary files, not app-private encrypted media. |
+| Android equalizer / audio effects | Replaced by a 10-band Web Audio equalizer with preamp, presets, bass boost and loudness normalisation. |
+| Android notification controls | Replaced by Windows SMTC/media keys and the tray menu. Windows media sessions do not expose a standard custom Like action, so the notification has transport and progress, not a Like button. |
 
-## Remaining gaps in 1.0.2
+## Remaining gaps in 1.1.0
 
 These reference-client features are not implemented in the Windows build. They are not hidden behind a disabled setting or faked in the UI.
 
 | Feature | Status | Reason |
 | --- | --- | --- |
+| Voice search | **Not implemented** | No speech-recognition engine or service is configured. The search bar is typed-only; a microphone button would be fake. |
+| Audio-file search / recognition UI | **Ready (Identify)** | Shazam fingerprint recognition is wired to the top-bar **Identify** action and needs a known sample or microphone input. There is no separate drop-an-audio-file search page. |
+| Music video playback | **Not implemented** | The stream resolver and player are audio-only. Video metadata is shown, but no video pipeline exists. |
+| Playlist migration / import | **Not implemented** | Opening a public playlist and saving a local copy works. Importing arbitrary playlists from another service needs provider APIs or authorised export files. |
+| Encrypted app-private downloads | **Not implemented** | Downloads are plain M4A files in the chosen folder. App-private encrypted storage would require a storage/decryption redesign and a licensing review. |
+| Notification Like action | **N/A** | Chromium/Electron's Windows Media Session exposes metadata, position and transport actions, but not a standard custom Like action. |
 | Skip silence | **Not implemented** | Needs silence detection and automatic seeking on top of the single HTML5 audio pipeline. |
 | Crossfade | **Not implemented** | Overlapping tracks would require a dual-audio mixer; Auralis uses one audio element. |
 | Independent pitch | **Not implemented** | Playback speed uses the browser's pitch-preserving rate; a separate pitch control is not exposed. |
-| Playlist import by URL | **Not implemented** | Opening a public playlist and saving it as a local copy works, but pasting an arbitrary playlist URL into the local library is not built. |
 | Listen Together | **Not implemented** | Needs a realtime relay service and a shared-session protocol; Auralis has no backend. |
 
 ## Verification caveats
@@ -165,9 +155,11 @@ The following features are implemented but cannot be proven end to end without c
 1. Google login and every YouTube Music account mutation (like, playlist edit, subscribe, cloud library).
 2. Last.fm authentication and scrobbling with a real account.
 3. Discord Rich Presence with a real Discord client.
-4. Lyrics translation with an OpenAI or DeepL key.
+4. Live lyrics translation with a real OpenAI or DeepL key. The keyless setup error is verified; the network round-trip is not.
 5. Shazam recognition with a known audio sample or microphone input.
 6. yt-dlp caption extraction against a video known to expose captions.
+
+The final full pass also recorded 25 `yt3.googleusercontent.com` artwork request failures (`ERR_CONNECTION_CLOSED`) and one artwork 404. These are third-party CDN failures, not app exceptions; every image fell back to a placeholder and the functional checks passed.
 
 These are credential-bound, not mocked: the buttons call the real services and surface real errors. A signed-in session is required to finish their live verification.
 
@@ -175,48 +167,28 @@ These are credential-bound, not mocked: the buttons call the real services and s
 
 | Check | Result |
 | --- | --- |
-| Full `qa-full` end-to-end pass | 21/21 checks |
+| 1.1.0 focused upgrade pass | 16/16 checks |
+| 1.1.0 full end-to-end pass | 21/21 checks |
+| 1.1.0 packaged smoke test | Home 109 cards, playback, 50-row radio, 4.34 MB download, 50 moods, 20 podcast episodes |
+| 1.1.0 portable launch | Pass (bundled yt-dlp/FFmpeg, 112 cards) |
+| 1.1.0 silent install / uninstall | Pass (installed app launched, folder and registry entry removed) |
+| Cold-start splash | 13 artwork layers render, then Home appears |
+| Mini-player seek | 0:00 → 1:34 of 4:28 in the focused run |
+| Now Playing default tab | Queue, 50 rows; Lyrics switch kept playback running |
+| Streaming quality reload | High (256 kbps) persisted and playback resumed |
+| EQ preset + bass boost | Bass preset persisted `[6,5,4,2,0,-1,-1,0,1,2]` with `bassBoost: 5`; the slider then persisted 8 dB |
+| Search history removal | 1 → 0 entries, persisted in the library |
+| Full `qa-full` end-to-end pass (1.1.0) | 21/21 checks |
 | Anonymous home, search, album, artist, playlist | Pass |
 | Playback, seek, queue, lyrics, sleep timer | Pass |
 | 10-band EQ, themes, settings | Pass |
-| Download + offline file | Pass (4,338,550-byte M4A) |
+| Download + offline file | Pass (4,338,550-byte M4A in packaged run) |
 | Local playlist create/add/reorder/remove | Pass |
 | Podcast "The Daily" episodes | Pass (20 episodes, 9h 50m total) |
-| Moods & genres | Pass (49 tiles, category page with 13 shelves) |
+| Moods & genres | Pass (50 tiles, category page with 13 shelves) |
 | Search filters and continuation | Pass |
 | TypeScript + production build | Pass |
 | NSIS installer and portable EXE | Built successfully; both packaged builds launched |
-| Portable EXE cold start | Pass (home feed, bundled yt-dlp/FFmpeg, 122 cards) |
-| Related radio and queue-end autoplay | Pass (5 search rows -> 50-track Hindi station; auto-continue kept 49 related rows) |
-| Silent install / uninstall | Pass (1.0.2 installed app launched with bundled tools, then removed cleanly) |
-
-## Linux verification snapshot
-
-Separate from the Windows snapshot above; see [`QA-LINUX.md`](QA-LINUX.md) for the full record.
-
-| Check | Result |
-| --- | --- |
-| Linux build and packaging | Pass (AppImage and `.deb` built) |
-| Full `qa-full` end-to-end pass | 21/21 packaged checks; 21/21 unpackaged checks; no JS/page errors or console issues |
-| Focused desktop controls, settings, windows and keyboard | Pass (16/16) |
-| Focused player, queue, Now Playing and context menus | Pass (7/7) |
-| Focused page workflows | Pass (8/8) |
-| Artist detail More menu | Pass after fixing React error #130 |
-| Native-framed sign-in window opens/closes | Pass (no credentials entered) |
-| Packaged `linux-unpacked` playback/download | Pass (Tera Yaar Hoon Main; 3,048,719-byte M4A) |
-| AppImage launch and streaming | Pass; download verified on the earlier AppImage and the final packaged `linux-unpacked` run |
-| Rebuilt AppImage/.deb smoke | Pass (launch, Tera Yaar Hoon Main playback, artist menu) |
-| AppImage relaunch | Pass (new process; theme persisted) |
-| `.deb` extracted launch/relaunch | Pass (new process; theme persisted); install blocked (requires `sudo`) |
-| `.deb` dependency resolution | Pass (simulated with `apt-get -s install`) |
-| MPRIS metadata and play/pause | Pass |
-| Keyring backend | Pass (`gnome_libsecret`) |
-| Tray item and close-to-tray | Pass |
-| Tray no-host fallback | Pass (forced probe failure; close-to-tray disabled) |
-| Tray disabled but host present | Pass (`trayAvailable: true`; no false warning) |
-| Invalid downloads path isolation | Pass (startup and `app.info()` unaffected) |
-| Local store permissions | Pass (`settings.json`/`session.json` mode `0600`) |
-| Relaunch settings flush | Pass (source, AppImage and `.deb`) |
-| Native Wayland focused audits | Pass (controls 16/16, player 7/7, pages 8/8) |
-| Metadata fonts | Pass (Selawik, Cascadia Code) |
-| Windows runtime regression | Blocked (requires a Windows host) |
+| Portable EXE cold start | Pass (home feed, bundled yt-dlp/FFmpeg, 112 cards) |
+| Related radio and queue-end autoplay | Pass (20 search rows -> 50-track radio; auto-continue kept 49 related rows) |
+| Silent install / uninstall | Pass (1.1.0 installed app launched with bundled tools, then removed cleanly) |

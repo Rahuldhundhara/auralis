@@ -7,7 +7,6 @@ import type {
   DownloadProgress,
   LastFmState,
   LibraryData,
-  PlaylistImportResult,
   LocalPlaylist,
   LyricsResult,
   NavEndpoint,
@@ -27,7 +26,6 @@ export interface AuralisApi {
   app: {
     info(): Promise<AppInfo>;
     minimize(): Promise<void>;
-    windowState(): Promise<{ maximized: boolean; minimized: boolean; fullScreen: boolean }>;
     toggleMaximize(): Promise<boolean>;
     close(): Promise<void>;
     openExternal(url: string): Promise<void>;
@@ -58,7 +56,12 @@ export interface AuralisApi {
       completed: boolean;
     }): Promise<LibraryData>;
     createPlaylist(name: string, description?: string): Promise<LocalPlaylist>;
-    importPlaylist(url: string): Promise<PlaylistImportResult>;
+    importPlaylist?(
+      name: string,
+      tracks: Track[],
+      description?: string,
+      remoteId?: string,
+    ): Promise<LocalPlaylist>;
     renamePlaylist(id: string, name: string, description?: string): Promise<LocalPlaylist>;
     deletePlaylist(id: string): Promise<LibraryData>;
     addToPlaylist(id: string, track: Track): Promise<LocalPlaylist>;
@@ -114,12 +117,10 @@ export interface AuralisApi {
   };
   player: {
     resolve(track: Track): Promise<StreamInfo>;
+    resolveVideo?(track: Track): Promise<StreamInfo>;
     prefetch(track: Track): Promise<void>;
-    cache(track: Track): Promise<string | null>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;
-    pauseDownload(id: string): Promise<void>;
-    resumeDownload(id: string): Promise<DownloadItem>;
     invalidate(trackId: string): Promise<void>;
     ffmpegAvailable(): Promise<boolean>;
     ytdlpUpdate(): Promise<string>;
@@ -130,9 +131,6 @@ export interface AuralisApi {
       lines: string[],
       targetLanguage?: string,
     ): Promise<TranslationResult>;
-  };
-  speech: {
-    transcribe(audio: ArrayBuffer, mimeType: string): Promise<string>;
   };
   lastfm: {
     state(): Promise<LastFmState>;

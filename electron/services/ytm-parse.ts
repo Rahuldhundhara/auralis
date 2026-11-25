@@ -3,6 +3,7 @@ import type {
   ArtistRef,
   BrowsePage,
   Card,
+  ChipOption,
   ItemType,
   NavEndpoint,
   NextResult,
@@ -49,12 +50,6 @@ export function endpointOf(value: Raw): NavEndpoint | undefined {
   if (watchPlaylist?.playlistId) {
     return { playlistId: watchPlaylist.playlistId, params: watchPlaylist.params || undefined };
   }
-  const reload = value.browseSectionListReloadEndpoint;
-  const reloadContinuation =
-    reload?.continuation?.reloadContinuationData?.continuation ||
-    reload?.continuation?.nextContinuationData?.continuation ||
-    reload?.continuation?.continuation;
-  if (reloadContinuation) return { continuation: reloadContinuation };
   const search = value.searchEndpoint;
   if (search?.query) return { query: search.query };
   return undefined;
@@ -68,7 +63,45 @@ export function pageTypeOf(value: Raw): string | undefined {
   );
 }
 
-export function thumbnailsOf(value: Raw): string | undefined {
+const THUMBNAIL_MAX = 320;
+
+/**
+ * YouTube's CDN puts the decode size in the URL: the last `=` segment is a
+ * list like `w1200-h1200-l90-rj` or `s1200-c-k`, and static video posters use
+ * `maxresdefault.jpg` / `hq720.jpg`. Cards render around 180 px, so decoding
+ * the 1200 px variant wastes several MB of renderer and GPU memory per image.
+ * Clamp at parse time; Now Playing can still request a larger variant from the
+ * same URL because only the size parameter changes.
+ */
+export function optimizedThumbnail(url: string, max = THUMBNAIL_MAX): string {
+  let output = url;
+  const equals = output.lastIndexOf('=');
+  if (equals !== -1) {
+    const head = output.slice(0, equals + 1);
+    const parts = output.slice(equals + 1).split('-');
+    let changed = false;
+    const next = parts.map((part) => {
+      const match = /^([whs])(\d+)$/.exec(part);
+      if (!match) return part;
+      const value = Number(match[2]);
+      if (!Number.isFinite(value) || value <= max) return part;
+      changed = true;
+      return `${match[1]}${max}`;
+    });
+    if (changed) output = head + next.join('-');
+  }
+  // `maxresdefault` is 1280x720 and `sddefault` 640x480. `mqdefault` is
+  // 320x180 and exists for every video, including ones that never got a
+  // max-res poster. A card renders near 180-220 px, so this is the right
+  // decode size; Now Playing asks for `sddefault` from the same URL.
+  output = output.replace(
+    /\/(maxresdefault|hq720|sddefault|hqdefault)\.(jpg|webp)(?=($|[?&]))/i,
+    '/mqdefault.$2',
+  );
+  return output;
+}
+
+export function thumbnailsOf(value: Raw, max = THUMBNAIL_MAX): string | undefined {
   const lists: Raw[] = [];
   const walk = (node: Raw, depth = 0) => {
     if (!node || typeof node !== 'object' || depth > 8) return;
@@ -84,7 +117,7 @@ export function thumbnailsOf(value: Raw): string | undefined {
   flat.sort((a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0));
   let url: string = flat[0].url;
   if (url.startsWith('//')) url = `https:${url}`;
-  return url;
+  return optimizedThumbnail(url, max);
 }
 
 export function parseDuration(text: string): number {
@@ -116,7 +149,9 @@ function navigationPageType(renderer: Raw): string | undefined {
   return (
     pageTypeOf(firstEndpointNav(renderer)) ||
     pageTypeOf(renderer?.title) ||
+    pageTypeOf(renderer?.title?.runs?.[0]?.navigationEndpoint) ||
     pageTypeOf(renderer?.subtitle) ||
+    pageTypeOf(renderer?.onTap) ||
     undefined
   );
 }
@@ -144,11 +179,8 @@ function typeFromPageType(pageType?: string, fallback: ItemType = 'playlist'): I
     case 'MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE':
       return 'podcast';
     case 'MUSIC_PAGE_TYPE_PODCAST_EPISODE':
-      return 'episode';
-    // User-uploaded audio tracks (including many official song uploads) use
-    // this page type. They are songs, not podcast episodes.
     case 'MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE':
-      return 'song';
+      return 'episode';
     case 'MUSIC_PAGE_TYPE_USER_CHANNEL':
       return 'profile';
     case 'MUSIC_PAGE_TYPE_TRACK_LYRICS':
@@ -278,7 +310,14 @@ export function parseResponsiveItem(
     renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
       ?.playNavigationEndpoint?.watchEndpoint?.videoId;
   if (!title) return undefined;
-  const type: Track['type'] = fallbackType || (renderer?.playlistItemData?.videoId ? 'song' : 'video');
+  const videoType =
+    nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+  const isMusicVideo = videoType === 'MUSIC_VIDEO_TYPE_OMV';
+  const isUgcVideo = Boolean(videoType && videoType !== 'MUSIC_VIDEO_TYPE_ATV' && !isMusicVideo);
+  let type: Track['type'] = fallbackType || (renderer?.playlistItemData?.videoId ? 'song' : 'video');
+  // Official music videos inside a playlist are still playlist songs; UGC
+  // clips are real videos and stay out of the songs-only lists.
+  if (!fallbackType && isUgcVideo) type = 'video';
   const subtitleRuns: Raw[] = [];
   for (const column of renderer.flexColumns || []) {
     const runs = column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
@@ -293,8 +332,6 @@ export function parseResponsiveItem(
   const duration = parsedSubtitle.duration || parseDuration(fixed);
   const id = watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId;
   if (!id) return undefined;
-  const videoType =
-    nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
   const context = parsePlaylistContext(renderer);
   return {
     id,
@@ -326,18 +363,46 @@ export function parseTwoRowItem(renderer: Raw): Card | undefined {
   if (type === 'playlist' && subtitle.startsWith('Album')) type = 'album';
   if (subtitle.startsWith('Single')) type = 'single';
   if (subtitle.startsWith('EP')) type = 'ep';
+  const parsedSubtitle = parseSubtitleRuns(renderer.subtitle?.runs || []);
+  // Home shelves such as "Music videos for you" are two-row cards whose
+  // navigation is a watchEndpoint, not a browseEndpoint. Treating them as
+  // playlists sent the player to a nonexistent VL<videoId> page.
+  if (endpoint?.videoId && !endpoint.browseId) {
+    const videoType = nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+    type = videoType === 'MUSIC_VIDEO_TYPE_ATV' ? 'song' : 'video';
+  }
+  const thumbnail = thumbnailsOf(renderer.thumbnailRenderer || renderer.thumbnail);
+  const artists =
+    parsedSubtitle.artists.length || !subtitle
+      ? parsedSubtitle.artists
+      : [{ name: subtitle.split('•')[0].trim() }].filter((artist) => artist.name);
+  const track: Track | undefined = endpoint?.videoId
+    ? {
+        id: endpoint.videoId,
+        type: type === 'video' ? 'video' : 'song',
+        title,
+        artists,
+        duration: 0,
+        thumbnail,
+        explicit: explicitOf(renderer),
+        isVideo: type === 'video',
+        playlistId: endpoint.playlistId,
+        source: 'youtube',
+      }
+    : undefined;
   return {
     type,
     id,
     title,
     subtitle,
-    thumbnail: thumbnailsOf(renderer.thumbnailRenderer || renderer.thumbnail),
+    thumbnail,
     round: type === 'artist',
     explicit: explicitOf(renderer),
     browseId: endpoint?.browseId,
     params: endpoint?.params,
-    artists: parseSubtitleRuns(renderer.subtitle?.runs || []).artists,
-    year: parseSubtitleRuns(renderer.subtitle?.runs || []).year,
+    artists,
+    year: parsedSubtitle.year,
+    track,
     trackCount: (() => {
       const match = subtitle.match(/(\d+)\s+(songs?|tracks?|episodes?)/i);
       return match ? Number(match[1]) : undefined;
@@ -594,35 +659,48 @@ function parseChips(chips: Raw[]): BrowsePage['chips'] {
     const text = textOf(renderer?.text).trim();
     if (!text) continue;
     const nav = renderer?.navigationEndpoint || renderer?.onTap?.navigationEndpoint || {};
-    const endpoint = endpointOf(nav) || (nav?.browseEndpoint?.params ? { params: nav.browseEndpoint.params } : undefined);
-    const popupItems = nav?.openPopupAction?.popup?.menuPopupRenderer?.items || [];
-    const menu = popupItems
-      .map((item: Raw) => {
-        const entry = item?.menuNavigationItemRenderer;
-        const title = textOf(entry?.text).trim();
-        if (!title) return undefined;
-        const entryNav = entry?.navigationEndpoint || {};
-        return {
-          title,
-          endpoint:
-            endpointOf(entryNav) ||
-            (entryNav?.browseEndpoint?.params ? { params: entryNav.browseEndpoint.params } : undefined),
-          selected:
-            entry?.icon?.iconType === 'CHECK' ||
-            /(?:^|,\s*)selected$/i.test(String(entry?.accessibility?.accessibilityData?.label || '').trim()),
-        };
-      })
-      .filter((item: { title: string } | undefined): item is { title: string; endpoint?: NavEndpoint; selected: boolean } =>
-        Boolean(item?.title),
-      );
+    const options = parseChipOptions(nav);
+    const selectedOption = options?.find((option) => option.selected);
     out.push({
       title: text,
-      endpoint,
-      selected: Boolean(renderer?.isSelected ?? renderer?.selected ?? menu.some((item: { selected: boolean }) => item.selected)),
-      ...(menu.length ? { menu } : {}),
+      endpoint: chipEndpoint(nav),
+      selected: Boolean(renderer?.isSelected) || Boolean(selectedOption),
+      options,
     });
   }
   return out;
+}
+
+/**
+ * Podcast filters ("In progress", "Unplayed", "Played") and browse filters use
+ * a `browseSectionListReloadEndpoint` instead of a browse endpoint. The token
+ * reloads just the section list, which the detail page applies in place.
+ */
+function chipEndpoint(nav: Raw): NavEndpoint | undefined {
+  const direct = endpointOf(nav);
+  if (direct) return direct;
+  const reload = nav?.browseSectionListReloadEndpoint?.continuation;
+  const token =
+    reload?.reloadContinuationData?.continuation ||
+    reload?.continuationData?.continuation ||
+    nav?.continuationCommand?.token;
+  return token ? { continuation: token } : undefined;
+}
+
+/** "Latest" opens a sort menu on YouTube Music instead of filtering directly. */
+function parseChipOptions(nav: Raw): ChipOption[] | undefined {
+  const items = nav?.openPopupAction?.popup?.menuPopupRenderer?.items || [];
+  const options: ChipOption[] = [];
+  for (const item of items) {
+    const renderer = item?.menuNavigationItemRenderer || item?.menuServiceItemRenderer;
+    const title = textOf(renderer?.text).trim();
+    if (!title) continue;
+    const endpoint = chipEndpoint(renderer?.navigationEndpoint || {});
+    if (!endpoint) continue;
+    const label = renderer?.accessibility?.accessibilityData?.label || '';
+    options.push({ title, endpoint, selected: /,\s*selected$/i.test(label) });
+  }
+  return options.length ? options : undefined;
 }
 
 function parseHeaderInternal(renderer: Raw, expected: PageHeader['type']): PageHeader | undefined {
@@ -642,8 +720,8 @@ function parseHeaderInternal(renderer: Raw, expected: PageHeader['type']): PageH
   if (subtitle) meta.unshift(subtitle);
   const thumb =
     thumbnailsOf(renderer.thumbnail) ||
-    thumbnailsOf(renderer.heroImage?.image?.sources) ||
-    thumbnailsOf(renderer.foregroundThumbnail);
+    thumbnailsOf(renderer.heroImage?.image?.sources, 960) ||
+    thumbnailsOf(renderer.foregroundThumbnail, 960);
   const trackCountMatch = secondSubtitle.match(/(\d+)\s+(songs?|tracks?|episodes?)/i);
   const yearMatch = secondSubtitle.match(/\b(19|20)\d{2}\b/) || subtitle.match(/\b(19|20)\d{2}\b/);
   const duration = parseLongDuration(secondSubtitle);
@@ -804,22 +882,26 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
   const endpoint = endpointOf(nav);
   const id = endpoint?.browseId || endpoint?.videoId;
   if (!id) return undefined;
-  const type = typeFromPageType(navigationPageType(renderer), typeFromId(id, 'song'));
+  const pageType = pageTypeOf(nav) || navigationPageType(renderer);
+  const type = typeFromPageType(pageType, typeFromId(id, 'song'));
   const subtitle = textOf(renderer?.subtitle).trim();
   const thumbnail = thumbnailsOf(renderer?.thumbnailRenderer || renderer?.thumbnail);
   const parsedSubtitle = parseSubtitleRuns(renderer?.subtitle?.runs || []);
-  // MPED pages are non-music audio tracks/podcast episodes. Their browse id
-  // wraps the real playable video id; expose that track directly so cards can
-  // play it instead of trying to browse a synthetic id.
-  const trackId = id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
-  // Song/video/episode top results are directly playable. Build the track from
-  // the real artist/album runs instead of leaving callers to guess from the
-  // subtitle's first chip — that chip is often the "Song" type label.
-  const playableId =
-    trackId ||
-    ((type === 'song' || type === 'video' || type === 'episode') && /^[A-Za-z0-9_-]{11}$/.test(id)
-      ? id
-      : undefined);
+  // The top-result card can point at a `MPED…` page whose real video id lives
+  // in the play button. Read that first so the card queue gets a playable id
+  // instead of the page browse id (which the player cannot stream).
+  const playNav =
+    renderer?.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint ||
+    renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint ||
+    renderer?.buttons?.find((button: Raw) => button?.buttonRenderer?.command?.watchEndpoint)?.buttonRenderer
+      ?.command;
+  const videoId =
+    endpointOf(playNav)?.videoId ||
+    endpoint?.videoId ||
+    (id.startsWith('MPED') && id.length > 4 ? id.slice(4) : undefined);
+  const playable = type === 'song' || type === 'video' || type === 'episode';
   return {
     type,
     id,
@@ -828,19 +910,18 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
     thumbnail,
     round: type === 'artist',
     browseId: id.startsWith('MPED') ? id : undefined,
-    artists: parsedSubtitle.artists.length ? parsedSubtitle.artists : undefined,
-    track: playableId
-      ? {
-          id: playableId,
-          type: type === 'episode' ? 'episode' : 'song',
-          title,
-          artists: parsedSubtitle.artists,
-          album: parsedSubtitle.album,
-          duration: parsedSubtitle.duration,
-          thumbnail,
-          source: 'youtube',
-        }
-      : undefined,
+    track:
+      videoId && playable
+        ? {
+            id: videoId,
+            type: type === 'video' ? 'video' : type === 'song' ? 'song' : 'episode',
+            title,
+            artists: parsedSubtitle.artists,
+            duration: parsedSubtitle.duration,
+            thumbnail,
+            source: 'youtube',
+          }
+        : undefined,
   };
 }
 
@@ -1130,76 +1211,67 @@ export function summarize(json: Raw) {
 
 /** Continuation responses use `continuationContents` instead of `contents`. */
 export function parseBrowseContinuation(json: Raw): BrowsePage {
-  // A filtered podcast response can contain both a sectionListContinuation
-  // (which carries the filter chips) and a musicShelfContinuation (which
-  // carries the actual episodes). Reading only the first key made every
-  // podcast filter look empty.
-  const parts = [
-    json?.continuationContents?.musicShelfContinuation,
-    json?.continuationContents?.sectionListContinuation,
-    json?.continuationContents?.gridContinuation,
-  ].filter(Boolean);
-  if (!parts.length) return { shelves: [] };
+  const continuation = json?.continuationContents || {};
+  const sectionList = continuation.sectionListContinuation || continuation.gridContinuation;
+  const shelf = continuation.musicShelfContinuation || continuation.musicPlaylistShelfContinuation;
+  const contents: Raw[] = [
+    ...(sectionList?.contents || sectionList?.items || []),
+    ...(shelf?.contents || shelf?.items || []),
+  ];
+  if (!sectionList && !shelf) return { shelves: [] };
   const shelves: Shelf[] = [];
-  const seenTracks = new Set<string>();
-  let continuation: string | undefined;
-  const chipList: Raw[] = [];
-  for (const part of parts) {
-    continuation ||= continuationOf(part);
-    chipList.push(...(part?.header?.chipCloudRenderer?.chips || []));
-    const contents = part?.contents || part?.items || [];
-    for (const node of contents) {
-      if (node?.musicCarouselShelfRenderer) {
-        const shelf = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
-        if (shelf) shelves.push(shelf);
-      } else if (node?.musicTwoRowItemRenderer) {
-        const card = parseTwoRowItem(node.musicTwoRowItemRenderer);
-        if (card && !seenTracks.has(card.id)) {
-          seenTracks.add(card.id);
-          if (shelves.length) shelves[0].items.push(card);
-          else shelves.push({ items: [card], style: 'grid' });
-        }
-      } else if (node?.musicShelfRenderer) {
-        const shelf = parseShelf(node.musicShelfRenderer, 'list');
-        if (shelf) shelves.push(shelf);
-      } else if (node?.musicResponsiveListItemRenderer) {
-        const track = parseResponsiveItem(node.musicResponsiveListItemRenderer);
-        if (track && !seenTracks.has(track.id)) {
-          seenTracks.add(track.id);
-          const items = [{ type: track.type, id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track } as Card];
-          if (shelves.length) shelves[0].items.push(...items);
-          else shelves.push({ items, style: 'list' });
-        }
-      } else if (node?.musicMultiRowListItemRenderer) {
-        // Podcast episodes in a continuation response use this renderer,
-        // unlike regular song rows.
-        const track = parseMultiRowItem(node.musicMultiRowListItemRenderer);
-        if (track && !seenTracks.has(track.id)) {
-          seenTracks.add(track.id);
-          const items = [{
+  let message: string | undefined;
+  for (const node of contents) {
+    if (node?.musicCarouselShelfRenderer) {
+      const parsed = parseShelf(node.musicCarouselShelfRenderer, 'carousel');
+      if (parsed) shelves.push(parsed);
+    } else if (node?.musicTwoRowItemRenderer) {
+      const card = parseTwoRowItem(node.musicTwoRowItemRenderer);
+      if (card) {
+        if (shelves.length) shelves[0].items.push(card);
+        else shelves.push({ items: [card], style: 'grid' });
+      }
+    } else if (node?.musicShelfRenderer) {
+      const parsed = parseShelf(node.musicShelfRenderer, 'list');
+      if (parsed) shelves.push(parsed);
+    } else if (node?.musicResponsiveListItemRenderer) {
+      const track = parseResponsiveItem(node.musicResponsiveListItemRenderer);
+      if (track) {
+        const items = [{ type: track.type, id: track.id, title: track.title, subtitle: track.artists.map((a) => a.name).join(', '), thumbnail: track.thumbnail, track } as Card];
+        if (shelves.length) shelves[0].items.push(...items);
+        else shelves.push({ items, style: 'list' });
+      }
+    } else if (node?.musicMultiRowListItemRenderer) {
+      // Podcast episode filters return musicMultiRowListItemRenderer rows.
+      const track = parseMultiRowItem(node.musicMultiRowListItemRenderer);
+      if (track) {
+        const items = [
+          {
             type: 'episode',
             id: track.id,
             title: track.title,
             subtitle: textOf(node.musicMultiRowListItemRenderer.subtitle).trim(),
             thumbnail: track.thumbnail,
             track,
-            artists: [],
-          } as Card];
-          if (shelves.length) shelves[0].items.push(...items);
-          else shelves.push({ items, style: 'list' });
-        }
+          } as Card,
+        ];
+        if (shelves.length) shelves[0].items.push(...items);
+        else shelves.push({ items, style: 'list' });
       }
+    } else if (node?.messageRenderer) {
+      message = textOf(node.messageRenderer.text).trim() || message;
     }
-  }
-  const chipsByTitle = new Map<string, NonNullable<BrowsePage['chips']>[number]>();
-  for (const chip of parseChips(chipList) || []) {
-    const existing = chipsByTitle.get(chip.title);
-    if (!existing || (chip.selected && !existing.selected)) chipsByTitle.set(chip.title, chip);
   }
   return {
     shelves,
-    continuation,
-    chips: chipsByTitle.size ? [...chipsByTitle.values()] : undefined,
+    message,
+    continuation: continuationOf(shelf) || continuationOf(sectionList),
+    chips: parseChips(
+      sectionList?.header?.chipCloudRenderer?.chips ||
+        shelf?.header?.chipCloudRenderer?.chips ||
+        continuation.sectionListContinuation?.header?.chipCloudRenderer?.chips ||
+        [],
+    ),
   };
 }
 

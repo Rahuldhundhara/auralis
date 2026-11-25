@@ -3,7 +3,6 @@ import type {
   LyricsResult,
   Track,
   TranslationResult,
-  TranslationSettings,
 } from '../../shared/types';
 import { innertube } from './innertube';
 import { parseLyrics, parseNext } from './ytm-parse';
@@ -25,87 +24,6 @@ interface ProviderOutput {
   raw: string;
   synced: boolean;
   lines: LyricsLine[];
-}
-
-type LyricWord = NonNullable<LyricsLine['words']>[number];
-
-const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
-
-/** True when two adjacent word tokens need a visible space between them. */
-function wordNeedsSpace(previous: string, next: string): boolean {
-  if (!previous || !next) return false;
-  if (/\s$/.test(previous) || /^\s/.test(next)) return false;
-  // Punctuation attaches to the word before it; opening brackets attach after.
-  if (/^[,.;:!?%)\]}\u2019\u201d]/.test(next)) return false;
-  if (/[(\[{\u2018\u201c]$/.test(previous)) return false;
-  // CJK scripts do not use inter-word spaces.
-  if (CJK_RE.test(previous) || CJK_RE.test(next)) return false;
-  return true;
-}
-
-/**
- * Word-level providers split a line into syllable tokens and rarely share a
- * boundary convention. Guessing from gaps or trailing spaces alone produces
- * garbage like "e nough" and "Ibeen". Every provider also ships the plain
- * line text, so the exact boundaries are derived from it by walking the
- * tokens against the text. Fall back to heuristics when they do not line up.
- */
-function alignWordBoundaries(words: LyricWord[], text: string): boolean {
-  let cursor = 0;
-  for (let index = 0; index < words.length; index++) {
-    const word = words[index];
-    if (!word.text) return false;
-    const found = text.indexOf(word.text, cursor);
-    if (found === -1) return false;
-    cursor = found + word.text.length;
-    let end = cursor;
-    while (end < text.length && text[end] === ' ') end++;
-    word.space = index < words.length - 1 && end > cursor;
-    cursor = end;
-  }
-  return true;
-}
-
-/** Normalise a syllable list against the plain line text. */
-function normalizeWords(
-  words: LyricWord[],
-  rawText: string,
-): { words: LyricWord[] | undefined; text: string } {
-  const text = rawText.replace(/\s+/g, ' ').trim();
-  const cleaned = words
-    .map((word) => ({ ...word, text: String(word.text || '').replace(/\s+/g, ' ').trim() }))
-    .filter((word) => word.text.length > 0);
-  if (!cleaned.length) return { words: undefined, text };
-  if (text && alignWordBoundaries(cleaned, text)) {
-    return { words: cleaned, text };
-  }
-  // Fall back to heuristics: trust explicit space flags, else add spaces.
-  const hasSignals = cleaned.some((word) => word.space === true);
-  for (let index = 1; index < cleaned.length; index++) {
-    const previous = cleaned[index - 1];
-    previous.space = hasSignals
-      ? Boolean(previous.space)
-      : wordNeedsSpace(previous.text, cleaned[index].text);
-  }
-  return { words: cleaned, text: wordsToText(cleaned) };
-}
-
-function wordsToText(words: LyricWord[]): string {
-  let out = '';
-  for (let index = 0; index < words.length; index++) {
-    if (index > 0 && words[index - 1].space) out += ' ';
-    out += words[index].text;
-  }
-  return out.replace(/\s+/g, ' ').trim();
-}
-
-function normalizeAgent(singer: string | undefined): string | undefined {
-  const value = String(singer || '').trim();
-  if (!value) return undefined;
-  // Apple Music / AMLL use bare ids such as "v1", "bgm" — they are internal
-  // identifiers, not names worth showing.
-  if (/^(v\d+|bgm?|bg|background|duet)$/i.test(value)) return undefined;
-  return value;
 }
 
 const API_HEADERS = {
@@ -135,11 +53,8 @@ async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T | n
 
 function cleanTitle(title: string): string {
   return title
-    // Metadata such as "(From \"Brahmastra\")" is common in YouTube Music
-    // titles but rarely part of the lyric-provider catalogue entry.
-    .replace(/\s*[\(\[]\s*(?:from|feat\.?|ft\.?|with)\b[^)\]]*[\)\]]/gi, '')
-    .replace(/\s*[\(\[]\s*(?:official|video|audio|lyrics?|visuali[sz]er|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^)\]]*[\)\]]/gi, '')
-    .replace(/\s*[-|]\s*(?:from|official|video|audio|lyrics?|visuali[sz]er)\b.*$/gi, '')
+    .replace(/\s*[([].*?(official|video|audio|lyrics?|visuali[sz]er|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit).*?[)\]]/gi, '')
+    .replace(/\s*[-|]\s*(official|video|audio|lyrics?|visuali[sz]er).*$/gi, '')
     .replace(/\s*\(feat\..*?\)/gi, '')
     .replace(/\s*\(ft\..*?\)/gi, '')
     .replace(/\s*\b(feat|ft)\.\s.*$/gi, '')
@@ -160,10 +75,6 @@ export function parseLrc(raw: string): LyricsLine[] {
   const lines: LyricsLine[] = [];
   const timeRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
   const wordRe = /<([^<>|]+):(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)(?::([01]))?>/g;
-  // LRC files may carry a global `[offset:+/-ms]` adjustment. A positive
-  // value shifts every timestamp later, which is how most players read it.
-  const offsetMatch = (raw || '').match(/\[offset:\s*([+-]?\d+)\s*\]/i);
-  const offset = offsetMatch ? Number(offsetMatch[1]) / 1000 : 0;
   const sorted = (raw || '').replace(/\r\n/g, '\n').split('\n');
   for (const original of sorted) {
     const stamps: number[] = [];
@@ -174,7 +85,7 @@ export function parseLrc(raw: string): LyricsLine[] {
       const minutes = Number(match[1]);
       const seconds = Number(match[2]);
       const fraction = match[3] ? Number(match[3].padEnd(3, '0')) : 0;
-      stamps.push(Math.max(0, minutes * 60 + seconds + fraction / 1000 + offset));
+      stamps.push(minutes * 60 + seconds + fraction / 1000);
       lastIndex = timeRe.lastIndex;
     }
     if (!stamps.length) continue;
@@ -194,28 +105,20 @@ export function parseLrc(raw: string): LyricsLine[] {
     }
     const words: NonNullable<LyricsLine['words']> = [];
     wordRe.lastIndex = 0;
-    const wordMatches = Array.from(text.matchAll(wordRe));
-    for (let index = 0; index < wordMatches.length; index++) {
-      const wordMatch = wordMatches[index];
-      const start = wordMatch.index ?? 0;
-      const end = start + wordMatch[0].length;
-      const gap = index === 0 ? '' : text.slice((wordMatches[index - 1].index ?? 0) + wordMatches[index - 1][0].length, start);
+    let wordMatch: RegExpExecArray | null;
+    while ((wordMatch = wordRe.exec(text))) {
       words.push({
         text: wordMatch[1],
-        start: Math.max(0, Number(wordMatch[2]) + offset),
-        end: Math.max(0, Number(wordMatch[3]) + offset),
-        space: /\s/.test(gap) ? true : undefined,
+        start: Number(wordMatch[2]),
+        end: Number(wordMatch[3]),
       });
     }
-    const rawText = text.replace(wordRe, '').trim();
-    const normalized = normalizeWords(words, rawText);
-    const normalizedWords = normalized.words;
-    text = normalized.text;
+    if (words.length) text = words.map((w) => w.text).join('');
     for (const time of stamps) {
       lines.push({
         time,
         text,
-        words: normalizedWords,
+        words: words.length ? words : undefined,
         agent,
         background: background || undefined,
       });
@@ -235,17 +138,6 @@ function plainToLines(raw: string): LyricsLine[] {
     .map((text) => ({ time: 0, text }));
 }
 
-/**
- * A provider can claim to be synced while only a handful of lines carry
- * timestamps (for example when a parser misses one timestamp format). Treat
- * that as unsynced so the panel never highlights the wrong line.
- */
-function isSynced(lines: LyricsLine[]): boolean {
-  if (lines.length < 2) return false;
-  const timed = lines.reduce((count, line) => count + (line.time > 0 ? 1 : 0), 0);
-  return timed >= 2 && timed / lines.length >= 0.6;
-}
-
 /** Basic TTML parser (line and word timing). */
 export function parseTtml(raw: string): LyricsLine[] {
   if (!raw) return [];
@@ -255,33 +147,26 @@ export function parseTtml(raw: string): LyricsLine[] {
   while ((match = pRe.exec(raw))) {
     const attrs = match[1];
     const body = match[2];
-    const beginRaw = (attrs.match(/\bbegin="([^"]+)"/) || [])[1];
-    const endRaw = (attrs.match(/\bend="([^"]+)"/) || [])[1];
-    const begin = beginRaw ? timeToSeconds(beginRaw) : 0;
-    const end = endRaw ? timeToSeconds(endRaw) : 0;
+    const begin = Number((attrs.match(/\bbegin="([^"]+)"/) || [])[1]) || 0;
+    const end = Number((attrs.match(/\bend="([^"]+)"/) || [])[1]) || 0;
     const spans: NonNullable<LyricsLine['words']> = [];
     const spanRe = /<span\b([^>]*)>([\s\S]*?)<\/span>/gi;
-    const spanMatches = Array.from(body.matchAll(spanRe));
-    for (let index = 0; index < spanMatches.length; index++) {
-      const span = spanMatches[index];
+    let span: RegExpExecArray | null;
+    while ((span = spanRe.exec(body))) {
       const sAttrs = span[1];
       const text = span[2].replace(/<[^>]+>/g, '');
       if (!text.trim()) continue;
-      const start = span.index ?? 0;
-      const gap = index === 0 ? '' : body.slice((spanMatches[index - 1].index ?? 0) + spanMatches[index - 1][0].length, start);
       const sBegin = (sAttrs.match(/\bbegin="([^"]+)"/) || [])[1];
       const sEnd = (sAttrs.match(/\bend="([^"]+)"/) || [])[1];
       spans.push({
         text,
-        start: Math.max(0, sBegin ? timeToSeconds(sBegin) : begin),
-        end: Math.max(0, sEnd ? timeToSeconds(sEnd) : end),
-        space: /\s/.test(gap) ? true : undefined,
+        start: sBegin ? timeToSeconds(sBegin) : begin,
+        end: sEnd ? timeToSeconds(sEnd) : end,
       });
     }
-    const plain = body.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
-    const { words: normalized, text } = normalizeWords(spans, plain);
+    const text = body.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
     if (!text) continue;
-    lines.push({ time: Math.max(0, begin), text, words: normalized });
+    lines.push({ time: begin, text, words: spans.length ? spans : undefined });
   }
   if (!lines.length) return plainToLines(raw.replace(/<[^>]+>/g, ''));
   lines.sort((a, b) => a.time - b.time);
@@ -314,7 +199,7 @@ async function fromYouTube(track: Track): Promise<ProviderOutput | null> {
 }
 
 async function fromBetterLyrics(track: Track): Promise<ProviderOutput | null> {
-  const url = `https://lyrics-api.boidu.dev/getLyrics?s=${encode(cleanTitle(track.title))}&a=${encode(primaryArtist(track))}` +
+  const url = `https://lyrics-api.boidu.dev/getLyrics?s=${encode(track.title)}&a=${encode(primaryArtist(track))}` +
     (track.duration ? `&d=${track.duration}` : '') +
     (track.album?.name ? `&al=${encode(track.album.name)}` : '');
   const json = await fetchJson<any>(url);
@@ -322,7 +207,7 @@ async function fromBetterLyrics(track: Track): Promise<ProviderOutput | null> {
   if (!ttml) return null;
   const lines = parseTtml(ttml);
   if (!lines.length) return null;
-  return { provider: 'BetterLyrics', raw: ttml, synced: isSynced(lines), lines };
+  return { provider: 'BetterLyrics', raw: ttml, synced: lines.some((l) => l.time > 0), lines };
 }
 
 async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
@@ -333,7 +218,7 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
     'https://lyricsplus-seven.vercel.app',
   ];
   for (const base of bases) {
-    const url = `${base}/v2/lyrics/get?title=${encode(cleanTitle(track.title))}&artist=${encode(primaryArtist(track))}` +
+    const url = `${base}/v2/lyrics/get?title=${encode(track.title)}&artist=${encode(primaryArtist(track))}` +
       (track.duration ? `&duration=${track.duration}` : '') +
       (track.album?.name ? `&album=${encode(track.album.name)}` : '');
     const json = await fetchJson<any>(url, 12000);
@@ -347,17 +232,15 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
               text: String(w.text),
               start: Number(w.time || 0) / 1000,
               end: (Number(w.time || 0) + Number(w.duration || 0)) / 1000,
-              space: /\s$/.test(String(w.text)) ? true : undefined,
             }))
         : undefined;
-      const { words: normalized, text } = normalizeWords(words ?? [], String(item.text || ''));
       return {
         time: Number(item.time || 0) / 1000,
-        text: text || String(item.text || '').trim(),
-        words: normalized,
+        text: String(item.text || words?.map((w: { text: string }) => w.text).join('') || '').trim(),
+        words: words?.length ? words : undefined,
         translation: item.translation?.text || undefined,
         romanized: item.transliteration?.text || undefined,
-        agent: normalizeAgent(item.element?.singer),
+        agent: item.element?.singer || undefined,
         background: Boolean(item.syllabus?.some((w: any) => w.isBackground)),
       };
     }).filter((line: LyricsLine) => line.text);
@@ -365,7 +248,7 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
     return {
       provider: 'LyricsPlus',
       raw: JSON.stringify(json).slice(0, 200_000),
-      synced: isSynced(lines),
+      synced: String(json?.type || '').toLowerCase() === 'word' || lines.some((l) => l.time > 0),
       lines,
     };
   }
@@ -391,17 +274,10 @@ async function fromLrcLib(track: Track): Promise<ProviderOutput | null> {
     }
   }
   if (!json || json.instrumental) return null;
-  let raw = json.syncedLyrics || json.plainLyrics;
+  const raw = json.syncedLyrics || json.plainLyrics;
   if (!raw) return null;
-  let lines = json.syncedLyrics ? parseLrc(json.syncedLyrics) : [];
-  let synced = isSynced(lines);
-  if (!synced && json.plainLyrics) {
-    const plainLines = plainToLines(json.plainLyrics);
-    if (plainLines.length) {
-      lines = plainLines;
-      raw = json.plainLyrics;
-    }
-  }
+  const synced = Boolean(json.syncedLyrics);
+  const lines = synced ? parseLrc(raw) : plainToLines(raw);
   if (!lines.length) return null;
   return { provider: 'LrcLib', raw, synced, lines };
 }
@@ -425,7 +301,7 @@ async function fromKuGou(track: Track): Promise<ProviderOutput | null> {
   }
   const lines = parseLrc(text);
   if (!lines.length) return null;
-  return { provider: 'KuGou', raw: text, synced: isSynced(lines), lines };
+  return { provider: 'KuGou', raw: text, synced: true, lines };
 }
 
 async function fromZemer(track: Track): Promise<ProviderOutput | null> {
@@ -444,18 +320,18 @@ async function fromZemer(track: Track): Promise<ProviderOutput | null> {
     if (!raw) continue;
     const lines = /\[\d{1,3}:\d{2}/.test(raw) ? parseLrc(raw) : plainToLines(raw);
     if (lines.length) {
-      return { provider: 'Zemer', raw, synced: isSynced(lines), lines };
+      return { provider: 'Zemer', raw, synced: lines.some((l) => l.time > 0), lines };
     }
   }
   return null;
 }
 
 async function fromYouTubeSubtitle(track: Track): Promise<ProviderOutput | null> {
-  const raw = await streams.fetchSubtitles(track.id, 10_000);
+  const raw = await streams.fetchSubtitles(track.id);
   if (!raw) return null;
   const lines = parseLrc(raw);
   if (!lines.length) return null;
-  return { provider: 'YouTubeSubtitle', raw, synced: isSynced(lines), lines };
+  return { provider: 'YouTubeSubtitle', raw, synced: true, lines };
 }
 
 const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>> = {
@@ -471,264 +347,200 @@ const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>
   Paxsenix: async () => null,
 };
 
+const TRANSLATION_LANGUAGE_NAMES: Record<string, string> = {
+  AR: 'Arabic',
+  DE: 'German',
+  EN: 'English',
+  ES: 'Spanish',
+  FR: 'French',
+  HI: 'Hindi',
+  IT: 'Italian',
+  JA: 'Japanese',
+  KO: 'Korean',
+  NL: 'Dutch',
+  PL: 'Polish',
+  PT: 'Portuguese',
+  RU: 'Russian',
+  TR: 'Turkish',
+  UK: 'Ukrainian',
+  ZH: 'Chinese',
+};
+
+function batchLines(lines: string[], maxItems: number, maxChars: number): string[][] {
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let chars = 0;
+  for (const line of lines) {
+    const size = line.length + 8;
+    if (current.length && (current.length >= maxItems || chars + size > maxChars)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(line);
+    chars += size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+function translationLanguage(language: string | undefined): string {
+  return (language || 'EN').trim().toUpperCase() || 'EN';
+}
+
+function errorDetail(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  try {
+    const json = JSON.parse(trimmed);
+    return String(json?.message || json?.error?.message || json?.detail || '').slice(0, 240);
+  } catch {
+    return trimmed.slice(0, 240);
+  }
+}
+
+function parseOpenAiTranslation(content: string, expected: number): string[] {
+  const cleaned = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!cleaned) throw new Error('The translation provider returned an empty response.');
+
+  let lines: string[] | null = null;
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) lines = parsed.map((item) => (typeof item === 'string' ? item : String(item ?? '')));
+  } catch {
+    // Some OpenAI-compatible endpoints ignore the JSON instruction.
+  }
+  if (!lines) {
+    lines = cleaned
+      .split('\n')
+      .map((line) => line.replace(/^\s*(?:\d+[.)]|[-•])\s+/, '').trim())
+      .filter((line, index, all) => line || (index > 0 && index < all.length - 1));
+  }
+  if (lines.length !== expected) {
+    throw new Error(
+      `The provider returned ${lines.length} translated lines for ${expected} lyric lines, so alignment was rejected.`,
+    );
+  }
+  return lines;
+}
+
 export class LyricsService {
   private cache = new Map<string, { at: number; result: LyricsResult | null }>();
-  private pending = new Map<string, Promise<LyricsResult | null>>();
 
   async fetch(track: Track, providers?: string[], force = false): Promise<LyricsResult | null> {
     const configured = providers?.length
       ? providers
       : settingsStore.get().lyricsProviders;
-    const key = `${track.id}:${cleanTitle(track.title).toLowerCase()}:${primaryArtist(track).toLowerCase()}:${configured.join(',')}`;
+    const key = `${track.id}:${track.title}:${configured.join(',')}`;
     const cached = this.cache.get(key);
-    if (!force && cached) {
-      const ttl = cached.result ? 30 * 60_000 : 2 * 60_000;
-      if (Date.now() - cached.at < ttl) return cached.result;
-    }
-    // Background prefetch and an immediately opened lyrics panel share one
-    // request instead of hitting every provider twice.
-    const running = this.pending.get(key);
-    if (running) return running;
-    const task = this.fetchUncached(track, configured, key);
-    this.pending.set(key, task);
-    try {
-      return await task;
-    } finally {
-      this.pending.delete(key);
-    }
-  }
+    if (!force && cached && Date.now() - cached.at < 30 * 60_000) return cached.result;
 
-  private async fetchUncached(
-    track: Track,
-    configured: string[],
-    key: string,
-  ): Promise<LyricsResult | null> {
-    const tasks = configured
-      .map((name, rank) => {
-        const provider = PROVIDERS[name];
-        return provider ? { name, rank, task: provider(track).catch(() => null) } : undefined;
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-
-    if (!tasks.length) return null;
-
-    const output = await new Promise<ProviderOutput | null>((resolve) => {
-      let settled = 0;
-      let finished = false;
-      let best: { output: ProviderOutput; rank: number } | null = null;
-      let graceTimer: ReturnType<typeof setTimeout> | undefined;
-
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        if (graceTimer) clearTimeout(graceTimer);
-        clearTimeout(overallTimer);
-        resolve(best?.output ?? null);
-      };
-
-      const consider = (output: ProviderOutput | null, rank: number) => {
-        if (!output?.lines.length) return;
-        if (!best || (output.synced && !best.output.synced) || (Boolean(output.synced) === best.output.synced && rank < best.rank)) {
-          best = { output, rank };
-        }
-        // Do not make a synced provider wait behind a slower, unsynced one,
-        // but give already-in-flight providers a short window to win. LrcLib
-        // and BetterLyrics commonly need ~0.5s more than YouTube's plain
-        // lyrics, so keep the unsynced grace long enough to prefer timed
-        // lyrics while still returning quickly when none exists.
-        if (best.output.synced) {
-          if (graceTimer) clearTimeout(graceTimer);
-          graceTimer = setTimeout(finish, 220);
-        } else if (!graceTimer) {
-          graceTimer = setTimeout(finish, 1_200);
-        }
-      };
-
-      const overallTimer = setTimeout(finish, 12_000);
-      for (const entry of tasks) {
-        entry.task.then((result) => {
-          settled += 1;
-          consider(result, entry.rank);
-          if (settled === tasks.length) finish();
-        });
+    for (const name of configured) {
+      const provider = PROVIDERS[name];
+      if (!provider) continue;
+      const result = await provider(track).catch(() => null);
+      if (result && result.lines.length) {
+        const output: LyricsResult = {
+          provider: result.provider,
+          synced: result.synced,
+          lines: result.lines,
+          raw: result.raw,
+        };
+        this.cache.set(key, { at: Date.now(), result: output });
+        return output;
       }
-    });
-
-    if (!output) {
-      this.cache.set(key, { at: Date.now(), result: null });
-      return null;
     }
-
-    const result: LyricsResult = {
-      provider: output.provider,
-      synced: output.synced,
-      lines: output.lines,
-      raw: output.raw,
-    };
-    this.cache.set(key, { at: Date.now(), result });
-    return result;
+    this.cache.set(key, { at: Date.now(), result: null });
+    return null;
   }
 
   async translate(lines: string[], targetLanguage?: string): Promise<TranslationResult> {
     const settings = settingsStore.get().translation;
-    const language = targetLanguage || settings.targetLanguage;
-    if (!lines.some((line) => line.trim())) return { lines: lines.map(() => ''), provider: settings.provider };
-    if (settings.provider === 'deepl' && settings.deeplApiKey.trim()) {
-      const translated = await this.translateDeepL(lines, language, settings.deeplApiKey.trim());
+    const language = translationLanguage(targetLanguage || settings.targetLanguage);
+    const text = lines.join('\n');
+    if (!text.trim()) return { lines: [], provider: settings.provider };
+
+    if (settings.provider === 'deepl' && settings.deeplApiKey) {
+      const endpoint = settings.deeplApiKey.endsWith(':fx')
+        ? 'https://api-free.deepl.com/v2/translate'
+        : 'https://api.deepl.com/v2/translate';
+      const translated: string[] = [];
+      for (const batch of batchLines(lines, 45, 40_000)) {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `DeepL-Auth-Key ${settings.deeplApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ text: batch, target_lang: language }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (!response.ok) {
+          const detail = errorDetail(await response.text().catch(() => ''));
+          throw new Error(
+            `DeepL returned HTTP ${response.status}${detail ? `: ${detail}` : '.'} Target language ${language} may not be supported.`,
+          );
+        }
+        const json: any = await response.json();
+        const batchLinesOut = Array.isArray(json?.translations) ? json.translations.map((item: any) => String(item?.text ?? '')) : [];
+        if (batchLinesOut.length !== batch.length) {
+          throw new Error(`DeepL returned ${batchLinesOut.length} lines for a ${batch.length}-line batch.`);
+        }
+        translated.push(...batchLinesOut);
+      }
+      if (translated.length !== lines.length) {
+        throw new Error(`DeepL returned ${translated.length} lines for ${lines.length} lyric lines.`);
+      }
       return { lines: translated, provider: 'deepl' };
     }
-    if (settings.provider === 'openai' && settings.openaiApiKey.trim()) {
-      const translated = await this.translateOpenAI(lines, language, settings);
+
+    if (settings.provider === 'openai' && settings.openaiApiKey) {
+      const translated: string[] = [];
+      const languageName = TRANSLATION_LANGUAGE_NAMES[language] || language;
+      for (const batch of batchLines(lines, 40, 16_000)) {
+        const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${settings.openaiApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: settings.openaiModel || 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  `You are a professional lyric translator. Translate every string in the JSON array to ${languageName}. ` +
+                  `The input is an array of lyric lines. Return only a JSON array of exactly ${batch.length} translated strings, ` +
+                  'in the same order. Do not merge, split, add, or omit lines. Keep empty strings empty. Never add commentary.',
+              },
+              { role: 'user', content: JSON.stringify(batch) },
+            ],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!response.ok) {
+          const detail = errorDetail(await response.text().catch(() => ''));
+          throw new Error(
+            `The OpenAI-compatible endpoint returned HTTP ${response.status}${detail ? `: ${detail}` : '.'} Check the base URL, key, and model.`,
+          );
+        }
+        const json: any = await response.json();
+        const content = String(json?.choices?.[0]?.message?.content || '');
+        translated.push(...parseOpenAiTranslation(content, batch.length));
+      }
+      if (translated.length !== lines.length) {
+        throw new Error(`The provider returned ${translated.length} lines for ${lines.length} lyric lines.`);
+      }
       return { lines: translated, provider: 'openai' };
     }
-    throw new Error(
-      `Add ${settings.provider === 'deepl' ? 'a DeepL API key' : 'an OpenAI-compatible API key'} in Settings → Lyrics to translate.`,
-    );
+    throw new Error('Configure a DeepL API key or an OpenAI-compatible endpoint in Settings → Lyrics.');
   }
-
-  private async translateDeepL(lines: string[], language: string, apiKey: string): Promise<string[]> {
-    const endpoint = apiKey.endsWith(':fx')
-      ? 'https://api-free.deepl.com/v2/translate'
-      : 'https://api.deepl.com/v2/translate';
-    const target = deeplLanguage(language);
-    const output: string[] = [];
-    // DeepL accepts at most 50 text entries per request. Keep batches small so
-    // normal songs do not fail with HTTP 400.
-    for (let offset = 0; offset < lines.length; offset += 40) {
-      const batch = lines.slice(offset, offset + 40);
-      const requestBatch = batch.map((line) => (line.trim() ? line : ' '));
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `DeepL-Auth-Key ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text: requestBatch,
-          target_lang: target,
-          preserve_formatting: true,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!response.ok) {
-        const detail = (await response.text().catch(() => '')).trim().slice(0, 200);
-        throw new Error(`DeepL returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`);
-      }
-      const json: any = await response.json();
-      const translations = Array.isArray(json?.translations) ? json.translations : [];
-      if (translations.length !== batch.length) {
-        throw new Error(`DeepL returned ${translations.length} translations for ${batch.length} lyric lines.`);
-      }
-      output.push(...translations.map((entry: any, index: number) => (batch[index].trim() ? String(entry?.text || '') : '')));
-    }
-    return output;
-  }
-
-  private async translateOpenAI(
-    lines: string[],
-    language: string,
-    settings: TranslationSettings,
-  ): Promise<string[]> {
-    const output: string[] = [];
-    // Align by index, not by newline count. Providers often merge or omit
-    // blank lines, which previously shifted every following translation.
-    for (let offset = 0; offset < lines.length; offset += 25) {
-      const batch = lines.slice(offset, offset + 25);
-      const response = await fetch(`${settings.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${settings.openaiApiKey.trim()}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: settings.openaiModel || 'gpt-4o-mini',
-          temperature: 0,
-          messages: [
-            {
-              role: 'system',
-              content:
-                `Translate every line to ${language}. Keep the same number of lines and the same order. ` +
-                'Keep empty lines empty. Do not merge lines, add numbering, or add commentary. ' +
-                'Return JSON only in the form {"lines":["translated line", ...]}.',
-            },
-            { role: 'user', content: JSON.stringify({ lines: batch }) },
-          ],
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!response.ok) {
-        const detail = (await response.text().catch(() => '')).trim().slice(0, 200);
-        throw new Error(`OpenAI returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`);
-      }
-      const json: any = await response.json();
-      const choice = json?.choices?.[0];
-      if (choice?.finish_reason === 'length') throw new Error('The translation was cut off. Try fewer lyrics at once.');
-      const content = String(choice?.message?.content || '').trim();
-      const parsed = parseTranslationContent(content);
-      if (parsed.length !== batch.length) {
-        throw new Error(`The translator returned ${parsed.length} lines for ${batch.length} lyric lines.`);
-      }
-      output.push(...parsed);
-    }
-    return output;
-  }
-}
-
-function deeplLanguage(code: string): string {
-  const normalized = (code || 'en').toLowerCase();
-  const map: Record<string, string> = {
-    en: 'EN-US',
-    pt: 'PT-BR',
-    zh: 'ZH-HANS',
-    ja: 'JA',
-    ko: 'KO',
-    hi: 'HI',
-    es: 'ES',
-    fr: 'FR',
-    de: 'DE',
-    it: 'IT',
-    ar: 'AR',
-    ru: 'RU',
-    tr: 'TR',
-    id: 'ID',
-    nl: 'NL',
-    pl: 'PL',
-    sv: 'SV',
-    da: 'DA',
-    fi: 'FI',
-    no: 'NB',
-    cs: 'CS',
-    el: 'EL',
-    he: 'HE',
-    hu: 'HU',
-    ro: 'RO',
-    sk: 'SK',
-    uk: 'UK',
-    vi: 'VI',
-    th: 'TH',
-    ms: 'MS',
-    bn: 'BN',
-    ta: 'TA',
-    te: 'TE',
-    ur: 'UR',
-  };
-  return map[normalized] || normalized.toUpperCase();
-}
-
-function parseTranslationContent(content: string): string[] {
-  const cleaned = content
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-  if (!cleaned) return [];
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (Array.isArray(parsed)) return parsed.map((line) => String(line ?? ''));
-    if (Array.isArray(parsed?.lines)) return parsed.lines.map((line: any) => String(line ?? ''));
-  } catch {
-    // Fall back to one-line-per-row below.
-  }
-  return cleaned.split(/\r?\n/).map((line) => line.replace(/^\s*\d+[.)]\s*/, ''));
 }
 
 export const lyricsService = new LyricsService();

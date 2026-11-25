@@ -1,12 +1,13 @@
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Mic, Sliders, UserRound } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, ListMusic, UserRound } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
+import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { initials } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, IconButton } from './primitives';
-import { SearchField } from './SearchField';
-import { NotificationBell } from './NotificationCenter';
+import { AndroidSearchLauncher, SearchField } from './SearchField';
+import { WindowControls } from './WindowControls';
 
 export function TopBar() {
   const canBack = useNavStore((state) => state.index > 0);
@@ -14,102 +15,87 @@ export function TopBar() {
   const back = useNavStore((state) => state.back);
   const forward = useNavStore((state) => state.forward);
   const navigate = useNavStore((state) => state.navigate);
+  const route = useNavStore((state) => state.entries[state.index] || { page: 'home' as const });
+  const showMobileBack =
+    canBack &&
+    !['home', 'explore', 'search', 'library', 'liked', 'recent', 'downloads', 'history', 'settings'].includes(route.page);
+  // The dedicated Search page owns its search field (hero on the landing view,
+  // inline field on results). Showing the launcher there would duplicate it.
+  const hideMobileSearch = isAndroidShell && route.page === 'search';
   const session = useAppStore((state) => state.session);
-  const login = useAppStore((state) => state.login);
   const openDialog = useUiStore((state) => state.openDialog);
-  const openOnboarding = useUiStore((state) => state.openOnboarding);
-  const toast = useUiStore((state) => state.toast);
-  const [signingIn, setSigningIn] = useState(false);
-
-  const openAccount = async () => {
-    if (session.hasCookies) {
-      navigate({ page: 'settings', tab: 'account' });
-      return;
-    }
-    if (signingIn) return;
-    setSigningIn(true);
-    try {
-      const next = await login();
-      // Closing the private Google window without finishing is not an error.
-      if (!next.hasCookies) return;
-    } catch (error: any) {
-      toast(`Sign in failed: ${error?.message || error}`, 'error');
-      navigate({ page: 'settings', tab: 'account' });
-    } finally {
-      setSigningIn(false);
-    }
-  };
+  const queueOpen = useUiStore((state) => state.queueOpen);
+  const setQueueOpen = useUiStore((state) => state.setQueueOpen);
+  const queueCount = usePlayerStore((state) => state.queue.length);
 
   return (
     <header className="top-bar">
+      <div className="top-mobile-leading">
+        {showMobileBack ? (
+          <IconButton label="Go back" size="sm" onClick={back}>
+            <ChevronLeft size={21} />
+          </IconButton>
+        ) : (
+          <img src="./icon.png" alt="" className="top-mobile-logo" draggable={false} />
+        )}
+      </div>
       <div className="top-nav-buttons">
         <IconButton label="Go back" size="sm" onClick={back} disabled={!canBack}>
-          <ChevronLeft size={18} />
+          <ChevronLeft size={20} />
         </IconButton>
         <IconButton label="Go forward" size="sm" onClick={forward} disabled={!canForward}>
-          <ChevronRight size={18} />
+          <ChevronRight size={20} />
         </IconButton>
       </div>
-
       <div className="top-search">
-        <SearchField
-          trailing={
-            <button
-              type="button"
-              className="identify-inline"
-              onClick={(event) => {
-                event.stopPropagation();
-                openDialog({ type: 'recognition' });
-              }}
-              title="Identify Playing Song Around You"
-            >
-              <Mic size={15} />
-              <span>Identify</span>
-            </button>
-          }
-        />
+        {hideMobileSearch ? null : isAndroidShell ? (
+          <AndroidSearchLauncher />
+        ) : (
+          <SearchField onIdentify={() => openDialog({ type: 'recognition' })} />
+        )}
       </div>
-
       <div className="top-actions">
-        <button
-          type="button"
-          className="top-customize-taste"
-          onClick={() => void openOnboarding()}
-          title="Customize Your Taste"
-          aria-label="Customize Your Taste"
-        >
-          <Sliders size={16} />
-          <span>Customize Your Taste</span>
-        </button>
-
-        <NotificationBell />
-
+        {isAndroidShell ? (
+          <button
+            type="button"
+            className="recognize-pill"
+            onClick={() => openDialog({ type: 'recognition' })}
+            title="Identify a song"
+          >
+            <AudioLines size={17} />
+            <span>Identify</span>
+          </button>
+        ) : null}
+        {!isAndroidShell ? (
+          <button
+            type="button"
+            className={`queue-pill ${queueOpen ? 'is-active' : ''}`}
+            onClick={() => setQueueOpen(!queueOpen)}
+            title="Playing queue"
+          >
+            <ListMusic size={17} />
+            <span>Playing Queue</span>
+            {queueCount > 0 ? <em>{queueCount > 99 ? '99+' : queueCount}</em> : null}
+          </button>
+        ) : null}
         <button
           type="button"
           className="account-chip"
-          onClick={() => void openAccount()}
-          title={session.hasCookies ? 'Account' : 'Sign in to YouTube Music'}
-          aria-label={session.hasCookies ? 'Account' : 'Sign in to YouTube Music'}
-          aria-busy={signingIn}
-          disabled={signingIn}
+          onClick={() => navigate({ page: 'settings', tab: 'account' })}
+          title="Account"
         >
-          {signingIn ? (
-            <span className="account-avatar account-avatar-fallback">
-              <Loader2 size={15} className="spin" />
-            </span>
-          ) : session.account?.thumbnailUrl ? (
+          {session.account?.thumbnailUrl ? (
             <Artwork src={session.account.thumbnailUrl} alt={session.account.name} round className="account-avatar" />
           ) : (
-            <span className="account-avatar account-avatar-fallback">
-              {session.account ? initials(session.account.name) : <UserRound size={15} />}
-            </span>
+            <span className="account-avatar account-avatar-fallback">{session.account ? initials(session.account.name) : <UserRound size={15} />}</span>
           )}
           <span className="account-name">
-            {signingIn ? 'Signing in…' : session.account?.name || (session.hasCookies ? 'YouTube Music' : 'Sign in')}
+            {session.account?.name || (session.hasCookies ? 'YouTube Music' : 'Sign in')}
           </span>
-          {signingIn ? null : <span className="account-pro">PRO</span>}
         </button>
       </div>
+      {!isAndroidShell ? <div className="topbar-drag-region" aria-hidden="true" /> : null}
+      {!isAndroidShell ? <WindowControls className="is-topbar" /> : null}
     </header>
   );
 }

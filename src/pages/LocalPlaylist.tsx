@@ -6,7 +6,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
-import { proxiedArtwork } from '../lib/image';
+import { proxiedArtwork } from '../lib/artwork';
 import { Artwork, Button, EmptyState, IconButton, Spinner } from '../components/primitives';
 import { TrackList } from '../components/TrackList';
 
@@ -98,10 +98,8 @@ export function LocalPlaylistPage({ id }: { id: string }) {
       for (let index = 0; index < pending.length; index++) {
         setDownloading(`${index + 1}/${pending.length}`);
         try {
-          const item = await window.auralis.player.download(pending[index]);
-          if (item.status === 'done') completed++;
-          else if (item.status === 'paused') break;
-          else failed++;
+          await window.auralis.player.download(pending[index]);
+          completed++;
         } catch {
           failed++;
         }
@@ -151,7 +149,7 @@ export function LocalPlaylistPage({ id }: { id: string }) {
             {covers.length ? (
               <div className={`cover-mosaic count-${covers.length}`}>
                 {covers.map((src, index) => (
-                  <Artwork src={src} alt="Playlist cover" key={`${src}-${index}`} />
+                  <img src={src} alt="" key={`${src}-${index}`} loading="lazy" />
                 ))}
               </div>
             ) : (

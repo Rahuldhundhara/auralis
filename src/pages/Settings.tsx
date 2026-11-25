@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Sun,
   Terminal,
   Trash2,
@@ -36,9 +37,11 @@ import { useAppStore } from '../stores/app';
 import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
-import { platformId, platformName } from '../lib/platform';
-import { Artwork, Button, IconButton, Range } from '../components/primitives';
-import { EQ_PRESETS, applyPreset } from '../lib/eqPresets';
+import { proxiedArtwork } from '../lib/artwork';
+import { TRANSLATION_LANGUAGES } from '../lib/languages';
+import { languageSummary } from '../lib/onboarding';
+import { isAndroidShell } from '../lib/platform';
+import { Button, IconButton, Range } from '../components/primitives';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
   { id: 'general', label: 'General', icon: <Settings2 size={17} /> },
@@ -83,24 +86,8 @@ const REGIONS = [
   ['SG', 'Singapore'],
 ];
 
-const TRANSLATION_LANGUAGES = [
-  ['EN', 'English'],
-  ['HI', 'Hindi'],
-  ['ES', 'Spanish'],
-  ['FR', 'French'],
-  ['DE', 'German'],
-  ['JA', 'Japanese'],
-  ['KO', 'Korean'],
-  ['PT', 'Portuguese'],
-  ['AR', 'Arabic'],
-  ['ZH', 'Chinese'],
-  ['RU', 'Russian'],
-  ['TR', 'Turkish'],
-];
-
 const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
   { id: 'BetterLyrics', label: 'BetterLyrics', description: 'Community lyrics with word-by-word timing and translations.' },
-  { id: 'Paxsenix', label: 'Paxsenix', description: 'Synced lyrics with romanisation and translation support.' },
   { id: 'LyricsPlus', label: 'LyricsPlus', description: 'Large community catalogue with synced and plain lyrics.' },
   { id: 'LrcLib', label: 'LRCLIB', description: 'Open, crowd-sourced lyrics database with timestamps.' },
   { id: 'KuGou', label: 'KuGou', description: 'Chinese catalogue with synced lyrics and translations.' },
@@ -110,9 +97,8 @@ const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
 ];
 
 const ACCENTS = [
-  { value: '#28b463', label: 'Auralis green' },
-  { value: '#f0f0f0', label: 'Mono' },
-  { value: '#6aa9ff', label: 'Auralis blue' },
+  { value: '#10b981', label: 'Emerald' },
+  { value: '#8ab4f8', label: 'Auralis blue' },
   { value: '#7de2ff', label: 'Ice' },
   { value: '#c39bff', label: 'Violet' },
   { value: '#ff9bc0', label: 'Rose' },
@@ -120,6 +106,15 @@ const ACCENTS = [
   { value: '#ffb27d', label: 'Amber' },
   { value: '#ff8f8f', label: 'Coral' },
   { value: '#b8e986', label: 'Lime' },
+];
+
+const EQ_PRESETS: Array<{ label: string; bands: number[]; bass: number; preamp: number }> = [
+  { label: 'Flat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preamp: 0 },
+  { label: 'Bass', bands: [6, 5, 4, 2, 0, -1, -1, 0, 1, 2], bass: 5, preamp: -2 },
+  { label: 'Vocal', bands: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1], bass: 0, preamp: 0 },
+  { label: 'Rock', bands: [4, 3, 2, 0, -1, 0, 1, 2, 3, 2], bass: 2, preamp: -1 },
+  { label: 'Pop', bands: [2, 2, 1, 0, 1, 2, 2, 1, 0, 1], bass: 1, preamp: 0 },
+  { label: 'Warm', bands: [3, 4, 4, 2, 0, 0, -1, -1, -1, -2], bass: 3, preamp: -1 },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -241,9 +236,19 @@ function SettingsCard({ title, description, children, icon }: { title: string; d
 
 function GeneralTab() {
   const settings = useAppStore((state) => state.settings);
-  const appInfo = useAppStore((state) => state.appInfo);
   const update = useAppStore((state) => state.updateSettings);
   const reset = useAppStore((state) => state.resetSettings);
+  const openOnboarding = useUiStore((state) => state.openOnboarding);
+
+  const tasteLanguages = settings.tasteLanguages ?? [];
+  const tasteArtists = settings.tasteArtists ?? [];
+  const tasteDescription = `${
+    tasteLanguages.length ? languageSummary(tasteLanguages, 4) : 'No languages picked yet'
+  } · ${
+    tasteArtists.length
+      ? `${tasteArtists.length} ${tasteArtists.length === 1 ? 'artist' : 'artists'}`
+      : 'no artists yet'
+  }`;
 
   return (
     <>
@@ -275,73 +280,51 @@ function GeneralTab() {
         </SettingRow>
       </SettingsCard>
 
-
-      <SettingsCard title="Window & system" description={`How Auralis behaves with the rest of ${platformName()}.`} icon={<Monitor size={19} />}>
-        <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
-          <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
-        </SettingRow>
-        <SettingRow label="Close to tray" description="Closing the window keeps the music playing in the background.">
-          <Toggle
-            checked={settings.closeToTray}
-            disabled={!settings.trayEnabled || appInfo?.trayAvailable === false}
-            onChange={(value) => void update({ closeToTray: value })}
-          />
-        </SettingRow>
+      <SettingsCard
+        title="Music preferences"
+        description="The languages and artists behind the Your artists shelf on Home."
+        icon={<Sparkles size={19} />}
+      >
         <SettingRow
-          label="Hardware acceleration"
-          description="Use the GPU for smooth artwork and animations. Requires a restart to take effect."
+          label="Your taste"
+          description={tasteDescription}
         >
-          <Toggle checked={settings.hardwareAcceleration} onChange={(value) => void update({ hardwareAcceleration: value })} />
+          <Button variant="secondary" size="sm" onClick={openOnboarding}>
+            Edit preferences
+          </Button>
         </SettingRow>
+      </SettingsCard>
+
+      <SettingsCard
+        title={isAndroidShell ? 'App & system' : 'Window & system'}
+        description={isAndroidShell ? 'How Auralis fits into Android.' : 'How Auralis behaves with the rest of Windows.'}
+        icon={<Monitor size={19} />}
+      >
+        {!isAndroidShell ? (
+          <>
+            <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
+              <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
+            </SettingRow>
+            <SettingRow label="Close to tray" description="Closing the window keeps the music playing in the background.">
+              <Toggle
+                checked={settings.closeToTray}
+                disabled={!settings.trayEnabled}
+                onChange={(value) => void update({ closeToTray: value })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Hardware acceleration"
+              description="Use the GPU for smooth artwork and animations. Requires a restart to take effect."
+            >
+              <Toggle checked={settings.hardwareAcceleration} onChange={(value) => void update({ hardwareAcceleration: value })} />
+            </SettingRow>
+          </>
+        ) : null}
         <SettingRow label="Restart Auralis" description="Apply graphics changes and reload the interface.">
           <Button variant="outline" size="sm" icon={<RotateCcw size={15} />} onClick={() => void window.auralis.app.relaunch()}>
             Restart now
           </Button>
         </SettingRow>
-        {settings.trayEnabled && appInfo?.trayAvailable === false ? (
-          <p className="settings-footnote">
-            A desktop tray host was not found. On GNOME, install and enable the AppIndicator extension to use the tray icon; otherwise
-            Auralis quits when its window closes.
-          </p>
-        ) : null}
-      </SettingsCard>
-
-      <SettingsCard title="Music preferences" description="Your chosen genres, favorite artists and interface language." icon={<Music2 size={19} />}>
-        <SettingRow label="Interface language" description="The language used across the Auralis interface.">
-          <Select
-            value={settings.personalization.uiLanguage}
-            onChange={(value) =>
-              void update({ personalization: { ...settings.personalization, uiLanguage: value } })
-            }
-          >
-            {LANGUAGES.map(([value, label]) => (
-              <option value={value} key={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
-        </SettingRow>
-        <SettingRow label="Preferred genres" description="Genres used to shape your home recommendations.">
-          <span className="setting-static">
-            {settings.personalization.preferredGenres.length ? settings.personalization.preferredGenres.join(', ') : '—'}
-          </span>
-        </SettingRow>
-        <SettingRow label="Favorite artists" description="Artists used to shape your home recommendations.">
-          <span className="setting-static">
-            {settings.personalization.favoriteArtists.length
-              ? settings.personalization.favoriteArtists.map((artist) => artist.name).join(', ')
-              : '—'}
-          </span>
-        </SettingRow>
-        <div className="settings-inline-actions">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => useUiStore.getState().openOnboarding()}
-          >
-            Edit preferences
-          </Button>
-        </div>
       </SettingsCard>
 
       <SettingsCard title="Reset" description="Return every preference to its original value." icon={<Trash2 size={19} />}>
@@ -380,12 +363,12 @@ function AppearanceTab() {
     { id: 'dark', label: 'Dark', description: 'Soft charcoal surfaces', icon: <Moon size={18} /> },
     { id: 'black', label: 'Black', description: 'True black for OLED', icon: <Moon size={18} /> },
     { id: 'light', label: 'Light', description: 'Bright and airy', icon: <Sun size={18} /> },
-    { id: 'system', label: 'System', description: `Follow ${platformName()}`, icon: <Monitor size={18} /> },
+    { id: 'system', label: 'System', description: isAndroidShell ? 'Follow Android' : 'Follow Windows', icon: <Monitor size={18} /> },
   ];
 
   return (
     <>
-      <SettingsCard title="Theme" description={`Auralis switches instantly. System follows your ${platformName()} appearance.`} icon={<Palette size={19} />}>
+      <SettingsCard title="Theme" description={`Auralis switches instantly. System follows your ${isAndroidShell ? 'Android' : 'Windows'} appearance.`} icon={<Palette size={19} />}>
         <div className="theme-grid">
           {themes.map((theme) => (
             <button
@@ -447,17 +430,19 @@ function AppearanceTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Sidebar" description="Choose how much room your collection gets." icon={<LayoutPanelLeft size={19} />}>
-        <SettingRow label="Collapse sidebar" description="Show icons only and give the music more space.">
-          <Toggle
-            checked={collapsed}
-            onChange={(value) => {
-              setCollapsed(value);
-              void update({ sidebarCollapsed: value });
-            }}
-          />
-        </SettingRow>
-      </SettingsCard>
+      {!isAndroidShell ? (
+        <SettingsCard title="Sidebar" description="Choose how much room your collection gets." icon={<LayoutPanelLeft size={19} />}>
+          <SettingRow label="Collapse sidebar" description="Show icons only and give the music more space.">
+            <Toggle
+              checked={collapsed}
+              onChange={(value) => {
+                setCollapsed(value);
+                void update({ sidebarCollapsed: value });
+              }}
+            />
+          </SettingRow>
+        </SettingsCard>
+      ) : null}
     </>
   );
 }
@@ -465,7 +450,6 @@ function AppearanceTab() {
 function PlaybackTab() {
   const settings = useAppStore((state) => state.settings);
   const update = useAppStore((state) => state.updateSettings);
-  const player = useAppStore((state) => state.settings.playbackRate);
 
   const setBand = (index: number, value: number) => {
     const bands = [...settings.eq.bands];
@@ -476,18 +460,29 @@ function PlaybackTab() {
   return (
     <>
       <SettingsCard title="Audio quality" description="Streaming quality is resolved through yt-dlp for every track." icon={<Gauge size={19} />}>
-        <SettingRow label="Streaming quality" description="Quality caps are enforced by the stream selector; Automatic and Best use the highest available audio format.">
+        <SettingRow label="Streaming quality" description="Automatic picks the best available format for your connection.">
           <Select value={settings.audioQuality} onChange={(value) => void update({ audioQuality: value as Settings['audioQuality'] })}>
-            <option value="auto">Automatic (best available)</option>
+            <option value="auto">Automatic</option>
             <option value="best">Best available</option>
             <option value="high">High (up to 256 kbps)</option>
             <option value="medium">Medium (up to 192 kbps)</option>
-            <option value="low">Data saver (up to 128 kbps)</option>
+            <option value="low">Data saver (lowest bitrate)</option>
           </Select>
         </SettingRow>
         <SettingRow label="Normalise volume" description="Evens out loud and quiet tracks with a gentle compressor.">
           <Toggle checked={settings.normalize} onChange={(value) => void update({ normalize: value })} />
         </SettingRow>
+        {isAndroidShell ? (
+          <SettingRow
+            label="Video clips"
+            description="Show a muted music-video preview in Now Playing. Uses extra data and falls back to artwork when a clip is unavailable."
+          >
+            <Toggle
+              checked={Boolean(settings.videoClips)}
+              onChange={(value) => void update({ videoClips: value })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow label="Playback speed" description={`Currently ${settings.playbackRate.toFixed(2)}×. Applies to the current and next songs.`}>
           <div className="setting-range">
             <Range min={0.5} max={2} step={0.05} value={settings.playbackRate} onValueChange={(value) => void update({ playbackRate: value })} />
@@ -503,37 +498,34 @@ function PlaybackTab() {
 
       <SettingsCard
         title="Equalizer"
-        description="Ten peaking filters and a preamp, applied in real time through the Web Audio API."
+        description="Ten peaking filters, a low-shelf bass boost and a peak limiter, applied in real time through the Web Audio API."
         icon={<AudioLines size={19} />}
       >
-        <SettingRow label="Enable equalizer" description="Disabling the EQ returns every band, bass shelf and preamp to neutral.">
+        <SettingRow label="Enable equalizer" description="Bypass leaves the audio untouched.">
           <Toggle checked={settings.eq.enabled} onChange={(value) => void update({ eq: { ...settings.eq, enabled: value } })} />
         </SettingRow>
         <div className={`eq-panel ${settings.eq.enabled ? '' : 'is-disabled'}`}>
           <div className="eq-presets" role="group" aria-label="Equalizer presets">
             {EQ_PRESETS.map((preset) => (
               <button
-                key={preset.id}
                 type="button"
                 className="eq-preset"
-                onClick={() => void update({ eq: applyPreset(settings.eq, preset) })}
+                key={preset.label}
+                onClick={() =>
+                  void update({
+                    eq: {
+                      ...settings.eq,
+                      bands: [...preset.bands],
+                      bassBoost: preset.bass,
+                      preamp: preset.preamp,
+                    },
+                  })
+                }
               >
                 {preset.label}
               </button>
             ))}
           </div>
-          <div className="eq-head">
-            <span>Bass boost · 80 Hz shelf</span>
-            <span className="eq-value">{settings.eq.bassBoost > 0 ? '+' : ''}{(settings.eq.bassBoost || 0).toFixed(1)} dB</span>
-          </div>
-          <Range
-            min={-12}
-            max={12}
-            step={0.5}
-            value={settings.eq.bassBoost || 0}
-            onValueChange={(value) => void update({ eq: { ...settings.eq, bassBoost: value } })}
-            aria-label="Bass boost"
-          />
           <div className="eq-head">
             <span>Preamp</span>
             <span className="eq-value">{settings.eq.preamp > 0 ? '+' : ''}{settings.eq.preamp.toFixed(1)} dB</span>
@@ -545,6 +537,41 @@ function PlaybackTab() {
             value={settings.eq.preamp}
             onValueChange={(value) => void update({ eq: { ...settings.eq, preamp: value } })}
           />
+          <div className="eq-bass">
+            <div className="eq-head">
+              <span>Bass boost</span>
+              <span className="eq-value">+{(settings.eq.bassBoost ?? 0).toFixed(1)} dB</span>
+            </div>
+            <Range
+              min={0}
+              max={12}
+              step={0.5}
+              value={settings.eq.bassBoost ?? 0}
+              onValueChange={(value) => void update({ eq: { ...settings.eq, bassBoost: value } })}
+              aria-label="Bass boost"
+            />
+            <div className="eq-bass-options">
+              <label>
+                <span>Corner</span>
+                <Select
+                  value={String(settings.eq.bassFrequency ?? 80)}
+                  onChange={(value) => void update({ eq: { ...settings.eq, bassFrequency: Number(value) } })}
+                >
+                  <option value="60">60 Hz</option>
+                  <option value="80">80 Hz</option>
+                  <option value="100">100 Hz</option>
+                  <option value="120">120 Hz</option>
+                </Select>
+              </label>
+              <label className="eq-limiter">
+                <span>Peak limiter</span>
+                <Toggle
+                  checked={settings.eq.limiter !== false}
+                  onChange={(value) => void update({ eq: { ...settings.eq, limiter: value } })}
+                />
+              </label>
+            </div>
+          </div>
           <div className="eq-bands">
             {[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency, index) => (
               <div className="eq-band" key={frequency}>
@@ -566,7 +593,7 @@ function PlaybackTab() {
             ))}
           </div>
           <div className="eq-footer">
-            <span>31 Hz – 16 kHz · ±12 dB · automatic headroom + limiter</span>
+            <span>31 Hz – 16 kHz · ±12 dB</span>
             <Button
               variant="ghost"
               size="sm"
@@ -580,9 +607,6 @@ function PlaybackTab() {
       </SettingsCard>
 
       <SettingsCard title="Player behaviour" description="Small touches that keep listening effortless." icon={<Play size={19} />}>
-        <SettingRow label="Playback rate" description="The saved speed is restored the next time Auralis starts.">
-          <span className="setting-static">{player.toFixed(2)}×</span>
-        </SettingRow>
         <SettingRow label="Queue is remembered" description="Your queue, position and repeat mode survive a restart.">
           <span className="setting-static">
             <Check size={15} /> Enabled
@@ -597,7 +621,15 @@ function LyricsTab() {
   const settings = useAppStore((state) => state.settings);
   const update = useAppStore((state) => state.updateSettings);
   const [testing, setTesting] = useState(false);
-  const order = settings.lyricsProviders.length ? settings.lyricsProviders : PROVIDERS.map((provider) => provider.id);
+  const knownOrder = settings.lyricsProviders.filter((id) => PROVIDERS.some((provider) => provider.id === id));
+  const order = knownOrder.length ? knownOrder : PROVIDERS.map((provider) => provider.id);
+  const enabledProviders = new Set(order);
+  const orderedProviders = [
+    ...order
+      .map((id) => PROVIDERS.find((provider) => provider.id === id))
+      .filter((provider): provider is (typeof PROVIDERS)[number] => Boolean(provider)),
+    ...PROVIDERS.filter((provider) => !enabledProviders.has(provider.id)),
+  ];
 
   const setOrder = (next: string[]) => void update({ lyricsProviders: next });
 
@@ -635,24 +667,34 @@ function LyricsTab() {
         icon={<ListMusic size={19} />}
       >
         <div className="provider-list">
-          {order.map((id, index) => {
-            const provider = PROVIDERS.find((entry) => entry.id === id);
-            if (!provider) return null;
+          {orderedProviders.map((provider) => {
+            const enabled = enabledProviders.has(provider.id);
+            const enabledIndex = order.indexOf(provider.id);
             return (
-              <div className="provider-row" key={id}>
-                <span className="provider-rank">{index + 1}</span>
+              <div className={`provider-row ${enabled ? '' : 'is-disabled'}`} key={provider.id}>
+                <span className="provider-rank">{enabled ? enabledIndex + 1 : '—'}</span>
                 <div className="provider-copy">
                   <span className="provider-name">{provider.label}</span>
                   <span className="provider-description">{provider.description}</span>
                 </div>
                 <div className="provider-controls">
-                  <IconButton label={`Move ${provider.label} up`} size="xs" disabled={index === 0} onClick={() => move(index, -1)}>
+                  <IconButton
+                    label={`Move ${provider.label} up`}
+                    size="xs"
+                    disabled={!enabled || enabledIndex <= 0}
+                    onClick={() => move(enabledIndex, -1)}
+                  >
                     <ChevronUp size={14} />
                   </IconButton>
-                  <IconButton label={`Move ${provider.label} down`} size="xs" disabled={index === order.length - 1} onClick={() => move(index, 1)}>
+                  <IconButton
+                    label={`Move ${provider.label} down`}
+                    size="xs"
+                    disabled={!enabled || enabledIndex < 0 || enabledIndex >= order.length - 1}
+                    onClick={() => move(enabledIndex, 1)}
+                  >
                     <ChevronDown size={14} />
                   </IconButton>
-                  <Toggle checked={order.includes(id)} onChange={(enabled) => toggleProvider(id, enabled)} />
+                  <Toggle checked={enabled} onChange={(value) => toggleProvider(provider.id, value)} />
                 </div>
               </div>
             );
@@ -665,22 +707,33 @@ function LyricsTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Translation" description="Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this PC." icon={<Languages size={19} />}>
-        <SettingRow label="Auto-translate lyrics" description="Translate automatically when synced lyrics open, if a key is configured.">
+      <SettingsCard
+        title="Translation"
+        description={
+          isAndroidShell
+            ? 'Translate lyric lines automatically for free, or use your own DeepL or OpenAI key. Keys stay on this device.'
+            : 'Translate lyric lines with your own DeepL or OpenAI key. Keys stay on this PC.'
+        }
+        icon={<Languages size={19} />}
+      >
+        <SettingRow label="Auto-translate lyrics" description="Translate automatically when lyrics open.">
           <Toggle checked={settings.translation.enabled} onChange={(value) => void update({ translation: { ...settings.translation, enabled: value } })} />
         </SettingRow>
         <SettingRow label="Provider">
           <Select
             value={settings.translation.provider}
-            onChange={(value) => void update({ translation: { ...settings.translation, provider: value as 'deepl' | 'openai' } })}
+            onChange={(value) =>
+              void update({ translation: { ...settings.translation, provider: value as 'auto' | 'deepl' | 'openai' } })
+            }
           >
+            {isAndroidShell ? <option value="auto">Automatic (no key)</option> : null}
             <option value="deepl">DeepL</option>
             <option value="openai">OpenAI-compatible</option>
           </Select>
         </SettingRow>
         <SettingRow label="Target language">
           <Select
-            value={settings.translation.targetLanguage}
+            value={settings.translation.targetLanguage.toUpperCase()}
             onChange={(value) => void update({ translation: { ...settings.translation, targetLanguage: value } })}
           >
             {TRANSLATION_LANGUAGES.map(([value, label]) => (
@@ -699,7 +752,7 @@ function LyricsTab() {
               onSave={(value) => void update({ translation: { ...settings.translation, deeplApiKey: value } })}
             />
           </SettingRow>
-        ) : (
+        ) : settings.translation.provider === 'openai' ? (
           <>
             <SettingRow label="Base URL" description="Any OpenAI-compatible endpoint works." stacked>
               <TextSetting
@@ -726,6 +779,11 @@ function LyricsTab() {
               />
             </SettingRow>
           </>
+        ) : (
+          <p className="settings-footnote">
+            Automatic translation uses Google Translate and needs no account or API key. Choose DeepL or an
+            OpenAI-compatible endpoint above to use your own credentials instead.
+          </p>
         )}
         <div className="settings-inline-actions">
           <Button variant="outline" size="sm" icon={<Languages size={15} />} onClick={() => void testTranslation()} disabled={testing}>
@@ -743,7 +801,6 @@ function LyricsTab() {
 
 function DownloadsTab() {
   const settings = useAppStore((state) => state.settings);
-  const appInfo = useAppStore((state) => state.appInfo);
   const library = useAppStore((state) => state.library);
   const update = useAppStore((state) => state.updateSettings);
   const clearDownloads = useAppStore((state) => state.clearDownloads);
@@ -751,20 +808,30 @@ function DownloadsTab() {
   const done = library.downloads.filter((item) => item.status === 'done');
   const total = library.downloads.reduce((sum, item) => sum + (item.size || 0), 0);
 
+  const chooseFolder = async () => {
+    const folder = await window.auralis.app.chooseFolder(settings.downloadDir);
+    if (folder) {
+      await update({ downloadDir: folder });
+      toast('Downloads folder updated.', 'success');
+    }
+  };
+
   return (
     <>
       <SettingsCard title="Storage" description="Downloads are saved as audio files that Auralis can play offline." icon={<HardDrive size={19} />}>
-        <SettingRow
-          label="App-private offline storage"
-          description={appInfo?.downloadsDir || 'Managed by Auralis in its private application data folder.'}
-        >
-          <IconButton
-            label="Open downloads folder"
-            size="sm"
-            onClick={() => void window.auralis.shell.openPath(appInfo?.downloadsDir || '')}
-          >
-            <FolderOpen size={16} />
-          </IconButton>
+        <SettingRow label="Downloads folder" description={settings.downloadDir || 'Default Music\\Auralis folder'}>
+          <div className="folder-control">
+            <Button variant="outline" size="sm" icon={<FolderOpen size={15} />} onClick={() => void chooseFolder()}>
+              Change
+            </Button>
+            <IconButton
+              label="Open downloads folder"
+              size="sm"
+              onClick={() => void window.auralis.shell.openPath(settings.downloadDir || '')}
+            >
+              <FolderOpen size={16} />
+            </IconButton>
+          </div>
         </SettingRow>
         <SettingRow label="Download quality" description="Higher quality uses more disk space per song.">
           <Select value={settings.downloadQuality} onChange={(value) => void update({ downloadQuality: value as Settings['downloadQuality'] })}>
@@ -946,93 +1013,33 @@ function IntegrationsTab() {
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title="Discord Rich Presence"
-        description="Show the song you are listening to on your Discord profile. Create your own Discord application first."
-        icon={<Disc3 size={19} />}
-      >
-        <SettingRow label="Enable Rich Presence" description="Updates when a new song starts or playback pauses.">
-          <Toggle checked={settings.discord.enabled} onChange={(value) => void update({ discord: { ...settings.discord, enabled: value } })} />
-        </SettingRow>
-        <SettingRow label="Discord application ID" stacked>
-          <TextSetting
-            value={settings.discord.appId}
-            placeholder="123456789012345678"
-            onSave={(value) => void update({ discord: { ...settings.discord, appId: value } })}
-          />
-        </SettingRow>
-        <SettingRow label="Show buttons" description="Add an “Open in Auralis” button when Discord supports it.">
-          <Toggle checked={settings.discord.showButtons} onChange={(value) => void update({ discord: { ...settings.discord, showButtons: value } })} />
-        </SettingRow>
-        <div className="settings-inline-actions">
-          <Button variant="ghost" size="sm" icon={<ExternalLink size={14} />} onClick={() => void window.auralis.app.openExternal('https://discord.com/developers/applications')}>
-            Discord Developer Portal
-          </Button>
-        </div>
-        <p className="settings-footnote">Discord must be running on this PC. Rich Presence connects locally and never sends your listening data to Auralis.</p>
-      </SettingsCard>
-
-      <SettingsCard
-        title="Song recognition"
-        description="Identify songs by playing them nearby, or by singing and humming the melody. Humming needs an ACRCloud humming project; recorded audio also works without it."
-        icon={<AudioLines size={19} />}
-      >
-        <div className="integration-status">
-          <span
-            className={`status-dot ${
-              settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
-                ? 'is-online'
-                : ''
-            }`}
-          />
-          <div>
-            <strong>
-              {settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
-                ? 'Humming recognition enabled'
-                : 'Humming recognition not configured'}
-            </strong>
-            <span>
-              {settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
-                ? 'Singing and humming are matched with ACRCloud; recorded audio falls back to Shazam.'
-                : 'Without ACRCloud, Identify still recognises music playing nearby using the built-in Shazam fingerprint.'}
-            </span>
+      {!isAndroidShell ? (
+        <SettingsCard
+          title="Discord Rich Presence"
+          description="Show the song you are listening to on your Discord profile. Create your own Discord application first."
+          icon={<Disc3 size={19} />}
+        >
+          <SettingRow label="Enable Rich Presence" description="Updates when a new song starts or playback pauses.">
+            <Toggle checked={settings.discord.enabled} onChange={(value) => void update({ discord: { ...settings.discord, enabled: value } })} />
+          </SettingRow>
+          <SettingRow label="Discord application ID" stacked>
+            <TextSetting
+              value={settings.discord.appId}
+              placeholder="123456789012345678"
+              onSave={(value) => void update({ discord: { ...settings.discord, appId: value } })}
+            />
+          </SettingRow>
+          <SettingRow label="Show buttons" description="Add an “Open in Auralis” button when Discord supports it.">
+            <Toggle checked={settings.discord.showButtons} onChange={(value) => void update({ discord: { ...settings.discord, showButtons: value } })} />
+          </SettingRow>
+          <div className="settings-inline-actions">
+            <Button variant="ghost" size="sm" icon={<ExternalLink size={14} />} onClick={() => void window.auralis.app.openExternal('https://discord.com/developers/applications')}>
+              Discord Developer Portal
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<ExternalLink size={14} />}
-            onClick={() => void window.auralis.app.openExternal('https://console.acrcloud.com/signup')}
-          >
-            Get keys
-          </Button>
-        </div>
-        <SettingRow label="ACRCloud host" stacked>
-          <TextSetting
-            value={settings.recognition.acrcloudHost}
-            placeholder="identify-eu-west-1.acrcloud.com"
-            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudHost: value } })}
-          />
-        </SettingRow>
-        <SettingRow label="Access key" stacked>
-          <TextSetting
-            value={settings.recognition.acrcloudAccessKey}
-            placeholder="ACRCloud access key"
-            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudAccessKey: value } })}
-          />
-        </SettingRow>
-        <SettingRow label="Access secret" stacked>
-          <TextSetting
-            type="password"
-            value={settings.recognition.acrcloudAccessSecret}
-            placeholder="ACRCloud access secret"
-            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudAccessSecret: value } })}
-          />
-        </SettingRow>
-        <p className="settings-footnote">
-          Create a free ACRCloud project, choose <strong>Humming Recognition</strong> as its type, then paste the host, access key and
-          secret here. Credentials stay on this PC and are only used when you press Identify.
-        </p>
-      </SettingsCard>
+          <p className="settings-footnote">Discord must be running on this PC. Rich Presence connects locally and never sends your listening data to Auralis.</p>
+        </SettingsCard>
+      ) : null}
 
       <SettingsCard title="YouTube Music account" description="Your Google session unlocks likes, playlists and history sync." icon={<CirclePlay size={19} />}>
         <div className="integration-status">
@@ -1079,7 +1086,7 @@ function AccountTab() {
   const signOut = () => {
     confirmDialog({
       title: 'Sign out of YouTube Music?',
-      message: 'Your local library, playlists and downloads stay on this PC. Synced likes will stop updating.',
+      message: `Your local library, playlists and downloads stay on this ${isAndroidShell ? 'device' : 'PC'}. Synced likes will stop updating.`,
       confirmLabel: 'Sign out',
       danger: true,
       onConfirm: async () => {
@@ -1090,11 +1097,11 @@ function AccountTab() {
 
   return (
     <>
-      <SettingsCard title="YouTube Music" description="Auralis signs in with a private Google window and stores only the cookies it needs." icon={<CirclePlay size={19} />}>
+      <SettingsCard title="YouTube Music" description="Auralis opens a real Chrome window for Google sign-in and stores only the YouTube cookies it needs." icon={<CirclePlay size={19} />}>
         {session.hasCookies ? (
           <div className="account-card">
             {session.account?.thumbnailUrl ? (
-              <Artwork src={session.account.thumbnailUrl} alt={session.account.name || 'YouTube Music'} round className="account-card-avatar" />
+              <img src={proxiedArtwork(session.account.thumbnailUrl)} alt="" className="account-card-avatar" />
             ) : (
               <span className="account-card-avatar account-card-fallback">
                 <UserRound size={30} />
@@ -1125,15 +1132,20 @@ function AccountTab() {
             <div>
               <h2>Connect your YouTube Music account</h2>
               <p>
-                Sign in to like songs, edit playlists, view your history and sync everything with the YouTube Music app. Auralis uses a
-                separate Google window and never sees your password.
+                Sign in with the Google account you already use in Chrome. Auralis opens a Chrome window for the
+                sign-in and never sees your password.
               </p>
             </div>
             <div className="account-empty-actions">
-              <Button variant="primary" icon={<LogIn size={16} />} onClick={() => void signIn()} disabled={busy}>
+              <Button
+                variant="primary"
+                icon={<LogIn size={16} />}
+                onClick={() => void signIn()}
+                disabled={busy}
+              >
                 {busy ? 'Waiting for sign in…' : 'Sign in with Google'}
               </Button>
-              <Button variant="outline" onClick={() => openDialog({ type: 'cookie' })}>
+              <Button variant="ghost" onClick={() => openDialog({ type: 'cookie' })} disabled={busy}>
                 Paste cookies
               </Button>
             </div>
@@ -1141,7 +1153,7 @@ function AccountTab() {
         )}
       </SettingsCard>
 
-      <SettingsCard title="Local library" description="Auralis keeps this data on your PC, even without an account." icon={<HardDrive size={19} />}>
+      <SettingsCard title="Local library" description={`Auralis keeps this data on your ${isAndroidShell ? 'device' : 'PC'}, even without an account.`} icon={<HardDrive size={19} />}>
         <div className="account-stats">
           <div>
             <strong>{library.liked.length}</strong>
@@ -1219,9 +1231,9 @@ function AboutTab() {
           <img src="./icon.png" alt="Auralis" />
         </div>
         <div>
-          <span className="eyebrow">Auralis for {platformName()}</span>
+          <span className="eyebrow">{isAndroidShell ? 'Auralis for Android' : 'Auralis for Windows'}</span>
           <h1>Auralis</h1>
-          <p>A calm, local-first desktop client for YouTube Music. Built with an independent brand and GPL-licensed code.</p>
+          <p>A calm, local-first {isAndroidShell ? 'Android' : 'desktop'} client for YouTube Music. Built with an independent brand and GPL-licensed code.</p>
           <span className="about-version">Version {appInfo?.version || '1.0.0'} · GPL-3.0-or-later</span>
         </div>
       </section>
@@ -1229,7 +1241,7 @@ function AboutTab() {
       <SettingsCard title="Build details" description="Runtime versions and local storage locations." icon={<Terminal size={19} />}>
         <div className="about-grid">
           <div>
-            <span>Electron</span>
+            <span>{isAndroidShell ? 'Runtime' : 'Electron'}</span>
             <code>{appInfo?.electron || '—'}</code>
           </div>
           <div>
@@ -1238,7 +1250,7 @@ function AboutTab() {
           </div>
           <div>
             <span>Platform</span>
-            <code>{appInfo?.platform || platformId()}</code>
+            <code>{appInfo?.platform || (isAndroidShell ? 'android' : 'win32')}</code>
           </div>
           <div>
             <span>yt-dlp</span>
@@ -1274,8 +1286,8 @@ function AboutTab() {
       <SettingsCard title="Credits" description="Auralis stands on the shoulders of open tools." icon={<Music2 size={19} />}>
         <div className="credits-list">
           <div>
-            <strong>Electron, React & Vite</strong>
-            <span>The desktop shell and interface runtime.</span>
+            <strong>{isAndroidShell ? 'Android WebView, React & Vite' : 'Electron, React & Vite'}</strong>
+            <span>The {isAndroidShell ? 'Android shell' : 'desktop shell'} and interface runtime.</span>
           </div>
           <div>
             <strong>yt-dlp & ffmpeg</strong>
@@ -1301,7 +1313,7 @@ function AboutTab() {
       </SettingsCard>
 
       <div className="about-footer">
-        <span>Made for {platformName()} · {formatDate(Date.now())}</span>
+        <span>Made for {isAndroidShell ? 'Android' : 'Windows'} · {formatDate(Date.now())}</span>
         <span>Support the artists you love by listening on official platforms.</span>
       </div>
     </>
@@ -1332,6 +1344,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
               type="button"
               key={entry.id}
               className={`settings-nav-item ${tab === entry.id ? 'is-active' : ''}`}
+              aria-current={tab === entry.id ? 'page' : undefined}
               onClick={() => navigate({ page: 'settings', tab: entry.id }, true)}
             >
               <span className="settings-nav-icon">{entry.icon}</span>
@@ -1345,7 +1358,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
             <span className="settings-panel-icon">{current.icon}</span>
             <div>
               <h2>{current.label}</h2>
-              <p>{TAB_DESCRIPTIONS[tab]}</p>
+              <p>{tabDescription(tab)}</p>
             </div>
           </div>
           {tab === 'general' ? <GeneralTab /> : null}
@@ -1363,7 +1376,7 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
 }
 
 const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
-  general: `Language, region, startup and ${platformName()} behaviour.`,
+  general: 'Language, region, startup and Windows behaviour.',
   appearance: 'Theme, accent colour and sidebar layout.',
   playback: 'Streaming quality, volume, speed and the ten-band equalizer.',
   lyrics: 'Provider order, translations and lyric keys.',
@@ -1372,3 +1385,12 @@ const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
   account: 'Your connected account and local library.',
   about: 'Versions, bundled tools and open-source credits.',
 };
+
+function tabDescription(tab: SettingsTab): string {
+  if (isAndroidShell) {
+    if (tab === 'general') return 'Language, region, startup and app behaviour.';
+    if (tab === 'appearance') return 'Theme and accent colour.';
+    if (tab === 'integrations') return 'Last.fm and your YouTube Music session.';
+  }
+  return TAB_DESCRIPTIONS[tab];
+}

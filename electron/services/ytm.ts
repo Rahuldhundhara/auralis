@@ -247,7 +247,9 @@ export class YtmService {
 
   async playlist(id: string): Promise<BrowsePage> {
     const browseId = id.startsWith('VL') ? id : `VL${id}`;
-    const raw = await this.browse(browseId);
+    // Private playlists (including the ones a user creates) only resolve with
+    // the signed-in session. Without cookies YouTube returns an empty page.
+    const raw = await this.browse(browseId, undefined, undefined, innertube.hasCookies);
     return this.detailPage(raw, 'playlist', browseId.replace(/^VL/, ''));
   }
 

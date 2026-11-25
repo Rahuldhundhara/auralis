@@ -23,7 +23,7 @@ const app = await electron.launch({
     ...(process.platform === 'linux' && process.env.AURALIS_QA_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
   ],
   cwd: process.cwd(),
-  env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', AURALIS_FORCE_PROD: '1' },
+  env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1', AURALIS_FORCE_PROD: '1', AURALIS_SKIP_LOGIN: '1' },
   timeout: 60000,
 });
 

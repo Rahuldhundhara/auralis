@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  ShieldCheck,
   Shuffle,
   Trash2,
   X,
@@ -19,6 +20,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate, formatDuration, shuffleArray } from '../lib/format';
+import { isAndroidShell } from '../lib/platform';
 import { Artwork, Button, EmptyState, IconButton } from '../components/primitives';
 
 type Filter = 'all' | 'done' | 'active' | 'failed';
@@ -38,7 +40,6 @@ function statusLabel(item: DownloadItem): string {
   if (item.status === 'done') return 'Downloaded';
   if (item.status === 'downloading') return `Downloading ${Math.round(item.progress || 0)}%`;
   if (item.status === 'queued') return 'Queued';
-  if (item.status === 'paused') return `Paused ${Math.round(item.progress || 0)}%`;
   if (item.status === 'cancelled') return 'Cancelled';
   return 'Failed';
 }
@@ -46,6 +47,7 @@ function statusLabel(item: DownloadItem): string {
 export function DownloadsPage() {
   const downloads = useAppStore((state) => state.library.downloads);
   const appInfo = useAppStore((state) => state.appInfo);
+  const settings = useAppStore((state) => state.settings);
   const removeDownload = useAppStore((state) => state.removeDownload);
   const clearDownloads = useAppStore((state) => state.clearDownloads);
   const refreshLibrary = useAppStore((state) => state.refreshLibrary);
@@ -54,10 +56,10 @@ export function DownloadsPage() {
   const [filter, setFilter] = useState<Filter>('all');
 
   const done = useMemo(() => downloads.filter((item) => item.status === 'done'), [downloads]);
-  const active = useMemo(() => downloads.filter((item) => item.status === 'downloading' || item.status === 'queued' || item.status === 'paused'), [downloads]);
+  const active = useMemo(() => downloads.filter((item) => item.status === 'downloading' || item.status === 'queued'), [downloads]);
   const failed = useMemo(() => downloads.filter((item) => item.status === 'error' || item.status === 'cancelled'), [downloads]);
   const totalBytes = done.reduce((sum, item) => sum + (item.size || 0), 0);
-  const folder = appInfo?.downloadsDir || '';
+  const folder = settings.downloadDir || appInfo?.downloadsDir || '';
   const filtering: Record<Filter, DownloadItem[]> = {
     all: downloads,
     done,
@@ -88,7 +90,9 @@ export function DownloadsPage() {
     if (deleteFile) {
       confirmDialog({
         title: 'Delete download?',
-        message: `The file will be deleted from “${folder}”. The song stays in your library and can be downloaded again.`,
+        message: isAndroidShell
+          ? `“${item.track.title}” will be deleted from Auralis private storage. The song stays in your library and can be downloaded again.`
+          : `The file will be deleted from “${folder}”. The song stays in your library and can be downloaded again.`,
         confirmLabel: 'Delete file',
         danger: true,
         onConfirm: run,
@@ -101,7 +105,9 @@ export function DownloadsPage() {
   const clearAll = () => {
     confirmDialog({
       title: 'Clear all downloads?',
-      message: `${downloads.length} entries will be removed and ${done.length} files will be deleted from disk. This cannot be undone.`,
+      message: isAndroidShell
+        ? `${downloads.length} entries will be removed and ${done.length} files will be deleted from Auralis private storage. This cannot be undone.`
+        : `${downloads.length} entries will be removed and ${done.length} files will be deleted from disk. This cannot be undone.`,
       confirmLabel: 'Delete everything',
       danger: true,
       onConfirm: async () => {
@@ -122,31 +128,6 @@ export function DownloadsPage() {
       items.push({ label: 'Open file', icon: Play, onClick: () => void window.auralis.shell.openPath(item.path) });
     }
     if (item.status === 'downloading' || item.status === 'queued') {
-      items.push({
-        label: 'Pause download',
-        icon: Pause,
-        onClick: () => {
-          void window.auralis.player.pauseDownload(item.id);
-          toast('Download paused. Resume it from this page.', 'info');
-        },
-      });
-      items.push({
-        label: 'Cancel download',
-        icon: X,
-        onClick: () => {
-          void window.auralis.player.cancelDownload(item.id);
-          toast('Download cancelled.', 'info');
-        },
-      });
-    }
-    if (item.status === 'paused') {
-      items.push({
-        label: 'Resume download',
-        icon: Play,
-        onClick: () => {
-          void window.auralis.player.resumeDownload(item.id).then(() => refreshLibrary()).catch((error: any) => toast(`Could not resume: ${error?.message || error}`, 'error'));
-        },
-      });
       items.push({
         label: 'Cancel download',
         icon: X,
@@ -179,7 +160,7 @@ export function DownloadsPage() {
             <Download size={14} /> Offline listening
           </span>
           <h1>Downloads</h1>
-          <p>Every file is stored on this PC, so your music keeps playing when the internet does not.</p>
+          <p>Every file is stored on {isAndroidShell ? 'this device' : 'this PC'}, so your music keeps playing when the internet does not.</p>
           <div className="downloads-stats">
             <div className="download-stat">
               <span className="download-stat-icon">
@@ -237,14 +218,20 @@ export function DownloadsPage() {
             >
               Shuffle
             </Button>
-            <Button variant="outline" icon={<FolderOpen size={17} />} onClick={openFolder} disabled={!folder}>
-              Open folder
-            </Button>
+            {!isAndroidShell ? (
+              <Button variant="outline" icon={<FolderOpen size={17} />} onClick={openFolder} disabled={!folder}>
+                Open folder
+              </Button>
+            ) : null}
             <Button variant="ghost" icon={<Trash2 size={16} />} onClick={clearAll} disabled={!downloads.length}>
               Clear all
             </Button>
           </div>
-          {folder ? (
+          {isAndroidShell ? (
+            <div className="download-path is-private" title="Downloads stay inside Auralis app storage">
+              <ShieldCheck size={14} /> Private app storage · {formatBytes(totalBytes)} used · removed when you uninstall Auralis
+            </div>
+          ) : folder ? (
             <button type="button" className="download-path" onClick={openFolder} title="Open downloads folder">
               <FolderOpen size={14} /> {folder}
             </button>
@@ -281,9 +268,8 @@ export function DownloadsPage() {
         <div className="download-list">
           {visible.map((item) => {
             const pending = item.status === 'downloading' || item.status === 'queued';
-            const paused = item.status === 'paused';
             return (
-              <div className={`download-row ${pending || paused ? 'is-active' : ''} ${item.status === 'error' ? 'is-error' : ''}`} key={item.id}>
+              <div className={`download-row ${pending ? 'is-active' : ''} ${item.status === 'error' ? 'is-error' : ''}`} key={item.id}>
                 <button
                   type="button"
                   className="download-main"
@@ -317,8 +303,8 @@ export function DownloadsPage() {
                       {item.size ? ` · ${formatBytes(item.size)}` : ''}
                       {item.track.duration ? ` · ${formatDuration(item.track.duration)}` : ''}
                     </span>
-                    {pending || paused ? (
-                      <span className={`download-progress ${paused ? 'is-paused' : ''}`}>
+                    {pending ? (
+                      <span className="download-progress">
                         <span style={{ width: `${Math.round(item.progress || 0)}%` }} />
                       </span>
                     ) : null}
@@ -340,37 +326,15 @@ export function DownloadsPage() {
                       </IconButton>
                     </>
                   ) : pending ? (
-                    <>
-                      <IconButton
-                        label="Pause download"
-                        size="sm"
-                        onClick={() => {
-                          void window.auralis.player.pauseDownload(item.id);
-                          toast('Download paused. Resume it from this page.', 'info');
-                        }}
-                      >
-                        <Pause size={16} />
-                      </IconButton>
-                      <IconButton
-                        label="Cancel download"
-                        size="sm"
-                        onClick={() => {
-                          void window.auralis.player.cancelDownload(item.id);
-                          toast('Download cancelled.', 'info');
-                        }}
-                      >
-                        <X size={16} />
-                      </IconButton>
-                    </>
-                  ) : paused ? (
                     <IconButton
-                      label="Resume download"
+                      label="Cancel download"
                       size="sm"
                       onClick={() => {
-                        void window.auralis.player.resumeDownload(item.id).then(() => refreshLibrary()).catch((error: any) => toast(`Could not resume: ${error?.message || error}`, 'error'));
+                        void window.auralis.player.cancelDownload(item.id);
+                        toast('Download cancelled.', 'info');
                       }}
                     >
-                      <Play size={16} />
+                      <X size={16} />
                     </IconButton>
                   ) : (
                     <IconButton

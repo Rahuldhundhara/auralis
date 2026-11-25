@@ -5,128 +5,46 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
-import { downloadsDir, ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 import { innertube } from './innertube';
+import { ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
-const STREAM_CACHE_MAX_BYTES = 512 * 1024 * 1024;
-const STREAM_CACHE_MAX_FILES = 120;
-const STREAM_CACHE_MAX_AGE = 30 * 24 * 60 * 60_000;
+const FAST_FAILURE_TTL_MS = 10 * 60_000;
+const FAST_COOLDOWN_MS = 2 * 60_000;
+const FAST_MIN_GAP_MS = 250;
+const MEDIA_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 interface CachedStream {
   info: StreamInfo;
   at: number;
 }
 
-const streamCache = new Map<string, CachedStream>();
-const pendingResolve = new Map<string, Promise<StreamInfo>>();
-const cacheTasks = new Map<string, Promise<string | null>>();
-const active = new Map<string, ReturnType<typeof spawn>>();
-const pausedDownloads = new Set<string>();
-
-/** Private, disposable audio cache used to make next-track starts local. */
-export function streamCacheDir(): string {
-  return path.join(app.getPath('userData'), 'stream-cache');
+interface MediaFormat {
+  url: string;
+  bitrate: number;
+  ext: string;
+  mimeType: string;
 }
+
+const streamCache = new Map<string, CachedStream>();
+const inFlight = new Map<string, Promise<StreamInfo>>();
+const fastFailures = new Map<string, number>();
+const active = new Map<string, ReturnType<typeof spawn>>();
+const issuedStreams = new Set<string>();
+let fastCooldownUntil = 0;
+let fastFailureStreak = 0;
+let fastLastRequestAt = 0;
 
 export function resourcesBinDir(): string {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'bin');
   return path.join(app?.getAppPath?.() || process.cwd(), 'resources', 'bin');
 }
 
-let cachedYtdlpPath: string | undefined;
-let ytdlpStageTask: Promise<string> | undefined;
-
-/**
- * Copy yt-dlp into the writable user-data directory in the background. The
- * bundled binary is 70+ MB, so doing this synchronously inside the first
- * playback request added several seconds to the first song after a fresh
- * install. Playback can use the bundled copy immediately while this runs.
- */
-export function stageYtdlp(): Promise<string> {
-  if (process.platform === 'win32') {
-    const exe = 'yt-dlp.exe';
-    const bundled = path.join(resourcesBinDir(), exe);
-    return Promise.resolve(fs.existsSync(bundled) ? bundled : exe);
-  }
-  if (cachedYtdlpPath) return Promise.resolve(cachedYtdlpPath);
-  if (ytdlpStageTask) return ytdlpStageTask;
-
-  const exe = 'yt-dlp';
-  const bundled = path.join(resourcesBinDir(), exe);
-  ytdlpStageTask = (async () => {
-    const user = path.join(app.getPath('userData'), 'bin', exe);
-    if (fs.existsSync(user)) {
-      fs.chmodSync(user, 0o755);
-      cachedYtdlpPath = user;
-      return user;
-    }
-    if (!fs.existsSync(bundled)) {
-      cachedYtdlpPath = exe;
-      return exe;
-    }
-    await fs.promises.mkdir(path.dirname(user), { recursive: true });
-    // Copy to a temporary name and rename atomically. ytdlpPath() may be
-    // called while this is in progress; it must never execute a half-written
-    // binary. Use the async FS API so the main process can keep serving the
-    // renderer while the 70+ MB binary is being copied.
-    const temporary = `${user}.${process.pid}.tmp`;
-    try {
-      await fs.promises.copyFile(bundled, temporary);
-      await fs.promises.chmod(temporary, 0o755);
-      await fs.promises.rename(temporary, user);
-      cachedYtdlpPath = user;
-      return user;
-    } catch (error) {
-      await fs.promises.rm(temporary, { force: true }).catch(() => {});
-      throw error;
-    }
-  })().catch((error) => {
-    console.warn('[auralis] could not stage yt-dlp in userData; using bundled copy', error);
-    ytdlpStageTask = undefined;
-    const fallback = fs.existsSync(bundled) ? bundled : exe;
-    cachedYtdlpPath = fallback;
-    return fallback;
-  });
-  return ytdlpStageTask;
-}
-
-/**
- * Linux packages mount the app read-only (AppImage) or install it under /opt
- * (deb). Use the writable copy when it is ready, otherwise keep playback
- * moving with the bundled executable. Windows keeps using the bundled
- * executable exactly as before.
- */
 export function ytdlpPath(): string {
-  if (process.platform === 'win32') {
-    const exe = 'yt-dlp.exe';
-    const bundled = path.join(resourcesBinDir(), exe);
-    return fs.existsSync(bundled) ? bundled : exe;
-  }
-
-  if (cachedYtdlpPath) return cachedYtdlpPath;
-  const exe = 'yt-dlp';
+  const exe = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
   const bundled = path.join(resourcesBinDir(), exe);
-  try {
-    const user = path.join(app.getPath('userData'), 'bin', exe);
-    if (fs.existsSync(user)) {
-      fs.chmodSync(user, 0o755);
-      cachedYtdlpPath = user;
-      return user;
-    }
-  } catch (error) {
-    console.warn('[auralis] could not read staged yt-dlp; using bundled copy', error);
-  }
   return fs.existsSync(bundled) ? bundled : exe;
-}
-
-/** Warm the staged binary and Python runtime while the app is idle. */
-export function warmupStreams(): void {
-  void stageYtdlp()
-    .then(() => runYtdlp(['--version'], 10_000))
-    .catch(() => {
-      // Warmup is best-effort.
-    });
 }
 
 export function ffmpegPath(): string | null {
@@ -147,15 +65,8 @@ function cookieFile(): string | null {
     if (!name || /[\r\n]/.test(name) || /[\r\n]/.test(value)) continue;
     lines.push(`.youtube.com\tTRUE\t/\tTRUE\t${Math.floor(Date.now() / 1000) + 86400}\t${name}\t${value}`);
   }
-  let dir = os.tmpdir();
-  try {
-    dir = path.join(app.getPath('userData'), 'tmp');
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch {
-    // fall back to the OS temp directory when userData is unavailable
-  }
-  const file = path.join(dir, `auralis-cookies-${crypto.randomUUID()}.txt`);
-  fs.writeFileSync(file, lines.join('\n'), { encoding: 'utf8', mode: 0o600 });
+  const file = path.join(os.tmpdir(), `auralis-cookies-${crypto.randomUUID()}.txt`);
+  fs.writeFileSync(file, lines.join('\n'), 'utf8');
   return file;
 }
 
@@ -171,130 +82,65 @@ function commonArgs(): string[] {
 function qualityFormat(quality: string): string {
   switch (quality) {
     case 'high':
-      // Caps are real: do not silently fall back to a higher-bitrate stream.
-      return 'bestaudio[abr<=256]';
+      return 'bestaudio[abr<=256]/bestaudio[ext=m4a]/bestaudio';
     case 'medium':
-      return 'bestaudio[abr<=192]';
+      return 'bestaudio[abr<=192]/bestaudio[ext=m4a]/bestaudio';
     case 'low':
-      return 'bestaudio[abr<=128]';
+      return 'bestaudio[abr<=128]/bestaudio[ext=m4a]/bestaudio';
     case 'best':
     case 'auto':
     default:
-      // Let yt-dlp choose the highest available audio stream instead of
-      // preferring a lower-bitrate m4a fallback.
-      return 'bestaudio/best';
+      return 'bestaudio[ext=m4a]/bestaudio';
   }
 }
 
-const FAST_PLAYER_CLIENTS = [
-  { name: 'ANDROID', version: '20.10.38', id: '3' },
-  { name: 'IOS', version: '20.10.4', id: '5' },
-] as const;
-
-function bitrateCap(quality: string): number {
-  if (quality === 'high') return 256_000;
-  if (quality === 'medium') return 192_000;
-  if (quality === 'low') return 128_000;
-  return Number.POSITIVE_INFINITY;
+function qualityBitrateCap(quality: string): number {
+  switch (quality) {
+    case 'low':
+      return 128_000;
+    case 'medium':
+      return 192_000;
+    case 'high':
+      return 256_000;
+    default:
+      return Number.POSITIVE_INFINITY;
+  }
 }
 
-interface FastFormat {
-  itag?: number;
-  mimeType?: string;
-  bitrate?: number;
-  url?: string;
-  drmFamilies?: unknown;
-}
-
-function pickAudioFormat(adaptive: FastFormat[], formats: FastFormat[], quality: string): FastFormat | undefined {
-  const candidates = [...adaptive, ...formats].filter(
-    (format) =>
-      typeof format.url === 'string' &&
-      /^audio\//.test(format.mimeType || '') &&
-      !format.drmFamilies,
+/**
+ * Picks the same kind of stream yt-dlp would: the best audio track below the
+ * configured quality cap, preferring AAC/M4A for the widest decoder support.
+ */
+function pickMediaFormat(payload: any, quality: string): MediaFormat | null {
+  const formats = Array.isArray(payload?.streamingData?.adaptiveFormats)
+    ? payload.streamingData.adaptiveFormats
+    : [];
+  const audio = formats.filter(
+    (format: any) =>
+      typeof format?.url === 'string' &&
+      /^https:\/\//i.test(format.url) &&
+      typeof format.mimeType === 'string' &&
+      format.mimeType.startsWith('audio/'),
   );
-  if (!candidates.length) return undefined;
-  const cap = bitrateCap(quality);
-  const eligible = candidates.filter((format) => (format.bitrate || 0) <= cap);
-  const pool = eligible.length ? eligible : candidates;
-  // WebM/Opus carries its headers at the start, so playback can begin from
-  // the first fast range without waiting for the file's tail.
-  const rank = (format: FastFormat) => (/audio\/webm/i.test(format.mimeType || '') ? 0 : 1);
-  return pool.sort((a, b) => rank(a) - rank(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
-}
-
-/**
- * YouTube's player endpoint returns signed stream URLs in a few hundred
- * milliseconds, while spawning yt-dlp costs several seconds. Try the mobile
- * clients in order, then fall back to yt-dlp if YouTube withholds URLs for
- * this video or session.
- */
-async function fastPlayerUrl(
-  videoId: string,
-  quality = 'auto',
-): Promise<{ url: string; format: string; itag?: number } | undefined> {
-  const request = async (client: (typeof FAST_PLAYER_CLIENTS)[number]) => {
-    const data = await innertube.request(
-      'player',
-      {
-        videoId,
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: 20000,
-            html5Preference: 'HTML5_PREF_WANTS',
-          },
-        },
-        contentCheckOk: true,
-        racyCheckOk: true,
-      },
-      { login: false, client, timeoutMs: 3_500 },
-    );
-    const adaptive = (data?.streamingData?.adaptiveFormats || []) as FastFormat[];
-    const progressive = (data?.streamingData?.formats || []) as FastFormat[];
-    const format = pickAudioFormat(adaptive, progressive, quality);
-    if (!format?.url) throw new Error('No direct stream URL.');
-    const mime = format.mimeType || '';
-    return {
-      url: format.url,
-      format: mime.includes('/') ? mime.split('/')[1].split(';')[0] : 'audio',
-      itag: format.itag,
-    };
+  if (!audio.length) return null;
+  const cap = qualityBitrateCap(quality);
+  const allowed = audio.filter((format: any) => (Number(format.bitrate) || 0) <= cap);
+  const pool = allowed.length ? allowed : audio;
+  pool.sort((a: any, b: any) => {
+    const aM4a = /mp4/i.test(a.mimeType) ? 0 : 1;
+    const bM4a = /mp4/i.test(b.mimeType) ? 0 : 1;
+    if (aM4a !== bM4a) return aM4a - bM4a;
+    return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+  });
+  const best = pool[0];
+  const mimeType = String(best.mimeType);
+  const ext = /mp4/i.test(mimeType) ? 'm4a' : /webm/i.test(mimeType) ? 'webm' : 'audio';
+  return {
+    url: String(best.url),
+    bitrate: Number(best.bitrate) || 0,
+    ext,
+    mimeType,
   };
-  // Try Android first: it exposes WebM/Opus and accepts an immediate first
-  // range. IOS is a fallback for tracks where Android's formats are withheld.
-  for (const client of FAST_PLAYER_CLIENTS) {
-    try {
-      return await request(client);
-    } catch {
-      // try the next client
-    }
-  }
-  return undefined;
-}
-
-const fallbackStreams = new Map<string, { at: number; task: Promise<string | undefined> }>();
-
-function rememberFallback(fastUrl: string, task: Promise<string | undefined>) {
-  const now = Date.now();
-  for (const [url, entry] of fallbackStreams) {
-    if (now - entry.at > CACHE_TTL_MS) fallbackStreams.delete(url);
-  }
-  fallbackStreams.set(fastUrl, { at: now, task });
-}
-
-/**
- * Fast player URLs are useful for an instant start but some of them only
- * permit the first bounded range. The media protocol uses the yt-dlp URL for
- * later ranges so playback can continue for the whole track.
- */
-export function fallbackStreamTask(fastUrl: string): Promise<string | undefined> | undefined {
-  const entry = fallbackStreams.get(fastUrl);
-  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return undefined;
-  return entry.task;
-}
-
-export async function fallbackStreamUrl(fastUrl: string): Promise<string | undefined> {
-  return fallbackStreamTask(fastUrl);
 }
 
 function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string; stderr: string }> {
@@ -317,90 +163,26 @@ function runYtdlp(args: string[], timeoutMs = 90_000): Promise<{ stdout: string;
   });
 }
 
-function safeFileBase(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120) || 'track';
-}
-
-function cachedAudioFile(trackId: string): string | undefined {
-  try {
-    const dir = streamCacheDir();
-    const base = safeFileBase(trackId);
-    const files = fs
-      .readdirSync(dir)
-      .filter((name) => name.startsWith(`${base}.`) && !name.endsWith('.part'))
-      .map((name) => {
-        const file = path.join(dir, name);
-        try {
-          const stat = fs.statSync(file);
-          return stat.size > 0 ? { file, mtime: stat.mtimeMs } : undefined;
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((entry): entry is { file: string; mtime: number } => Boolean(entry))
-      .sort((a, b) => b.mtime - a.mtime);
-    return files[0]?.file;
-  } catch {
-    return undefined;
-  }
-}
-
-async function trimStreamCache(): Promise<void> {
-  try {
-    const dir = streamCacheDir();
-    const names = await fs.promises.readdir(dir);
-    const now = Date.now();
-    const entries: { file: string; size: number; mtime: number }[] = [];
-    for (const name of names) {
-      const file = path.join(dir, name);
-      try {
-        const stat = await fs.promises.stat(file);
-        const age = now - stat.mtimeMs;
-        if ((name.endsWith('.part') && age > 60 * 60_000) || age > STREAM_CACHE_MAX_AGE) {
-          await fs.promises.rm(file, { force: true });
-          continue;
-        }
-        if (!name.endsWith('.part')) entries.push({ file, size: stat.size, mtime: stat.mtimeMs });
-      } catch {
-        // A file can disappear while the cache is being pruned.
-      }
-    }
-    entries.sort((a, b) => b.mtime - a.mtime);
-    let total = 0;
-    for (let index = 0; index < entries.length; index += 1) {
-      const entry = entries[index];
-      if (index >= STREAM_CACHE_MAX_FILES || total + entry.size > STREAM_CACHE_MAX_BYTES) {
-        await fs.promises.rm(entry.file, { force: true });
-      } else {
-        total += entry.size;
-      }
-    }
-  } catch {
-    // Cache pruning is best-effort.
-  }
-}
-
-function removePartialFiles(trackId: string) {
-  try {
-    const dir = downloadsDir();
-    const base = safeFileBase(trackId);
-    for (const name of fs.readdirSync(dir)) {
-      if (name.startsWith(`${base}.`) && name.endsWith('.part')) fs.rmSync(path.join(dir, name), { force: true });
-    }
-  } catch {
-    // The folder may not exist yet.
-  }
-}
-
 function proxyStreamUrl(url: string): string {
+  issuedStreams.add(url);
+  if (issuedStreams.size > 250) {
+    const oldest = issuedStreams.values().next().value;
+    if (oldest) issuedStreams.delete(oldest);
+  }
   return `auralis-media://stream/${Buffer.from(url, 'utf8').toString('base64url')}`;
 }
 
-export class StreamService {
-  warmup(): void {
-    warmupStreams();
-  }
+/** True only for URLs this process resolved itself through yt-dlp. */
+export function isIssuedStreamUrl(url: string): boolean {
+  return issuedStreams.has(url);
+}
 
+function downloadStem(trackId: string): string {
+  const safe = String(trackId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+  return safe || `track-${crypto.createHash('sha1').update(String(trackId)).digest('hex').slice(0, 16)}`;
+}
+
+export class StreamService {
   async resolve(track: Track): Promise<StreamInfo> {
     if (track.localPath && fs.existsSync(track.localPath)) {
       return {
@@ -411,104 +193,167 @@ export class StreamService {
         localPath: track.localPath,
       };
     }
-    const cachedFile = cachedAudioFile(track.id);
-    if (cachedFile) {
-      return {
-        url: `auralis-media://local/${encodeURIComponent(cachedFile)}`,
-        format: path.extname(cachedFile).replace('.', '') || 'audio',
-        title: track.title,
-        duration: track.duration,
-        quality: settingsStore.get().audioQuality,
-      };
-    }
     const quality = settingsStore.get().audioQuality;
     const key = `${track.id}:${quality}`;
     const cached = streamCache.get(key);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
-    const pending = pendingResolve.get(key);
-    if (pending) return pending;
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      if (process.env.AURALIS_DEBUG_STREAM) console.log('[streams] cached', track.id);
+      return cached.info;
+    }
 
-    const task = this.resolveRemote(track, quality)
-      .then((info) => {
-        streamCache.set(key, { info, at: Date.now() });
-        return info;
-      })
-      .finally(() => {
-        pendingResolve.delete(key);
-      });
-    pendingResolve.set(key, task);
+    // A hover prefetch and a click can race for the same track. Share one
+    // resolution instead of firing two player requests or two yt-dlp processes.
+    const pending = inFlight.get(key);
+    if (pending) {
+      if (process.env.AURALIS_DEBUG_STREAM) console.log('[streams] joined in-flight', track.id);
+      return pending;
+    }
+    const task = this.resolveStream(track, quality, key).finally(() => {
+      if (inFlight.get(key) === task) inFlight.delete(key);
+    });
+    inFlight.set(key, task);
     return task;
   }
 
-  private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
-    const fast = await fastPlayerUrl(track.id, quality);
-    let url: string;
-    let format = 'audio';
-    if (fast) {
-      // The proxy switches to this full-range URL after the first fast chunk.
-      // Ask yt-dlp for the same format so the codec/container does not change
-      // halfway through playback.
-      const slow = this.extractUrl(
-        track,
-        fast.itag ? String(fast.itag) : qualityFormat(quality),
-        30_000,
-      ).catch(() => this.extractUrl(track, qualityFormat(quality), 30_000));
-      rememberFallback(fast.url, slow.catch(() => undefined));
-      url = fast.url;
-      format = fast.format;
-    } else {
-      url = await this.extractUrl(track, qualityFormat(quality), 30_000);
-      try {
-        const mime = new URL(url).searchParams.get('mime');
-        if (mime?.includes('/')) format = mime.split('/')[1].split(';')[0];
-      } catch {
-        // keep generic format
+  private async resolveStream(track: Track, quality: string, key: string): Promise<StreamInfo> {
+    const failedAt = fastFailures.get(track.id);
+    const skipFast = failedAt !== undefined && Date.now() - failedAt < FAST_FAILURE_TTL_MS;
+    if (!skipFast) {
+      const fast = await this.resolveFast(track, quality);
+      if (fast) {
+        streamCache.set(key, { info: fast, at: Date.now() });
+        return fast;
       }
+      this.markFastFailure(track.id);
     }
-    return {
+
+    const args = [
+      ...commonArgs(),
+      '-f',
+      qualityFormat(quality),
+      '-g',
+      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+    ];
+    const { stdout } = await runYtdlp(args);
+    const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
+    if (!url) throw new Error('yt-dlp did not return a playable audio URL.');
+    const info: StreamInfo = {
       url: proxyStreamUrl(url),
-      format,
+      format: 'audio',
       quality,
       title: track.title,
       duration: track.duration,
       expiresAt: Date.now() + CACHE_TTL_MS,
     };
+    streamCache.set(key, { info, at: Date.now() });
+    return info;
   }
 
-  /** Ask yt-dlp for a direct audio URL. */
-  private async extractUrl(
-    track: Track,
-    format: string,
-    timeoutMs: number,
-  ): Promise<string> {
-    const base = [
-      '--socket-timeout',
-      '10',
-      '--retries',
-      '2',
-      '--fragment-retries',
-      '2',
-      '-f',
-      format,
-      '-g',
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
-    ];
-    let lastError: Error | undefined;
-    const attempts = [['--extractor-args', 'youtube:player_client=android'], []];
-    for (const extractorArgs of attempts) {
-      try {
-        const { stdout } = await runYtdlp([...commonArgs(), ...extractorArgs, ...base], timeoutMs);
-        const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
-        if (url) return url;
-        lastError = new Error('yt-dlp did not return a playable audio URL.');
-      } catch (error: any) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        // A genuinely unavailable/private video will not succeed with the
-        // fallback either; avoid doubling the error latency.
-        if (/video is unavailable|video unavailable|private video|removed by the uploader|account.*terminated/i.test(lastError.message)) break;
+  /**
+   * yt-dlp spawns a fresh Python process for every resolve (measured at
+   * 4.1-4.3 s on Windows). The Innertube player endpoint answers in
+   * 300-500 ms and returns direct audio URLs, so playback starts immediately.
+   * Any failure falls through to yt-dlp for reliability.
+   */
+  private async resolveFast(track: Track, quality: string): Promise<StreamInfo | null> {
+    if (Date.now() < fastCooldownUntil) return null;
+    const gap = fastLastRequestAt + FAST_MIN_GAP_MS - Date.now();
+    if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
+    fastLastRequestAt = Date.now();
+    try {
+      const payload = await innertube.playerMedia(track.id);
+      const format = pickMediaFormat(payload, quality);
+      if (!format) {
+        if (process.env.AURALIS_DEBUG_STREAM) {
+          console.log('[streams] fast path had no audio formats', track.id, payload?.playabilityStatus?.status);
+        }
+        this.noteFastFailure();
+        return null;
+      }
+      // Validate the URL with the same open-ended range the audio element
+      // sends. Some bot-flagged YouTube responses answer a tiny 2-byte range
+      // but reject "bytes=0-" with 403, so a 2-byte probe gives a false
+      // positive and playback fails a second later. Cancel the body after the
+      // headers arrive so the track is not downloaded twice.
+      if (!(await this.streamIsPlayable(format.url))) {
+        if (process.env.AURALIS_DEBUG_STREAM) {
+          console.log('[streams] fast path URL rejected', track.id, format.ext, format.bitrate);
+        }
+        this.noteFastFailure();
+        return null;
+      }
+      fastFailureStreak = 0;
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path', track.id, format.ext, format.bitrate);
+      }
+      return {
+        url: proxyStreamUrl(format.url),
+        format: format.ext,
+        quality,
+        title: track.title,
+        duration: track.duration,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      };
+    } catch (error: any) {
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path failed', track.id, error?.message || error);
+      }
+      this.noteFastFailure();
+      return null;
+    }
+  }
+
+  private async streamIsPlayable(url: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      // Probe with the exact range shape the audio element uses. Some
+      // bot-flagged URLs happily answer a tiny 2-byte range but reject an
+      // open-ended "bytes=0-" request with 403, so probing 0-1 gives a false
+      // positive and playback would fail a second later. Read only the
+      // headers, then cancel the body: this validates the stream without
+      // downloading the track twice.
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': MEDIA_USER_AGENT,
+          Referer: 'https://music.youtube.com/',
+          Origin: 'https://music.youtube.com',
+          Range: 'bytes=0-',
+        },
+        signal: controller.signal,
+      });
+      void response.body?.cancel().catch(() => {});
+      return response.status === 200 || response.status === 206;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
+  private noteFastFailure() {
+    fastFailureStreak += 1;
+    // Three failures in a row means YouTube is refusing the mobile clients
+    // (usually a bot check on a signed-out visitor). Back off instead of
+    // hammering the API and stretching the flag; yt-dlp still resolves.
+    if (fastFailureStreak >= 3) {
+      fastCooldownUntil = Date.now() + FAST_COOLDOWN_MS;
+      fastFailureStreak = 0;
+      if (process.env.AURALIS_DEBUG_STREAM) {
+        console.log('[streams] fast path cooling down for 2 minutes');
       }
     }
-    throw lastError || new Error('yt-dlp did not return a playable audio URL.');
+  }
+
+  private markFastFailure(trackId: string) {
+    fastFailures.set(trackId, Date.now());
+    if (fastFailures.size > 400) {
+      const cutoff = Date.now() - FAST_FAILURE_TTL_MS;
+      for (const [id, at] of fastFailures) {
+        if (at < cutoff) fastFailures.delete(id);
+      }
+    }
   }
 
   async prefetch(track: Track): Promise<void> {
@@ -519,64 +364,12 @@ export class StreamService {
     }
   }
 
-  /**
-   * Download the next queue item into the private stream cache. The current
-   * track keeps streaming immediately; by the time the next track starts its
-   * bytes are already local, so track transitions do not expose a network
-   * buffering gap. Downloads are deliberately rate-limited so they do not
-   * starve the currently playing stream on a slow connection.
-   */
-  async cache(track: Track): Promise<string | null> {
-    if (!track.id || track.localPath) return null;
-    const existing = cachedAudioFile(track.id);
-    if (existing) return existing;
-    const pending = cacheTasks.get(track.id);
-    if (pending) return pending;
-
-    const task = (async () => {
-      try {
-        const dir = streamCacheDir();
-        await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
-        const base = safeFileBase(track.id);
-        const output = path.join(dir, `${base}.%(ext)s`);
-        const args = [
-          ...commonArgs(),
-          '--socket-timeout',
-          '10',
-          '--retries',
-          '2',
-          '--fragment-retries',
-          '2',
-          '--no-progress',
-          '--limit-rate',
-          '320K',
-          '-f',
-          qualityFormat(settingsStore.get().audioQuality),
-          '-o',
-          output,
-          `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
-        ];
-        await runYtdlp(args, 180_000);
-        const file = cachedAudioFile(track.id);
-        if (file && process.platform !== 'win32') {
-          fs.chmodSync(file, 0o600);
-        }
-        void trimStreamCache();
-        return file || null;
-      } catch {
-        // A cache miss is harmless: resolve() falls back to the live stream.
-        return null;
-      } finally {
-        cacheTasks.delete(track.id);
-      }
-    })();
-    cacheTasks.set(track.id, task);
-    return task;
-  }
-
   invalidate(trackId: string) {
+    // A failed playback URL is usually a dead/blocked fast-path stream. Let
+    // the retry use yt-dlp directly instead of handing back the same URL.
+    this.markFastFailure(trackId);
     for (const key of streamCache.keys()) {
-      if (key.startsWith(`${trackId}:`) || key.startsWith(`video:${trackId}`)) streamCache.delete(key);
+      if (key.startsWith(`${trackId}:`)) streamCache.delete(key);
     }
   }
 
@@ -598,13 +391,12 @@ export class StreamService {
   }
 
   async update(): Promise<string> {
-    await stageYtdlp();
     const { stdout, stderr } = await runYtdlp(['-U'], 180_000);
     return (stdout || stderr).trim() || 'yt-dlp is up to date.';
   }
 
   /** Downloads auto/manual captions and converts the VTT to extended LRC. */
-  async fetchSubtitles(videoId: string, timeoutMs = 120_000): Promise<string | null> {
+  async fetchSubtitles(videoId: string): Promise<string | null> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-subs-'));
     const args = [
       ...commonArgs(),
@@ -620,7 +412,7 @@ export class StreamService {
       `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
     ];
     try {
-      await runYtdlp(args, timeoutMs);
+      await runYtdlp(args, 120_000);
       const file = fs.readdirSync(dir).find((name) => name.endsWith('.vtt'));
       if (!file) return null;
       const vtt = fs.readFileSync(path.join(dir, file), 'utf8');
@@ -636,17 +428,15 @@ export class StreamService {
     const lib = libraryStore.get();
     const existing = lib.downloads.find((d) => d.track.id === track.id && d.status === 'done');
     if (existing && fs.existsSync(existing.path)) return existing;
-    const inFlight = lib.downloads.find((d) => d.track.id === track.id && d.status === 'downloading');
-    if (inFlight) throw new Error('This song is already downloading.');
 
-    const dir = await ensureDownloadsDir();
-    const base = safeFileBase(track.id);
-    const output = path.join(dir, `${base}.%(ext)s`);
+    const dir = ensureDownloadsDir();
+    const stem = downloadStem(track.id);
+    const output = path.join(dir, `${stem}.%(ext)s`);
     const args = [
       ...commonArgs(),
       '--newline',
-      '--continue',
-      ...(process.platform === 'win32' ? ['--windows-filenames'] : []),
+      '--no-part',
+      '--windows-filenames',
       '-f',
       qualityFormat(settingsStore.get().downloadQuality === 'high' ? 'high' : settingsStore.get().downloadQuality),
       '-o',
@@ -684,12 +474,11 @@ export class StreamService {
         if (cookie) fs.rm(cookie, { force: true }, () => {});
         let file = '';
         try {
-          file = fs.readdirSync(dir).find((name) => name.startsWith(`${base}.`) && !name.endsWith('.part')) || '';
+          file = fs.readdirSync(dir).find((name) => name.startsWith(`${stem}.`)) || '';
           if (file) file = path.join(dir, file);
         } catch {
           file = '';
         }
-        if (status === 'cancelled') removePartialFiles(track.id);
         const size = file && fs.existsSync(file) ? fs.statSync(file).size : undefined;
         const completed: DownloadItem = {
           ...item,
@@ -705,14 +494,7 @@ export class StreamService {
           downloads: value.downloads.map((d) => (d.id === id ? completed : d)),
         }));
         onProgress?.({ id, progress: completed.progress || 0, status, error, path: file });
-        if (status === 'done') {
-          try {
-            if (file && process.platform !== 'win32') fs.chmodSync(file, 0o600);
-          } catch {
-            // best-effort privacy hardening
-          }
-          resolve(completed);
-        } else if (status === 'paused') resolve(completed);
+        if (status === 'done') resolve(completed);
         else reject(new Error(error || 'Download failed.'));
       };
 
@@ -737,7 +519,6 @@ export class StreamService {
       child.on('close', (code) => {
         if (debug) console.log('[download] close', code, stderr.slice(-500));
         if (code === 0) finish('done');
-        else if (pausedDownloads.has(id)) finish('paused');
         else if (child.killed) finish('cancelled', 'Download cancelled.');
         else finish('error', stderr.trim().split(/\r?\n/).slice(-3).join(' ') || `yt-dlp exited with code ${code}.`);
       });
@@ -745,46 +526,9 @@ export class StreamService {
   }
 
   cancelDownload(id: string) {
-    pausedDownloads.delete(id);
     const child = active.get(id);
     if (child) child.kill();
     active.delete(id);
-    const item = libraryStore.get().downloads.find((entry) => entry.id === id);
-    if (item) removePartialFiles(item.track.id);
-    if (item && (item.status === 'paused' || item.status === 'queued')) {
-      libraryStore.update((value) => ({
-        ...value,
-        downloads: value.downloads.map((entry) =>
-          entry.id === id ? { ...entry, status: 'cancelled', error: 'Download cancelled.' } : entry,
-        ),
-      }));
-    }
-  }
-
-  pauseDownload(id: string) {
-    const child = active.get(id);
-    if (!child) {
-      const item = libraryStore.get().downloads.find((entry) => entry.id === id);
-      if (item?.status === 'queued') {
-        libraryStore.update((value) => ({
-          ...value,
-          downloads: value.downloads.map((entry) =>
-            entry.id === id ? { ...entry, status: 'paused' as const } : entry,
-          ),
-        }));
-      }
-      return;
-    }
-    pausedDownloads.add(id);
-    child.kill();
-    active.delete(id);
-  }
-
-  async resumeDownload(id: string, onProgress?: (progress: DownloadProgress) => void): Promise<DownloadItem> {
-    const item = libraryStore.get().downloads.find((entry) => entry.id === id);
-    if (!item) throw new Error('Download entry not found.');
-    pausedDownloads.delete(id);
-    return this.download(item.track, onProgress);
   }
 }
 

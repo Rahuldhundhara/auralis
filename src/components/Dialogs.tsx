@@ -3,11 +3,13 @@ import {
   AudioLines,
   Check,
   CheckCircle2,
+  FileAudio,
   Link2,
   Loader2,
   LogIn,
   Mic,
   MicOff,
+  Music2,
   Plus,
   Search,
   Sparkles,
@@ -22,9 +24,8 @@ import { usePlayerStore } from '../stores/player';
 import { useUiStore, type DialogState } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { useUiStore as useUi } from '../stores/ui';
-import { platformName } from '../lib/platform';
-import { EQ_PRESETS, applyPreset } from '../lib/eqPresets';
-import { Artwork, Button, IconButton, Modal, Range, Spinner } from './primitives';
+import { isAndroidShell } from '../lib/platform';
+import { Artwork, Button, IconButton, Modal, Spinner } from './primitives';
 import { SearchField } from './SearchField';
 
 function CreatePlaylistDialog({ track, onClose }: { track?: import('@shared/types').Track; onClose: () => void }) {
@@ -415,290 +416,150 @@ function YouTubePlaylistDialog({ track, onClose }: { track: import('@shared/type
 /* Recognition                                                         */
 /* ------------------------------------------------------------------ */
 
-function recognitionError(err: any): string {
-  const raw = String(err?.message || err || '').trim();
-  const message = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '');
-  if (/no match/i.test(message)) {
-    return 'No match found. Try singing or humming a longer, clearer part — or play the original nearby.';
-  }
-  if (/network|fetch|timeout|timed out|econn|socket/i.test(message)) {
-    return 'Could not reach the recognition service. Check your connection and try again.';
-  }
-  return message || 'No match found. Try again with a clearer clip.';
-}
-
-function microphoneError(err: any): string {
-  switch (err?.name) {
-    case 'NotAllowedError':
-    case 'SecurityError':
-      return `Microphone access was denied. Allow microphone access in ${platformName()} settings and try again.`;
-    case 'NotFoundError':
-      return 'No microphone was found. Connect a microphone and try again.';
-    case 'NotReadableError':
-      return 'The microphone is busy in another app. Close it and try again.';
-    case 'OverconstrainedError':
-      return 'The selected microphone is unavailable. Try a different input device.';
-    default:
-      return err?.message || 'Could not start the microphone.';
+async function pcmFromAudio(arrayBuffer: ArrayBuffer): Promise<Int16Array> {
+  const context = new AudioContext();
+  try {
+    const buffer = await context.decodeAudioData(arrayBuffer.slice(0));
+    const targetRate = 16000;
+    const ratio = buffer.sampleRate / targetRate;
+    const length = Math.max(1, Math.floor(buffer.length / ratio));
+    const output = new Int16Array(length);
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+    for (let index = 0; index < length; index++) {
+      const position = index * ratio;
+      const lower = Math.floor(position);
+      const upper = Math.min(buffer.length - 1, lower + 1);
+      const fraction = position - lower;
+      let sample = 0;
+      for (const channel of channels) {
+        sample += channel[lower] * (1 - fraction) + channel[upper] * fraction;
+      }
+      sample /= channels.length || 1;
+      output[index] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
+    }
+    return output;
+  } finally {
+    void context.close();
   }
 }
 
 function RecognitionDialog({ onClose }: { onClose: () => void }) {
-  const [stage, setStage] = useState<'starting' | 'recording' | 'processing' | 'result' | 'error'>('starting');
+  const current = usePlayerStore((state) => state.current);
+  const [mode, setMode] = useState<'mic' | 'file' | 'current'>('mic');
+  const [stage, setStage] = useState<'idle' | 'recording' | 'processing' | 'result' | 'error'>('idle');
   const [seconds, setSeconds] = useState(0);
-  const [attempts, setAttempts] = useState(0);
-  const [matching, setMatching] = useState(false);
-  const [hint, setHint] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<RecognizeResult | null>(null);
   const [playing, setPlaying] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
-  const attemptTimerRef = useRef<number | null>(null);
-  const meterRef = useRef<HTMLDivElement | null>(null);
-  const attemptingRef = useRef(false);
-  const stoppedRef = useRef(false);
-  const pendingFinalRef = useRef(false);
-  const sessionRef = useRef(0);
+  const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavStore((state) => state.navigate);
-  const recognitionSettings = useAppStore((state) => state.settings.recognition);
-  const hummingEnabled = Boolean(
-    recognitionSettings?.acrcloudHost &&
-      recognitionSettings?.acrcloudAccessKey &&
-      recognitionSettings?.acrcloudAccessSecret,
-  );
 
-  // A hummed phrase needs a few seconds to become identifiable. We keep
-  // listening and retry, so a match appears as soon as the melody is clear
-  // instead of making everyone wait for a fixed countdown.
-  const FIRST_ATTEMPT_MS = 3200;
-  const RETRY_MS = 2800;
-  const MAX_SECONDS = 30;
-  const MIN_SAMPLES = 16_000 * 3;
-
-  const clearTimers = () => {
+  const cleanupRecording = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
-    if (attemptTimerRef.current) window.clearTimeout(attemptTimerRef.current);
-    attemptTimerRef.current = null;
-  };
-
-  const cleanupCapture = () => {
-    clearTimers();
-    try {
-      processorRef.current?.disconnect();
-      sourceRef.current?.disconnect();
-    } catch {
-      /* nodes may already be disconnected */
-    }
-    processorRef.current = null;
-    sourceRef.current = null;
-    const context = audioContextRef.current;
-    audioContextRef.current = null;
-    if (context && context.state !== 'closed') void context.close().catch(() => {});
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    recorderRef.current = null;
   };
 
-  useEffect(() => {
-    return () => {
-      sessionRef.current += 1;
-      stoppedRef.current = true;
-      cleanupCapture();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => () => cleanupRecording(), []);
 
-  /** Convert the captured microphone samples to the 16 kHz mono PCM that the
-   *  recognisers expect. Resampling here means every attempt uses the whole
-   *  clip so far, not just the last chunk. */
-  const collectPcm = (): Int16Array | null => {
-    const chunks = pcmChunksRef.current;
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const context = audioContextRef.current;
-    if (!total || !context) return null;
-    const merged = new Float32Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-    const ratio = (context.sampleRate || 48_000) / 16_000;
-    const length = Math.max(0, Math.floor(total / ratio));
-    if (!length) return null;
-    const pcm = new Int16Array(length);
-    for (let index = 0; index < length; index++) {
-      const position = index * ratio;
-      const left = Math.min(merged.length - 1, Math.floor(position));
-      const right = Math.min(merged.length - 1, left + 1);
-      const fraction = position - left;
-      const sample = merged[left] * (1 - fraction) + merged[right] * fraction;
-      pcm[index] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
-    }
-    return pcm;
-  };
-
-  const fatalRecognitionError = (message: string) =>
-    /acrcloud rejected|acrcloud:|credentials|access key|signature|host is missing/i.test(message);
-
-  const attemptRecognition = async (final: boolean): Promise<boolean> => {
-    if (attemptingRef.current) return false;
-    const pcm = collectPcm();
-    if (!pcm || pcm.length < MIN_SAMPLES) {
-      if (final) {
-        stoppedRef.current = true;
-        cleanupCapture();
-        setError('Auralis did not hear enough audio. Move closer to the microphone and try again.');
-        setStage('error');
-      }
-      return false;
-    }
-    attemptingRef.current = true;
-    setMatching(true);
-    setAttempts((value) => value + 1);
-    let terminal = false;
+  const recognizePcm = async (pcm: Int16Array) => {
+    setStage('processing');
     try {
       const buffer = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer;
       const match = await window.auralis.recognize.fromPcm(buffer);
-      terminal = true;
-      stoppedRef.current = true;
-      cleanupCapture();
       setResult(match);
       setStage('result');
-      return true;
     } catch (err: any) {
-      const message = recognitionError(err);
-      if (final || fatalRecognitionError(message)) {
-        terminal = true;
-        stoppedRef.current = true;
-        cleanupCapture();
-        setError(message);
-        setStage('error');
-      } else {
-        setHint('No match yet — keep singing or humming. Auralis is still listening.');
-      }
-      return false;
-    } finally {
-      attemptingRef.current = false;
-      setMatching(false);
-      // A "finish" press can arrive while an automatic check is in flight.
-      // Run the final check with the complete clip once that request settles.
-      if (pendingFinalRef.current && !terminal && !final) {
-        pendingFinalRef.current = false;
-        stoppedRef.current = true;
-        clearTimers();
-        void attemptRecognition(true);
-      }
-    }
-  };
-
-  const scheduleAttempt = (delay: number) => {
-    attemptTimerRef.current = window.setTimeout(() => {
-      if (stoppedRef.current) return;
-      void attemptRecognition(false).then(() => {
-        if (!stoppedRef.current) scheduleAttempt(RETRY_MS);
-      });
-    }, delay);
-  };
-
-  const startMic = async () => {
-    const session = ++sessionRef.current;
-    cleanupCapture();
-    pcmChunksRef.current = [];
-    setError('');
-    setResult(null);
-    setSeconds(0);
-    setAttempts(0);
-    setHint('');
-    setMatching(false);
-    setStage('starting');
-    stoppedRef.current = false;
-    attemptingRef.current = false;
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('This device does not expose a microphone to Auralis.');
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
-      if (session !== sessionRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      streamRef.current = stream;
-      const context = new AudioContext();
-      audioContextRef.current = context;
-      await context.resume().catch(() => {});
-      const source = context.createMediaStreamSource(stream);
-      sourceRef.current = source;
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 256;
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      const processor = context.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-      processor.onaudioprocess = (event) => {
-        const input = event.inputBuffer.getChannelData(0);
-        const copy = new Float32Array(input.length);
-        copy.set(input);
-        pcmChunksRef.current.push(copy);
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let index = 0; index < data.length; index++) {
-          const sample = (data[index] - 128) / 128;
-          sum += sample * sample;
-        }
-        const level = Math.min(1, Math.sqrt(sum / data.length) * 6);
-        meterRef.current?.style.setProperty('--mic-level', level.toFixed(3));
-      };
-      source.connect(analyser);
-      source.connect(processor);
-      // A ScriptProcessor only runs while connected to a destination; it
-      // outputs silence, so nothing is echoed back to the speakers.
-      processor.connect(context.destination);
-      setStage('recording');
-      const started = Date.now();
-      timerRef.current = window.setInterval(() => {
-        const elapsed = (Date.now() - started) / 1000;
-        setSeconds(Math.floor(elapsed));
-        if (elapsed >= MAX_SECONDS && !stoppedRef.current) {
-          finish();
-        }
-      }, 400);
-      scheduleAttempt(FIRST_ATTEMPT_MS);
-    } catch (err: any) {
-      cleanupCapture();
-      setError(microphoneError(err));
+      setError(err?.message || 'No match found.');
       setStage('error');
     }
   };
 
-  // One click opens the dialog and starts listening immediately. The user only
-  // has to sing, hum, or hold the device up to the original track.
-  useEffect(() => {
-    void startMic();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const finish = () => {
-    if (stoppedRef.current) return;
-    stoppedRef.current = true;
-    clearTimers();
-    if (attemptingRef.current) {
-      pendingFinalRef.current = true;
-      return;
+  const startMic = async () => {
+    setError('');
+    setResult(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        cleanupRecording();
+        setStage('processing');
+        try {
+          const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+          const pcm = await pcmFromAudio(await blob.arrayBuffer());
+          await recognizePcm(pcm);
+        } catch (err: any) {
+          setError(err?.message || 'Could not read the recording.');
+          setStage('error');
+        }
+      };
+      recorder.start();
+      setStage('recording');
+      setSeconds(0);
+      const started = Date.now();
+      timerRef.current = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - started) / 1000);
+        setSeconds(elapsed);
+        if (elapsed >= 12) {
+          if (recorder.state === 'recording') recorder.stop();
+          if (timerRef.current) window.clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      }, 250);
+    } catch (err: any) {
+      setError(
+        err?.name === 'NotAllowedError'
+          ? `Microphone access was denied. Allow microphone access in ${isAndroidShell ? 'Android' : 'Windows'} settings and try again.`
+          : err?.message || 'Could not start the microphone.',
+      );
+      setStage('error');
     }
-    void attemptRecognition(true);
   };
 
-  const close = () => {
-    sessionRef.current += 1;
-    stoppedRef.current = true;
-    cleanupCapture();
-    onClose();
+  const stopMic = () => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  };
+
+  const handleFile = async (file: File) => {
+    setError('');
+    setResult(null);
+    setStage('processing');
+    try {
+      const pcm = await pcmFromAudio(await file.arrayBuffer());
+      await recognizePcm(pcm);
+    } catch (err: any) {
+      setError(err?.message || 'Could not read that audio file.');
+      setStage('error');
+    }
+  };
+
+  const recognizeCurrent = async () => {
+    if (!current) return;
+    setError('');
+    setResult(null);
+    setStage('processing');
+    try {
+      const match = await window.auralis.recognize.fromVideoId(current.id);
+      setResult(match);
+      setStage('result');
+    } catch (err: any) {
+      setError(err?.message || 'No match found.');
+      setStage('error');
+    }
   };
 
   const playResult = async () => {
@@ -717,13 +578,13 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
           source: 'youtube' as const,
         };
         usePlayerStore.getState().playQueue([track], 0);
-        close();
+        onClose();
         return;
       }
       const results = await window.auralis.yt.search(`${result.title} ${result.artist}`, 'songs');
       if (results.songs.length) {
         usePlayerStore.getState().playQueue(results.songs, 0);
-        close();
+        onClose();
       } else {
         toast('No matching song was found on YouTube Music.', 'error');
       }
@@ -737,12 +598,28 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal
       open
-      onClose={close}
-      title="Identify a song"
-      width={600}
+      onClose={() => {
+        cleanupRecording();
+        onClose();
+      }}
+      title="Identify music"
+      subtitle={`Auralis fingerprints a short clip right on ${isAndroidShell ? 'this device' : 'this PC'}, then asks Shazam what it is.`}
+      width={620}
       className="recognition-modal"
     >
       <div className="recognition-dialog">
+        <div className="recognition-tabs" role="tablist">
+          <button type="button" className={mode === 'mic' ? 'is-active' : ''} onClick={() => { setMode('mic'); setStage('idle'); }}>
+            <Mic size={16} /> Microphone
+          </button>
+          <button type="button" className={mode === 'file' ? 'is-active' : ''} onClick={() => { setMode('file'); setStage('idle'); }}>
+            <FileAudio size={16} /> Audio file
+          </button>
+          <button type="button" className={mode === 'current' ? 'is-active' : ''} onClick={() => { setMode('current'); setStage('idle'); }}>
+            <Music2 size={16} /> Now playing
+          </button>
+        </div>
+
         {stage === 'result' && result ? (
           <div className="recognize-result">
             <Artwork src={result.coverArt} alt={result.title} className="recognize-art" />
@@ -771,7 +648,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
                   icon={<Search size={15} />}
                   onClick={() => {
                     navigate({ page: 'search', q: `${result.title} ${result.artist}` });
-                    close();
+                    onClose();
                   }}
                 >
                   Search
@@ -780,105 +657,112 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         ) : (
-          <div className={`recognition-stage ${stage === 'starting' || stage === 'recording' ? 'is-listening' : ''}`}>
-            <div
-              ref={meterRef}
-              className={`mic-orb ${stage === 'recording' ? 'is-recording' : ''} ${stage === 'starting' ? 'is-starting' : ''}`}
-            >
-              {stage === 'error' ? (
-                <MicOff size={28} />
-              ) : (
-                <>
-                  <Mic size={28} />
-                  <div className="mic-bars" aria-hidden="true">
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <i key={index} />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            <h3>
-              {stage === 'starting'
-                ? 'Connecting microphone…'
-                : stage === 'recording'
-                  ? matching
-                    ? 'Matching your melody…'
-                    : 'Listening…'
-                  : 'No match found'}
-            </h3>
-            <p>
-              {stage === 'starting'
-                ? 'Allow microphone access when your system asks.'
-                : stage === 'recording'
-                  ? hummingEnabled
-                    ? 'Sing or hum the tune — Auralis starts matching after a few seconds and keeps listening until it finds it.'
-                    : 'Sing, hum or play the song nearby. Auralis checks the melody continuously — no countdown to wait for.'
-                  : 'Try a longer, clearer part — or play the original nearby.'}
-            </p>
-            {stage === 'recording' ? (
+          <div className="recognition-stage">
+            {mode === 'mic' ? (
               <>
-                <div className="recognition-live" role="status" aria-live="polite">
-                  <span className="recognition-live-dot" />
-                  {matching ? 'Checking the melody…' : `Listening · ${seconds}s`}
-                  {attempts > 0 && !matching ? <span className="recognition-live-attempts">{attempts} check{attempts === 1 ? '' : 's'}</span> : null}
+                <div className={`mic-orb ${stage === 'recording' ? 'is-recording' : ''}`}>
+                  {stage === 'recording' ? (
+                    <div className="mic-bars">
+                      {Array.from({ length: 5 }).map((_, index) => (
+                        <i key={index} style={{ animationDelay: `${index * 0.11}s` }} />
+                      ))}
+                    </div>
+                  ) : stage === 'processing' ? (
+                    <Loader2 size={40} className="spin" />
+                  ) : (
+                    <Mic size={40} />
+                  )}
                 </div>
-                <div className="recognition-progress is-indeterminate" aria-hidden="true">
-                  <span />
+                <h3>
+                  {stage === 'recording' ? `Listening… ${seconds}s` : stage === 'processing' ? 'Identifying…' : 'Tap to listen'}
+                </h3>
+                <p>
+                  {stage === 'recording'
+                    ? 'Hold your phone or speaker near the microphone. Recording stops after 12 seconds.'
+                    : stage === 'processing'
+                      ? 'Fingerprinting the clip and asking Shazam.'
+                      : 'Play the song nearby and let Auralis listen for up to 12 seconds.'}
+                </p>
+                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
+                <div className="recognize-controls">
+                  {stage === 'recording' ? (
+                    <Button variant="danger" size="lg" icon={<Square size={16} />} onClick={stopMic}>
+                      Stop and identify
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="lg"
+                      icon={<AudioLines size={18} />}
+                      disabled={stage === 'processing'}
+                      onClick={() => void startMic()}
+                    >
+                      Start listening
+                    </Button>
+                  )}
                 </div>
-                {hint ? <p className="recognition-hint">{hint}</p> : null}
+                {stage === 'idle' ? (
+                  <p className="privacy-note">
+                    <MicOff size={13} /> Audio is processed locally into a fingerprint; the original recording is never uploaded.
+                  </p>
+                ) : null}
               </>
-            ) : null}
-            {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
-            <div className="recognize-controls">
-              {stage === 'starting' || stage === 'recording' ? (
-                <>
-                  <Button variant="ghost" size="lg" onClick={close}>
-                    Cancel
+            ) : mode === 'file' ? (
+              <>
+                <div className="mic-orb">
+                  <FileAudio size={40} />
+                </div>
+                <h3>{stage === 'processing' ? 'Identifying…' : 'Choose an audio clip'}</h3>
+                <p>Pick a song or recording. Auralis analyses the first 12 seconds that contain audio.</p>
+                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="audio/*,video/*"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void handleFile(file);
+                    event.target.value = '';
+                  }}
+                />
+                <div className="recognize-controls">
+                  <Button variant="primary" icon={<FileAudio size={17} />} onClick={() => fileRef.current?.click()} disabled={stage === 'processing'}>
+                    Choose file
                   </Button>
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    icon={<AudioLines size={16} />}
-                    onClick={finish}
-                    disabled={stage !== 'recording' || matching || seconds < 2}
-                  >
-                    Identify now
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mic-orb">
+                  {stage === 'processing' ? <Loader2 size={40} className="spin" /> : <Music2 size={40} />}
+                </div>
+                <h3>{stage === 'processing' ? 'Listening to the current track…' : 'Identify the current track'}</h3>
+                <p>{current ? `“${current.title}” by ${current.artists.map((artist) => artist.name).join(', ')}` : 'Nothing is playing right now.'}</p>
+                {stage === 'error' ? <div className="recognize-error">{error}</div> : null}
+                <div className="recognize-controls">
+                  <Button variant="primary" icon={<AudioLines size={17} />} disabled={!current || stage === 'processing'} onClick={() => void recognizeCurrent()}>
+                    Identify this song
                   </Button>
-                </>
-              ) : stage === 'processing' ? (
-                <Button variant="ghost" size="lg" onClick={close}>
-                  Cancel
-                </Button>
-              ) : (
-                <>
-                  <Button variant="ghost" size="lg" onClick={close}>
-                    Close
-                  </Button>
-                  <Button variant="primary" size="lg" icon={<AudioLines size={17} />} onClick={() => void startMic()}>
-                    Try again
-                  </Button>
-                </>
-              )}
-            </div>
-            {stage === 'starting' || stage === 'recording' ? (
-              <p className="privacy-note">
-                <MicOff size={13} />
-                {hummingEnabled
-                  ? 'Audio is sent to ACRCloud only while you are identifying. Nothing is stored.'
-                  : 'Audio is fingerprinted on this PC. Add ACRCloud keys in Settings → Integrations for singing and humming.'}
-              </p>
-            ) : null}
+                </div>
+                <p className="privacy-note">
+                  <FileAudio size={13} /> Downloads a short clip with yt-dlp. This can take a moment.
+                </p>
+              </>
+            )}
           </div>
         )}
 
         {stage === 'result' ? (
           <div className="recognition-footer-actions">
-            <Button variant="ghost" onClick={() => void startMic()}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setStage('idle');
+                setResult(null);
+              }}
+            >
               Try another
-            </Button>
-            <Button variant="ghost" onClick={close}>
-              Close
             </Button>
             {result?.lyrics ? (
               <details className="recognize-lyrics">
@@ -893,6 +777,7 @@ function RecognitionDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
 /* Host                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -900,8 +785,6 @@ function DialogContent({ dialog, onClose }: { dialog: DialogState; onClose: () =
   switch (dialog.type) {
     case 'create-playlist':
       return <CreatePlaylistDialog track={dialog.track} onClose={onClose} />;
-    case 'import-playlist':
-      return <ImportPlaylistDialog onClose={onClose} />;
     case 'rename-playlist':
       return <RenamePlaylistDialog playlist={dialog.playlist} onClose={onClose} />;
     case 'add-to-playlist':
@@ -915,181 +798,14 @@ function DialogContent({ dialog, onClose }: { dialog: DialogState; onClose: () =
     case 'yt-playlist':
       return <YouTubePlaylistDialog track={dialog.track} onClose={onClose} />;
     case 'eq':
-      return <EqualizerDialog onClose={onClose} />;
+      return (
+        <Modal open onClose={onClose} title="Equalizer" subtitle="Fine-tune your sound in Settings → Playback.">
+          <p className="dialog-hint">The equalizer lives with the rest of your playback settings.</p>
+        </Modal>
+      );
     default:
       return null;
   }
-}
-
-function ImportPlaylistDialog({ onClose }: { onClose: () => void }) {
-  const importPlaylist = useAppStore((state) => state.importPlaylist);
-  const navigate = useNavStore((state) => state.navigate);
-  const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-
-  const submit = async () => {
-    if (!url.trim() || busy) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      const result = await importPlaylist(url.trim());
-      toast(`Imported ${result.imported} songs${result.skipped ? `, skipped ${result.skipped} duplicates` : ''}.`, 'success');
-      navigate({ page: 'local', id: result.playlist.id });
-      onClose();
-    } catch (err: any) {
-      setError(err?.message || String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Import a playlist"
-      subtitle="Copy a YouTube or YouTube Music playlist into your local library. Your source playlist is never changed."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void submit()}
-            disabled={!url.trim() || busy}
-            icon={busy ? <Spinner size={16} /> : <Link2 size={16} />}
-          >
-            {busy ? 'Importing…' : 'Import playlist'}
-          </Button>
-        </>
-      }
-    >
-      <div className="form-stack">
-        <label className="field">
-          <span>Playlist link or ID</span>
-          <input
-            autoFocus
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            onKeyDown={(event) => event.key === 'Enter' && void submit()}
-            placeholder="https://music.youtube.com/playlist?list=..."
-            spellCheck={false}
-          />
-        </label>
-        <p className="dialog-hint">
-          Auralis reads every page of the public playlist and saves a local copy with the original order. Private playlists use your signed-in session. Spotify, Apple Music and other services are not supported by this importer.
-        </p>
-        {error ? <p className="form-error">{error}</p> : null}
-      </div>
-    </Modal>
-  );
-}
-
-function EqualizerDialog({ onClose }: { onClose: () => void }) {
-  const settings = useAppStore((state) => state.settings);
-  const update = useAppStore((state) => state.updateSettings);
-  const eq = settings.eq;
-  const setBand = (index: number, value: number) => {
-    const bands = [...eq.bands];
-    bands[index] = value;
-    void update({ eq: { ...eq, bands } });
-  };
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Equalizer"
-      subtitle="Real-time DSP: 10 peaking bands, an 80 Hz bass shelf and automatic headroom."
-      footer={
-        <>
-          <Button
-            variant="ghost"
-            onClick={() => void update({ eq: { ...eq, enabled: !eq.enabled } })}
-          >
-            {eq.enabled ? 'Disable EQ' : 'Enable EQ'}
-          </Button>
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        </>
-      }
-    >
-      <div className={`eq-panel ${eq.enabled ? '' : 'is-disabled'}`}>
-        <div className="eq-presets" role="group" aria-label="Equalizer presets">
-          {EQ_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className="eq-preset"
-              onClick={() => void update({ eq: applyPreset(eq, preset) })}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-        <div className="eq-head">
-          <span>Bass boost · 80 Hz shelf</span>
-          <span className="eq-value">{eq.bassBoost > 0 ? '+' : ''}{(eq.bassBoost || 0).toFixed(1)} dB</span>
-        </div>
-        <Range
-          min={-12}
-          max={12}
-          step={0.5}
-          value={eq.bassBoost || 0}
-          onValueChange={(value) => void update({ eq: { ...eq, bassBoost: value } })}
-          aria-label="Bass boost"
-        />
-        <div className="eq-head">
-          <span>Preamp</span>
-          <span className="eq-value">{eq.preamp > 0 ? '+' : ''}{eq.preamp.toFixed(1)} dB</span>
-        </div>
-        <Range
-          min={-12}
-          max={12}
-          step={0.5}
-          value={eq.preamp}
-          onValueChange={(value) => void update({ eq: { ...eq, preamp: value } })}
-          aria-label="Preamp"
-        />
-        <div className="eq-bands">
-          {[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency, index) => (
-            <div className="eq-band" key={frequency}>
-              <span className="eq-frequency">{frequency >= 1000 ? `${frequency / 1000}k` : frequency}</span>
-              <Range
-                className="eq-range"
-                min={-12}
-                max={12}
-                step={0.5}
-                value={eq.bands[index] || 0}
-                onValueChange={(value) => setBand(index, value)}
-                aria-label={`${frequency} Hz`}
-              />
-              <span className="eq-value">
-                {eq.bands[index] > 0 ? '+' : ''}
-                {(eq.bands[index] || 0).toFixed(1)}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div className="eq-footer">
-          <span>31 Hz – 16 kHz · ±12 dB · limiter active</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              void update({
-                eq: { ...eq, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 },
-              })
-            }
-          >
-            Flatten
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
 }
 
 function ConfirmDialog({ dialog, onClose }: { dialog: Extract<DialogState, { type: 'confirm' }>; onClose: () => void }) {

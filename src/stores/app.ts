@@ -6,7 +6,6 @@ import type {
   DownloadProgress,
   LibraryData,
   LocalPlaylist,
-  PlaylistImportResult,
   SessionState,
   Settings,
   Track,
@@ -31,7 +30,12 @@ interface AppState {
   addRecent: (track: Track) => Promise<void>;
   recordEvent: (track: Track, completed: boolean) => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<LocalPlaylist>;
-  importPlaylist: (url: string) => Promise<PlaylistImportResult>;
+  importPlaylist: (
+    name: string,
+    tracks: Track[],
+    description?: string,
+    remoteId?: string,
+  ) => Promise<LocalPlaylist>;
   renamePlaylist: (id: string, name: string, description?: string) => Promise<LocalPlaylist>;
   deletePlaylist: (id: string) => Promise<void>;
   addToPlaylist: (id: string, track: Track) => Promise<LocalPlaylist>;
@@ -55,17 +59,20 @@ interface AppState {
 
 const EMPTY_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#28b463',
+  accent: '#10b981',
   language: 'en',
   region: 'US',
   startPage: 'home',
+  tasteLanguages: [],
+  tasteArtists: [],
+  onboardingComplete: false,
   audioQuality: 'auto',
   volume: 0.9,
   muted: false,
   normalize: false,
   crossfadeSec: 0,
   gapless: true,
-  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0 },
+  eq: { enabled: false, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0, bassBoost: 0, bassFrequency: 80, limiter: true },
   playbackRate: 1,
   skipSilence: false,
   showLyricsInPlayer: true,
@@ -73,18 +80,12 @@ const EMPTY_SETTINGS: Settings = {
   translation: {
     enabled: false,
     provider: 'deepl',
-    targetLanguage: 'en',
+    targetLanguage: 'EN',
     deeplApiKey: '',
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiApiKey: '',
     openaiModel: 'gpt-4o-mini',
   },
-  recognition: {
-    acrcloudHost: '',
-    acrcloudAccessKey: '',
-    acrcloudAccessSecret: '',
-  },
-  notificationsRead: [],
   downloadDir: '',
   downloadQuality: 'best',
   autoDownloadLiked: false,
@@ -96,12 +97,6 @@ const EMPTY_SETTINGS: Settings = {
   hardwareAcceleration: true,
   scrobbleThreshold: 0.5,
   sidebarCollapsed: false,
-  personalization: {
-    onboardingCompleted: false,
-    preferredGenres: [],
-    favoriteArtists: [],
-    uiLanguage: 'en',
-  },
 };
 
 const EMPTY_LIBRARY: LibraryData = {
@@ -131,21 +126,37 @@ function hexToRgb(hex: string): [number, number, number] | null {
   return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
 }
 
+function channelLuminance(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+/** Picks whichever text colour has the stronger WCAG ratio on the accent. */
+function accentContrast(rgb: [number, number, number]): string {
+  const luminance =
+    0.2126 * channelLuminance(rgb[0]) +
+    0.7152 * channelLuminance(rgb[1]) +
+    0.0722 * channelLuminance(rgb[2]);
+  const onWhite = 1.05 / (luminance + 0.05);
+  const onDark = (luminance + 0.05) / 0.05;
+  return onDark >= onWhite ? '#04140d' : '#ffffff';
+}
+
 export function applyAppearance(settings: Settings) {
   const theme = resolvedTheme(settings.theme);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
-  const accent = settings.accent || '#28b463';
+  const accent = settings.accent || '#10b981';
   document.documentElement.style.setProperty('--accent', accent);
-  const rgb = hexToRgb(accent) || [63, 220, 134];
+  const rgb = hexToRgb(accent) || [16, 185, 129];
   document.documentElement.style.setProperty('--accent-rgb', rgb.join(', '));
-  const luminance = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
-  document.documentElement.style.setProperty('--accent-contrast', luminance > 0.62 ? '#101014' : '#ffffff');
+  document.documentElement.style.setProperty('--accent-contrast', accentContrast(rgb));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'light' ? '#f2f6f1' : '#040604');
+  if (meta) meta.setAttribute('content', theme === 'light' ? '#f5f4f8' : '#090b0e');
 }
 
 let initialized = false;
+let eventsBound = false;
 let systemThemeListener: (() => void) | null = null;
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -158,25 +169,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   init: async () => {
     if (initialized) return;
     initialized = true;
-    try {
-      const [settings, library, session, appInfo] = await Promise.all([
-        window.auralis.settings.get(),
-        window.auralis.library.get(),
-        window.auralis.yt.session(),
-        window.auralis.app.info(),
-      ]);
-      set({ settings, library, session, appInfo, ready: true });
-      applyAppearance(settings);
-      if (settings.sidebarCollapsed) {
-        const { useUiStore } = await import('./ui');
-        useUiStore.getState().setSidebarCollapsed(true);
-      }
+    const [settingsResult, libraryResult, sessionResult, infoResult] = await Promise.allSettled([
+      window.auralis.settings.get(),
+      window.auralis.library.get(),
+      window.auralis.yt.session(),
+      window.auralis.app.info(),
+    ]);
+    const failures: string[] = [];
+    const settings = settingsResult.status === 'fulfilled' ? settingsResult.value : get().settings;
+    const library = libraryResult.status === 'fulfilled' ? libraryResult.value : get().library;
+    const session = sessionResult.status === 'fulfilled' ? sessionResult.value : get().session;
+    const appInfo = infoResult.status === 'fulfilled' ? infoResult.value : get().appInfo;
+    if (settingsResult.status === 'rejected') failures.push('settings');
+    if (libraryResult.status === 'rejected') failures.push('library');
+    if (sessionResult.status === 'rejected') failures.push('account session');
+    if (infoResult.status === 'rejected') failures.push('app diagnostics');
+
+    set({ settings, library, session, appInfo, ready: true });
+    applyAppearance(settings);
+
+    if (settings.sidebarCollapsed) {
+      const { useUiStore } = await import('./ui');
+      useUiStore.getState().setSidebarCollapsed(true);
+    }
+
+    if (!systemThemeListener) {
       const media = window.matchMedia('(prefers-color-scheme: light)');
       systemThemeListener = () => {
         if (get().settings.theme === 'system') applyAppearance(get().settings);
       };
       media.addEventListener('change', systemThemeListener);
+    }
 
+    // Event wiring must survive a partial load; otherwise later settings or
+    // library writes would never reach this window.
+    if (!eventsBound) {
+      eventsBound = true;
       window.auralis.events.onSettingsChange((next) => {
         set({ settings: next });
         applyAppearance(next);
@@ -204,10 +232,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
         if (progress.status === 'done' || progress.status === 'error') void get().refreshLibrary();
       });
-    } catch (error: any) {
+    }
+
+    if (failures.length) {
+      // Leave init retryable. Successfully loaded data stays visible.
       initialized = false;
-      set({ ready: true });
-      toast(`Could not load Auralis data: ${error?.message || error}`, 'error');
+      toast(
+        `Auralis started with partial data (could not load ${failures.join(', ')}).`,
+        'error',
+        { label: 'Retry', onClick: () => void get().init() },
+      );
     }
   },
 
@@ -229,12 +263,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const settings = await window.auralis.settings.set(patch);
       set({ settings });
       applyAppearance(settings);
-      if ('trayEnabled' in patch || 'closeToTray' in patch) {
-        void window.auralis.app
-          .info()
-          .then((appInfo) => set({ appInfo }))
-          .catch(() => {});
-      }
     } catch (error: any) {
       toast(`Could not save settings: ${error?.message || error}`, 'error');
     }
@@ -244,10 +272,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const settings = await window.auralis.settings.reset();
     set({ settings });
     applyAppearance(settings);
-    void window.auralis.app
-      .info()
-      .then((appInfo) => set({ appInfo }))
-      .catch(() => {});
     toast('Settings reset to defaults.', 'success');
   },
 
@@ -307,10 +331,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     return playlist;
   },
 
-  importPlaylist: async (url) => {
-    const result = await window.auralis.library.importPlaylist(url);
-    await get().refreshLibrary();
-    return result;
+  importPlaylist: async (name, tracks, description, remoteId) => {
+    const libraryApi = window.auralis.library;
+    let playlist: LocalPlaylist;
+    if (libraryApi.importPlaylist) {
+      playlist = await libraryApi.importPlaylist(name, tracks, description, remoteId);
+    } else {
+      // Older desktop builds only expose create/add; import one track at a time.
+      playlist = await libraryApi.createPlaylist(name, description);
+      for (const track of tracks) {
+        playlist = await libraryApi.addToPlaylist(playlist.id, track);
+      }
+    }
+    set((state) => ({
+      library: {
+        ...state.library,
+        playlists: [playlist, ...state.library.playlists.filter((item) => item.id !== playlist.id)],
+      },
+    }));
+    return playlist;
   },
 
   renamePlaylist: async (id, name, description) => {
@@ -405,24 +444,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   downloadTrack: async (track) => {
+    const existing = get().library.downloads.find((item) => item.track.id === track.id && item.status === 'done');
+    if (existing?.path) {
+      toast('This track is already downloaded.', 'info');
+      return;
+    }
     toast(`Downloading “${track.title}”…`, 'info');
     try {
       const item = await window.auralis.player.download(track);
       await get().refreshLibrary();
-      if (item.status === 'paused') {
-        toast(`Download paused: “${item.track.title}”.`, 'info');
-        return;
-      }
-      if (item.status !== 'done') return;
       toast(`Downloaded “${item.track.title}”.`, 'success', {
         label: 'Show file',
         onClick: () => window.auralis.app.showItemInFolder(item.path),
       });
     } catch (error: any) {
       await get().refreshLibrary();
-      const message = String(error?.message || error);
-      if (/cancelled/i.test(message)) toast('Download cancelled.', 'info');
-      else toast(`Download failed: ${message}`, 'error');
+      toast(`Download failed: ${error?.message || error}`, 'error');
     }
   },
 
@@ -437,9 +474,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   login: async () => {
+    const previous = get().session;
     const session = await window.auralis.yt.login();
     set({ session });
-    if (session.hasCookies) toast('Signed in to YouTube Music.', 'success');
+    if (session.hasCookies) {
+      if (!previous.hasCookies) toast('Signed in to YouTube Music.', 'success');
+    } else {
+      toast('Sign-in window closed before completing. Try again anytime.', 'info');
+    }
     return session;
   },
 
