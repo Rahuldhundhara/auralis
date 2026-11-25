@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Languages, LocateFixed, RefreshCw, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Check, Languages, LocateFixed, RefreshCw, Search } from 'lucide-react';
 import type { LyricsLine, LyricsResult, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
-import { getAudioPosition, usePlayerStore } from '../stores/player';
+import { getAudioPosition, isSeeking, usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { toast } from '../stores/ui';
 import { fetchLyrics, peekLyrics } from '../lib/lyricsCache';
@@ -12,15 +12,48 @@ function activeLineIndex(lines: LyricsLine[], position: number): number {
   if (!lines.length || !lines.some((line) => line.time > 0)) return -1;
   let active = -1;
   for (let index = 0; index < lines.length; index++) {
-    if (lines[index].time <= position + 0.12) active = index;
+    // A tiny lead only compensates for the 40ms render cadence. Word-level
+    // timing below uses the exact audio timestamp.
+    if (lines[index].time <= position + 0.03) active = index;
     else break;
   }
   return active;
 }
 
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
+
+/** True when the provider marked a word boundary after this word. */
+function hasExplicitSpaces(words: NonNullable<LyricsLine['words']>): boolean {
+  return words.some((word) => word.space === true);
+}
+
+/** Some providers split words without keeping the spaces. Restore them when
+ *  rendering so cached lyrics never collapse into one long line. */
+function wordNeedsSpace(words: NonNullable<LyricsLine['words']>, index: number): boolean {
+  const previous = words[index - 1];
+  const next = words[index];
+  if (!previous || !next) return false;
+  // Trust explicit boundaries exclusively when the provider gives them.
+  if (hasExplicitSpaces(words)) return Boolean(previous.space);
+  const prev = previous.text;
+  const nextText = next.text;
+  if (!prev || !nextText) return false;
+  if (/\s$/.test(prev) || /^\s/.test(nextText)) return false;
+  // Punctuation attaches to the word before it; opening brackets attach after.
+  if (/^[,.;:!?%)\]}\u2019\u201d]/.test(nextText)) return false;
+  if (/[(\[{\u2018\u201c]$/.test(prev)) return false;
+  // CJK scripts do not use inter-word spaces.
+  if (CJK_RE.test(prev) || CJK_RE.test(nextText)) return false;
+  return true;
+}
+
+
 export function LyricsPanel({ track, active = true }: { track?: Track; active?: boolean }) {
   const position = usePlayerStore((state) => state.position);
   const playing = usePlayerStore((state) => state.playing);
+  const ended = usePlayerStore((state) => state.ended);
+  const positionRef = useRef(position);
+  positionRef.current = position;
   const settings = useAppStore((state) => state.settings);
   const initialCache = peekLyrics(track);
   const [result, setResult] = useState<LyricsResult | null>(initialCache?.result ?? null);
@@ -90,21 +123,31 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
 
   useEffect(() => {
     if (!active || !playing) {
-      setSmoothPosition(position);
+      setSmoothPosition(positionRef.current);
       return;
     }
     let frame = 0;
     let last = 0;
     const tick = (time: number) => {
-      if (time - last >= 50) {
+      if (time - last >= 40) {
         last = time;
-        setSmoothPosition(getAudioPosition());
+        // The store position is the user's chosen timestamp during a seek and
+        // the element's real position otherwise. When the two diverge (a seek
+        // is still fetching its byte range), follow the store so the active
+        // lyric jumps to the new timestamp immediately instead of waiting for
+        // the audio element to catch up.
+        // While a seek is in flight the element still reports the old
+        // timestamp. Follow the store's optimistic target until the element
+        // genuinely lands, then return to the real audio clock.
+        const audioPos = getAudioPosition();
+        const storePos = usePlayerStore.getState().position;
+        setSmoothPosition(isSeeking() ? storePos : audioPos);
       }
       frame = window.requestAnimationFrame(tick);
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [active, playing, position]);
+  }, [active, playing]);
 
   const playbackPosition = active && playing ? smoothPosition : position;
   const index = useMemo(
@@ -113,13 +156,38 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   );
   const synced = Boolean(result?.synced);
 
+  // A seek is a large jump in the store position. Re-enable follow so the
+  // lyrics immediately snap back to the new timestamp even if the user had
+  // scrolled away earlier.
+  const lastPositionRef = useRef(position);
+  useEffect(() => {
+    const jump = Math.abs(position - lastPositionRef.current);
+    lastPositionRef.current = position;
+    if (jump > 1.2) setFollow(true);
+  }, [position]);
+
   useEffect(() => {
     if (!follow || index < 0) return;
     const container = scrollRef.current;
     const element = activeRef.current;
     if (!container || !element) return;
-    const target = element.offsetTop - container.clientHeight / 2 + element.clientHeight / 2;
-    container.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    // offsetTop is relative to the nearest positioned ancestor, which is not
+    // necessarily the scroll container. Use client rects so the active line is
+    // always centred even when the lyrics panel sits inside a dialog.
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const target =
+      container.scrollTop +
+      (elementRect.top - containerRect.top) -
+      container.clientHeight * 0.4 +
+      elementRect.height / 2;
+    // Seeks can move the active line far away; snap instantly instead of
+    // animating through every line in between. Normal playback stays smooth.
+    const jump = Math.abs(target - container.scrollTop);
+    container.scrollTo({
+      top: Math.max(0, target),
+      behavior: jump > container.clientHeight * 0.7 ? 'auto' : 'smooth',
+    });
   }, [index, follow]);
 
   const translate = async () => {
@@ -186,7 +254,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
 
   return (
     <div className="lyrics-panel">
-      <div className="lyrics-toolbar">
+      <div className={`lyrics-toolbar ${!follow ? 'is-visible' : ''}`}>
         <div className="lyrics-meta">
           {result?.provider ? <span className="lyrics-provider">{result.provider}</span> : null}
           {result && !synced ? <span className="lyrics-provider is-muted">Unsynced</span> : null}
@@ -298,7 +366,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
               <div
                 key={`${line.time}-${lineIndex}`}
                 ref={isActive ? activeRef : undefined}
-                className={`lyric-line ${isActive ? 'is-active' : ''} ${line.background ? 'is-background' : ''} ${line.agent ? 'has-agent' : ''}`}
+                className={`lyric-line ${isActive ? 'is-active' : ''} ${line.words?.length ? 'has-words' : ''} ${line.background ? 'is-background' : ''} ${line.agent ? 'has-agent' : ''}`}
                 onClick={() => {
                   if (synced) usePlayerStore.getState().seek(Math.max(0, line.time - 0.1));
                 }}
@@ -307,20 +375,36 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
                 {showOriginal ? (
                   <span className="lyric-text">
                     {line.words?.length && isActive
-                      ? line.words.map((word, wordIndex) => (
-                          <span
-                            key={`${word.text}-${wordIndex}`}
-                            className={
-                              word.start <= playbackPosition && word.end >= playbackPosition
-                                ? 'lyric-word is-active'
-                                : word.end < playbackPosition
-                                  ? 'lyric-word is-sung'
-                                  : 'lyric-word'
-                            }
-                          >
-                            {word.text}
-                          </span>
-                        ))
+                      ? (() => {
+                          const words = line.words!;
+                          const nextLineTime = result.lines[lineIndex + 1]?.time ?? line.time + 4;
+                          return words.map((word, wordIndex) => {
+                            const nextStart = words[wordIndex + 1]?.start ?? nextLineTime;
+                            const start = word.start;
+                            // Some providers omit word end times. Fall back to
+                            // the next word (or the next line) so a word is
+                            // never highlighted for the rest of the song.
+                            const end = word.end > start ? word.end : Math.max(start + 0.12, nextStart);
+                            const progress =
+                              end > start
+                                ? Math.min(1, Math.max(0, (playbackPosition - start) / (end - start)))
+                                : playbackPosition >= start
+                                  ? 1
+                                  : 0;
+                            const sung = playbackPosition >= end;
+                            const current = playbackPosition >= start && playbackPosition < end;
+                            return (
+                              <span
+                                key={`${word.text}-${wordIndex}`}
+                                className={`lyric-word ${sung ? 'is-sung' : ''} ${current ? 'is-active' : ''}`}
+                                style={{ '--word-progress': `${(progress * 100).toFixed(1)}%` } as CSSProperties}
+                              >
+                                {wordIndex > 0 && wordNeedsSpace(words, wordIndex) ? ' ' : null}
+                                {word.text}
+                              </span>
+                            );
+                          });
+                        })()
                       : line.text || '♪'}
                   </span>
                 ) : null}
@@ -340,6 +424,24 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
           </div>
         </div>
       )}
+
+      {ended ? (
+        <div className="lyrics-ended" role="status" aria-live="polite">
+          <span className="lyrics-ended-mark" aria-hidden="true">
+            <Check size={16} />
+          </span>
+          <span className="lyrics-ended-copy">
+            <strong>Song ended</strong>
+            <span>Press play to listen again.</span>
+          </span>
+          <span className="lyrics-ended-bars" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

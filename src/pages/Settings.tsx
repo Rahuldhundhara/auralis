@@ -37,7 +37,7 @@ import { useNavStore, type SettingsTab } from '../stores/nav';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatDate } from '../lib/format';
 import { platformId, platformName } from '../lib/platform';
-import { Button, IconButton, Range } from '../components/primitives';
+import { Artwork, Button, IconButton, Range } from '../components/primitives';
 import { EQ_PRESETS, applyPreset } from '../lib/eqPresets';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
@@ -110,7 +110,9 @@ const PROVIDERS: Array<{ id: string; label: string; description: string }> = [
 ];
 
 const ACCENTS = [
-  { value: '#8ab4f8', label: 'Auralis blue' },
+  { value: '#28b463', label: 'Auralis green' },
+  { value: '#f0f0f0', label: 'Mono' },
+  { value: '#6aa9ff', label: 'Auralis blue' },
   { value: '#7de2ff', label: 'Ice' },
   { value: '#c39bff', label: 'Violet' },
   { value: '#ff9bc0', label: 'Rose' },
@@ -273,6 +275,7 @@ function GeneralTab() {
         </SettingRow>
       </SettingsCard>
 
+
       <SettingsCard title="Window & system" description={`How Auralis behaves with the rest of ${platformName()}.`} icon={<Monitor size={19} />}>
         <SettingRow label="System tray icon" description="Keep Auralis within reach from the notification area.">
           <Toggle checked={settings.trayEnabled} onChange={(value) => void update({ trayEnabled: value })} />
@@ -301,6 +304,44 @@ function GeneralTab() {
             Auralis quits when its window closes.
           </p>
         ) : null}
+      </SettingsCard>
+
+      <SettingsCard title="Music preferences" description="Your chosen genres, favorite artists and interface language." icon={<Music2 size={19} />}>
+        <SettingRow label="Interface language" description="The language used across the Auralis interface.">
+          <Select
+            value={settings.personalization.uiLanguage}
+            onChange={(value) =>
+              void update({ personalization: { ...settings.personalization, uiLanguage: value } })
+            }
+          >
+            {LANGUAGES.map(([value, label]) => (
+              <option value={value} key={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </SettingRow>
+        <SettingRow label="Preferred genres" description="Genres used to shape your home recommendations.">
+          <span className="setting-static">
+            {settings.personalization.preferredGenres.length ? settings.personalization.preferredGenres.join(', ') : '—'}
+          </span>
+        </SettingRow>
+        <SettingRow label="Favorite artists" description="Artists used to shape your home recommendations.">
+          <span className="setting-static">
+            {settings.personalization.favoriteArtists.length
+              ? settings.personalization.favoriteArtists.map((artist) => artist.name).join(', ')
+              : '—'}
+          </span>
+        </SettingRow>
+        <div className="settings-inline-actions">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => useUiStore.getState().openOnboarding()}
+          >
+            Edit preferences
+          </Button>
+        </div>
       </SettingsCard>
 
       <SettingsCard title="Reset" description="Return every preference to its original value." icon={<Trash2 size={19} />}>
@@ -931,6 +972,68 @@ function IntegrationsTab() {
         <p className="settings-footnote">Discord must be running on this PC. Rich Presence connects locally and never sends your listening data to Auralis.</p>
       </SettingsCard>
 
+      <SettingsCard
+        title="Song recognition"
+        description="Identify songs by playing them nearby, or by singing and humming the melody. Humming needs an ACRCloud humming project; recorded audio also works without it."
+        icon={<AudioLines size={19} />}
+      >
+        <div className="integration-status">
+          <span
+            className={`status-dot ${
+              settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
+                ? 'is-online'
+                : ''
+            }`}
+          />
+          <div>
+            <strong>
+              {settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
+                ? 'Humming recognition enabled'
+                : 'Humming recognition not configured'}
+            </strong>
+            <span>
+              {settings.recognition.acrcloudHost && settings.recognition.acrcloudAccessKey && settings.recognition.acrcloudAccessSecret
+                ? 'Singing and humming are matched with ACRCloud; recorded audio falls back to Shazam.'
+                : 'Without ACRCloud, Identify still recognises music playing nearby using the built-in Shazam fingerprint.'}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ExternalLink size={14} />}
+            onClick={() => void window.auralis.app.openExternal('https://console.acrcloud.com/signup')}
+          >
+            Get keys
+          </Button>
+        </div>
+        <SettingRow label="ACRCloud host" stacked>
+          <TextSetting
+            value={settings.recognition.acrcloudHost}
+            placeholder="identify-eu-west-1.acrcloud.com"
+            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudHost: value } })}
+          />
+        </SettingRow>
+        <SettingRow label="Access key" stacked>
+          <TextSetting
+            value={settings.recognition.acrcloudAccessKey}
+            placeholder="ACRCloud access key"
+            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudAccessKey: value } })}
+          />
+        </SettingRow>
+        <SettingRow label="Access secret" stacked>
+          <TextSetting
+            type="password"
+            value={settings.recognition.acrcloudAccessSecret}
+            placeholder="ACRCloud access secret"
+            onSave={(value) => void update({ recognition: { ...settings.recognition, acrcloudAccessSecret: value } })}
+          />
+        </SettingRow>
+        <p className="settings-footnote">
+          Create a free ACRCloud project, choose <strong>Humming Recognition</strong> as its type, then paste the host, access key and
+          secret here. Credentials stay on this PC and are only used when you press Identify.
+        </p>
+      </SettingsCard>
+
       <SettingsCard title="YouTube Music account" description="Your Google session unlocks likes, playlists and history sync." icon={<CirclePlay size={19} />}>
         <div className="integration-status">
           <span className={`status-dot ${session.hasCookies ? 'is-online' : ''}`} />
@@ -991,7 +1094,7 @@ function AccountTab() {
         {session.hasCookies ? (
           <div className="account-card">
             {session.account?.thumbnailUrl ? (
-              <img src={session.account.thumbnailUrl} alt="" className="account-card-avatar" />
+              <Artwork src={session.account.thumbnailUrl} alt={session.account.name || 'YouTube Music'} round className="account-card-avatar" />
             ) : (
               <span className="account-card-avatar account-card-fallback">
                 <UserRound size={30} />

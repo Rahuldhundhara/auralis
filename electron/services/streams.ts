@@ -494,10 +494,7 @@ export class StreamService {
       `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
     ];
     let lastError: Error | undefined;
-    // The default client honours the explicit itag from the fast path. The
-    // Android client often omits that format and spends several seconds
-    // failing before we retry, which used to delay seek/fallback playback.
-    const attempts = [[], ['--extractor-args', 'youtube:player_client=android']];
+    const attempts = [['--extractor-args', 'youtube:player_client=android'], []];
     for (const extractorArgs of attempts) {
       try {
         const { stdout } = await runYtdlp([...commonArgs(), ...extractorArgs, ...base], timeoutMs);

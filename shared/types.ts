@@ -220,6 +220,15 @@ export interface TranslationSettings {
   openaiModel: string;
 }
 
+/** ACRCloud's humming engine recognises sung/hummed melodies. Optional: when
+ *  credentials are absent Auralis falls back to the on-device Shazam
+ *  fingerprint for recorded audio. */
+export interface RecognitionSettings {
+  acrcloudHost: string;
+  acrcloudAccessKey: string;
+  acrcloudAccessSecret: string;
+}
+
 export interface Settings {
   theme: ThemeMode;
   accent: string;
@@ -238,6 +247,9 @@ export interface Settings {
   showLyricsInPlayer: boolean;
   lyricsProviders: string[];
   translation: TranslationSettings;
+  recognition: RecognitionSettings;
+  /** Ids of notifications the user has already read or dismissed. */
+  notificationsRead: string[];
   downloadDir: string;
   downloadQuality: 'best' | 'high' | 'medium';
   autoDownloadLiked: boolean;
@@ -249,6 +261,7 @@ export interface Settings {
   hardwareAcceleration: boolean;
   scrobbleThreshold: number;
   sidebarCollapsed: boolean;
+  personalization: PersonalizationPreferences;
 }
 
 export interface LocalPlaylist {
@@ -356,6 +369,13 @@ export interface LastFmState {
 export interface TranslationResult {
   lines: string[];
   provider: string;
+}
+
+export interface PersonalizationPreferences {
+  onboardingCompleted: boolean;
+  preferredGenres: string[];
+  favoriteArtists: ArtistRef[];
+  uiLanguage: string;
 }
 
 export interface RecognizeResult {

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { create } from 'zustand';
 import { initials } from '../lib/format';
+import { proxiedArtwork } from '../lib/image';
 
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
@@ -88,6 +89,7 @@ export function Artwork({
   className = '',
   style,
   size,
+  eager,
 }: {
   src?: string;
   alt: string;
@@ -95,22 +97,55 @@ export function Artwork({
   className?: string;
   style?: CSSProperties;
   size?: number;
+  eager?: boolean;
 }) {
+  const resolved = proxiedArtwork(src);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+  const [loaded, setLoaded] = useState(false);
+
+  // A new track must never inherit the previous cover while its own image is
+  // still in flight: reset both flags whenever the source changes.
+  useEffect(() => {
+    setFailed(false);
+    setLoaded(false);
+    const image = imgRef.current;
+    if (image?.complete && image.naturalWidth > 0) setLoaded(true);
+  }, [resolved]);
+
   return (
     <div
       className={`artwork ${round ? 'is-round' : ''} ${className}`}
       style={{ ...(size ? { width: size, height: size } : {}), ...style }}
     >
-      {src && !failed ? (
-        <img src={src} alt={alt} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
-      ) : (
+      {resolved && !failed ? (
+        <img
+          key={resolved}
+          ref={imgRef}
+          src={resolved}
+          alt={alt}
+          loading={eager ? 'eager' : 'lazy'}
+          fetchPriority={eager ? 'high' : 'auto'}
+          decoding="async"
+          draggable={false}
+          className={loaded ? 'is-loaded' : ''}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+      {/* The skeleton sits *behind* the image while it loads, so switching
+          tracks never flashes a placeholder over a cover that is already in
+          the cache. The initials fallback only appears when the artwork is
+          genuinely missing or failed. */}
+      {resolved && !failed && !loaded ? (
+        <div className="artwork-skeleton" aria-hidden="true" />
+      ) : null}
+      {!resolved || failed ? (
         <div className="artwork-fallback" aria-hidden="true">
           <span>{initials(alt)}</span>
           <Music2 size={18} />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -143,15 +178,40 @@ export function Range({
   const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
   const bufferPercent =
     typeof buffer === 'number' && max > min ? ((buffer - min) / (max - min)) * 100 : percent;
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const paint = (next: number) => {
+    const input = inputRef.current;
+    if (!input) return;
+    const pct = max > min ? ((next - min) / (max - min)) * 100 : 0;
+    input.style.setProperty('--range-fill', `${Math.min(100, Math.max(0, pct))}%`);
+  };
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const next = Number(event.target.value);
+    paint(next);
+    onValueChange(next);
+  };
+
+  const handleKeyboardSeek = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    event.preventDefault();
+    const next = Math.min(max, Math.max(min, value + (max - min) * (event.key === 'ArrowRight' ? 0.05 : -0.05)));
+    handleChange({ target: { value: String(next) } } as React.ChangeEvent<HTMLInputElement>);
+    event.currentTarget.focus();
+  };
+
   return (
     <input
+      ref={inputRef}
       type="range"
       className={`range ${className}`}
       min={min}
       max={max}
       step={step}
       value={Number.isFinite(value) ? value : 0}
-      onChange={(event) => onValueChange(Number(event.target.value))}
+      onChange={handleChange}
+      onKeyDown={handleKeyboardSeek}
       style={{
         ['--range-fill' as any]: `${Math.min(100, Math.max(0, percent))}%`,
         ['--range-buffer' as any]: `${Math.min(100, Math.max(0, bufferPercent))}%`,

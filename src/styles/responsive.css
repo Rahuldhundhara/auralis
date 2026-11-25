@@ -18,7 +18,7 @@
     gap: 12px;
   }
 
-  .volume-range {
+  .player-bar .volume-range {
     width: 64px;
   }
 }
@@ -147,7 +147,7 @@
     flex-basis: 48px;
   }
 
-  .volume-range,
+  .player-bar .volume-range,
   .player-right .icon-btn:nth-child(2),
   .player-right .icon-btn:nth-child(3) {
     display: none;

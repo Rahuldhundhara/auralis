@@ -15,6 +15,7 @@ const api: AuralisApi = {
   app: {
     info: () => invoke('app:info'),
     minimize: () => invoke('app:minimize'),
+    windowState: () => invoke('app:window-state'),
     toggleMaximize: () => invoke('app:toggle-maximize'),
     close: () => invoke('app:close'),
     openExternal: (url) => invoke('app:open-external', url),

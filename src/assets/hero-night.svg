@@ -1,0 +1,267 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 600" width="1600" height="600" role="img" aria-label="Cozy dark room with a rain-streaked window overlooking a green night city, plants and warm lamp light">
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020706"/>
+      <stop offset="0.55" stop-color="#04110d"/>
+      <stop offset="1" stop-color="#061611"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#031411"/>
+      <stop offset="0.45" stop-color="#072a24"/>
+      <stop offset="0.72" stop-color="#0b3b31"/>
+      <stop offset="1" stop-color="#04100d"/>
+    </linearGradient>
+    <linearGradient id="cityHaze" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="lampGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffc27a" stop-opacity="0.38"/>
+      <stop offset="0.5" stop-color="#ff9d4d" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ff9d4d" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="emeraldGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0.3"/>
+      <stop offset="0.6" stop-color="#10b981" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0e201a"/>
+      <stop offset="0.5" stop-color="#07130f"/>
+      <stop offset="1" stop-color="#0b1b16"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#02110c"/>
+      <stop offset="0.65" stop-color="#073025"/>
+      <stop offset="1" stop-color="#0f513d"/>
+    </linearGradient>
+    <linearGradient id="leafLight" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#062019"/>
+      <stop offset="1" stop-color="#1f7a5c"/>
+    </linearGradient>
+    <linearGradient id="rain" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8ffe8" stop-opacity="0"/>
+      <stop offset="0.4" stop-color="#b8ffe8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#b8ffe8" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.75">
+      <stop offset="0.45" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.72"/>
+    </radialGradient>
+    <filter id="blurSm" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <filter id="blurMd" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="blurLg" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+    <clipPath id="windowClip">
+      <rect x="836" y="34" width="708" height="516" rx="6"/>
+    </clipPath>
+    <pattern id="rainPattern" width="46" height="72" patternUnits="userSpaceOnUse" patternTransform="rotate(14)">
+      <line x1="8" y1="6" x2="8" y2="34" stroke="#bfffe8" stroke-width="1" stroke-opacity="0.16"/>
+      <line x1="31" y1="30" x2="31" y2="62" stroke="#bfffe8" stroke-width="0.8" stroke-opacity="0.1"/>
+    </pattern>
+  </defs>
+
+  <!-- Room -->
+  <rect width="1600" height="600" fill="url(#room)"/>
+
+  <!-- Ambient glows -->
+  <ellipse cx="1290" cy="260" rx="360" ry="260" fill="url(#emeraldGlow)"/>
+  <ellipse cx="790" cy="300" rx="280" ry="260" fill="url(#lampGlow)"/>
+  <ellipse cx="470" cy="610" rx="520" ry="200" fill="#03110c" opacity="0.8"/>
+
+  <!-- Window frame shadow -->
+  <rect x="812" y="12" width="756" height="560" rx="18" fill="#000" opacity="0.55" filter="url(#blurMd)"/>
+  <rect x="820" y="18" width="740" height="548" rx="14" fill="url(#frame)" stroke="#102a22" stroke-width="2"/>
+  <rect x="830" y="28" width="720" height="528" rx="8" fill="#020807"/>
+
+  <!-- Window view -->
+  <g clip-path="url(#windowClip)">
+    <rect x="836" y="34" width="708" height="516" fill="url(#sky)"/>
+    <ellipse cx="1180" cy="330" rx="430" ry="250" fill="url(#cityHaze)"/>
+
+    <!-- Distant haze and moon glow -->
+    <circle cx="1350" cy="120" r="82" fill="#4ef0c4" opacity="0.06" filter="url(#blurLg)"/>
+    <circle cx="1358" cy="126" r="22" fill="#b9ffe9" opacity="0.13" filter="url(#blurMd)"/>
+
+    <!-- Far skyline -->
+    <g opacity="0.5" fill="#03120e">
+      <rect x="880" y="292" width="44" height="190"/>
+      <rect x="932" y="330" width="30" height="152"/>
+      <rect x="972" y="268" width="54" height="214"/>
+      <rect x="1034" y="310" width="38" height="172"/>
+      <rect x="1080" y="284" width="62" height="198"/>
+      <rect x="1150" y="322" width="34" height="160"/>
+      <rect x="1192" y="300" width="46" height="182"/>
+      <rect x="1246" y="256" width="58" height="226"/>
+      <rect x="1312" y="304" width="40" height="178"/>
+      <rect x="1360" y="276" width="52" height="206"/>
+      <rect x="1420" y="318" width="36" height="164"/>
+      <rect x="1464" y="288" width="62" height="194"/>
+    </g>
+
+    <!-- Near skyline -->
+    <g fill="#02100c">
+      <rect x="858" y="342" width="66" height="210"/>
+      <rect x="930" y="378" width="52" height="174"/>
+      <rect x="988" y="336" width="80" height="216"/>
+      <rect x="1076" y="366" width="54" height="186"/>
+      <rect x="1136" y="340" width="70" height="212"/>
+      <rect x="1214" y="372" width="48" height="180"/>
+      <rect x="1268" y="330" width="86" height="222"/>
+      <rect x="1362" y="364" width="54" height="188"/>
+      <rect x="1422" y="342" width="72" height="210"/>
+      <rect x="1502" y="376" width="50" height="176"/>
+    </g>
+
+    <!-- City windows -->
+    <g fill="#ffbe79">
+      <rect x="908" y="296" width="5" height="7" opacity="0.75"/>
+      <rect x="922" y="314" width="4" height="6" opacity="0.45"/>
+      <rect x="1088" y="352" width="5" height="7" opacity="0.7"/>
+      <rect x="1102" y="371" width="4" height="6" opacity="0.4"/>
+      <rect x="1150" y="300" width="5" height="7" opacity="0.55"/>
+      <rect x="1258" y="344" width="5" height="7" opacity="0.7"/>
+      <rect x="1274" y="362" width="4" height="6" opacity="0.4"/>
+      <rect x="1372" y="286" width="5" height="7" opacity="0.65"/>
+      <rect x="1440" y="328" width="4" height="6" opacity="0.5"/>
+      <rect x="1476" y="300" width="5" height="7" opacity="0.7"/>
+    </g>
+    <g fill="#6fffd2">
+      <rect x="940" y="354" width="4" height="5" opacity="0.5"/>
+      <rect x="1042" y="330" width="4" height="5" opacity="0.55"/>
+      <rect x="1090" y="298" width="4" height="5" opacity="0.45"/>
+      <rect x="1204" y="332" width="4" height="5" opacity="0.5"/>
+      <rect x="1300" y="274" width="4" height="5" opacity="0.5"/>
+      <rect x="1330" y="318" width="4" height="5" opacity="0.4"/>
+      <rect x="1450" y="358" width="4" height="5" opacity="0.55"/>
+      <rect x="1518" y="388" width="4" height="5" opacity="0.4"/>
+    </g>
+
+    <!-- Bokeh rain lights -->
+    <g filter="url(#blurSm)">
+      <circle cx="1058" cy="220" r="10" fill="#ffc27a" opacity="0.35"/>
+      <circle cx="1128" cy="168" r="7" fill="#ffd7a1" opacity="0.28"/>
+      <circle cx="1236" cy="214" r="14" fill="#7fffd4" opacity="0.2"/>
+      <circle cx="1322" cy="184" r="9" fill="#ffc27a" opacity="0.25"/>
+      <circle cx="1412" cy="232" r="12" fill="#6fffd2" opacity="0.16"/>
+      <circle cx="986" cy="180" r="6" fill="#9affe0" opacity="0.22"/>
+    </g>
+
+    <!-- Rain -->
+    <rect x="836" y="34" width="708" height="516" fill="url(#rainPattern)"/>
+    <g stroke="#c9fff0" stroke-width="1" opacity="0.12">
+      <line x1="900" y1="120" x2="880" y2="220"/>
+      <line x1="1010" y1="80" x2="988" y2="190"/>
+      <line x1="1160" y1="140" x2="1138" y2="246"/>
+      <line x1="1300" y1="90" x2="1278" y2="196"/>
+      <line x1="1440" y1="160" x2="1418" y2="268"/>
+      <line x1="1520" y1="50" x2="1502" y2="142"/>
+    </g>
+
+    <!-- Glass reflections -->
+    <polygon points="860,34 1040,34 880,550 836,550" fill="#d7fff3" opacity="0.025"/>
+    <polygon points="1200,34 1250,34 1080,550 1030,550" fill="#d7fff3" opacity="0.018"/>
+
+    <!-- Mullions -->
+    <rect x="1182" y="34" width="10" height="516" fill="#06130f"/>
+    <rect x="1184" y="34" width="2" height="516" fill="#1b3b30" opacity="0.5"/>
+    <rect x="836" y="282" width="708" height="10" fill="#06130f"/>
+    <rect x="836" y="284" width="708" height="1.5" fill="#1b3b30" opacity="0.45"/>
+
+    <!-- Window edge highlight -->
+    <rect x="836" y="34" width="708" height="516" rx="6" fill="none" stroke="#5cffc9" stroke-opacity="0.08" stroke-width="2"/>
+  </g>
+
+  <!-- Windowsill -->
+  <rect x="806" y="536" width="764" height="26" rx="5" fill="#0a1713"/>
+  <rect x="806" y="536" width="764" height="2" fill="#2c5b49" opacity="0.7"/>
+  <rect x="806" y="558" width="764" height="8" fill="#020806" opacity="0.7"/>
+
+  <!-- Small potted plant on sill -->
+  <g>
+    <path d="M1410 536 l-8 -46 h58 l-8 46 z" fill="#0b2a20"/>
+    <path d="M1406 500 q18 -26 38 -2" stroke="#2a6e53" stroke-width="2" fill="none" opacity="0.5"/>
+    <g fill="url(#leafLight)">
+      <path d="M1430 492 q-34 -58 -70 -60 q18 24 26 42 q-26 -8 -42 -2 q28 18 46 26 q-18 4 -30 14 q26 8 44 4 q-8 26 -2 40 q20 -26 28 -64 z" opacity="0.85"/>
+      <path d="M1434 492 q26 -70 66 -78 q-14 26 -18 46 q22 -12 40 -8 q-24 22 -42 32 q18 6 28 18 q-28 4 -46 -2 q10 28 6 44 q-22 -22 -34 -52 z" opacity="0.7"/>
+    </g>
+  </g>
+
+  <!-- Hanging vine top-left of window -->
+  <g stroke="#0d3a2c" stroke-width="2.5" fill="none" opacity="0.9">
+    <path d="M840 40 q30 70 16 130 q-12 52 8 92"/>
+    <path d="M878 44 q-12 76 12 126 q18 38 8 74"/>
+  </g>
+  <g fill="#0a3427">
+    <ellipse cx="856" cy="86" rx="9" ry="5" transform="rotate(-28 856 86)"/>
+    <ellipse cx="864" cy="126" rx="10" ry="5" transform="rotate(24 864 126)"/>
+    <ellipse cx="856" cy="170" rx="9" ry="5" transform="rotate(-20 856 170)"/>
+    <ellipse cx="868" cy="208" rx="8" ry="4" transform="rotate(30 868 208)"/>
+    <ellipse cx="862" cy="248" rx="9" ry="5" transform="rotate(-18 862 248)"/>
+    <ellipse cx="890" cy="92" rx="9" ry="5" transform="rotate(26 890 92)"/>
+    <ellipse cx="898" cy="138" rx="8" ry="4" transform="rotate(-24 898 138)"/>
+    <ellipse cx="902" cy="186" rx="9" ry="5" transform="rotate(22 902 186)"/>
+  </g>
+
+  <!-- Warm floor lamp beside the window -->
+  <g>
+    <ellipse cx="790" cy="214" rx="120" ry="150" fill="url(#lampGlow)"/>
+    <rect x="787" y="238" width="4" height="296" rx="2" fill="#0c1d17"/>
+    <ellipse cx="789" cy="532" rx="34" ry="7" fill="#06120e"/>
+    <path d="M752 196 h74 l14 42 h-102 z" fill="#0b1c16"/>
+    <path d="M752 196 h74 l2 5 h-78 z" fill="#d9a05f" opacity="0.28"/>
+    <ellipse cx="789" cy="238" rx="50" ry="5" fill="#ffc27a" opacity="0.18" filter="url(#blurSm)"/>
+  </g>
+
+  <!-- Console with turntable (music detail) -->
+  <g>
+    <rect x="846" y="452" width="290" height="14" rx="3" fill="#0a1712"/>
+    <rect x="854" y="466" width="10" height="74" rx="2" fill="#06100c"/>
+    <rect x="1116" y="466" width="10" height="74" rx="2" fill="#06100c"/>
+    <rect x="874" y="424" width="140" height="28" rx="4" fill="#071510"/>
+    <circle cx="944" cy="438" r="26" fill="#020806" stroke="#153a2c" stroke-width="1.5"/>
+    <circle cx="944" cy="438" r="10" fill="#0c2d21"/>
+    <circle cx="944" cy="438" r="2" fill="#34d399" opacity="0.6"/>
+    <rect x="1024" y="426" width="34" height="3" rx="1.5" fill="#1c4a38"/>
+    <circle cx="1058" cy="427" r="2" fill="#34d399" opacity="0.5"/>
+  </g>
+
+  <!-- Foreground monstera / plant silhouettes -->
+  <g>
+    <path d="M1600 600 L1600 372 q-66 -46 -118 -30 q34 10 52 34 q-42 -18 -74 -4 q44 18 72 34 q-34 2 -56 22 q40 8 66 2 q-14 36 -4 70 q26 -32 42 -70 q18 44 50 58 q-8 -40 -28 -72 q40 -10 58 -38 q-32 -8 -60 2 z" fill="url(#leaf)" opacity="0.95"/>
+    <path d="M1600 600 L1600 454 q-48 4 -82 34 q28 -4 50 6 q-32 20 -44 44 q34 -14 60 -18 q-6 34 16 62 q12 -34 30 -52 q14 24 40 32 q-12 -34 -34 -54 q30 -8 44 -26 q-30 -6 -58 2 z" fill="#03110c" opacity="0.98"/>
+    <path d="M1520 600 q-6 -90 30 -140 q-6 66 18 140 z" fill="#04130e"/>
+    <path d="M1504 600 q-48 -52 -58 -106 q34 40 78 106 z" fill="#051811"/>
+    <path d="M1548 600 q22 -70 64 -96 q-20 44 -34 96 z" fill="#061c14"/>
+  </g>
+
+  <!-- Left foreground plant hint -->
+  <g opacity="0.55">
+    <path d="M0 600 L0 470 q54 -6 92 34 q-34 -2 -58 8 q38 16 58 42 q-42 -10 -70 -6 z" fill="#04140f"/>
+    <path d="M0 600 q30 -70 76 -94 q-20 44 -32 94 z" fill="#061b13"/>
+  </g>
+
+  <!-- Cozy sofa / cushion silhouette bottom -->
+  <g opacity="0.85">
+    <path d="M600 600 q20 -52 72 -56 h210 q52 4 72 56 z" fill="#04100c"/>
+    <path d="M630 600 q14 -34 50 -38 h190 q36 4 50 38 z" fill="#071711"/>
+    <ellipse cx="836" cy="556" rx="58" ry="16" fill="#0a2018" opacity="0.7"/>
+  </g>
+
+  <!-- Dust motes -->
+  <g fill="#d8fff2" opacity="0.4">
+    <circle cx="1032" cy="250" r="1.2"/>
+    <circle cx="1140" cy="330" r="1"/>
+    <circle cx="1258" cy="172" r="1.3"/>
+    <circle cx="1360" cy="300" r="1"/>
+    <circle cx="968" cy="386" r="1.1"/>
+  </g>
+
+  <!-- Vignette -->
+  <rect width="1600" height="600" fill="url(#vignette)"/>
+</svg>

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { crc32 } from 'node:zlib';
 import type { RecognizeResult } from '../../shared/types';
 import { streams, ffmpegPath, ytdlpPath } from './streams';
-import { sessionStore } from './store';
+import { sessionStore, settingsStore } from './store';
 
 const SAMPLE_RATE = 16_000;
 const FFT_SIZE = 2048;
@@ -86,6 +86,34 @@ function writeInt32LE(value: number): Buffer {
   const buffer = Buffer.alloc(4);
   buffer.writeInt32LE(value | 0, 0);
   return buffer;
+}
+
+/**
+ * Microphone recordings are often much quieter than the music Shazam expects,
+ * and the fingerprint's FFT threshold is absolute. Normalising the peak to a
+ * healthy level makes quiet singing and distant speakers match far more often.
+ */
+function preparePcm(pcm: Buffer): Buffer {
+  const samples = Math.floor(pcm.length / 2);
+  if (samples < SAMPLE_RATE * 3) {
+    throw new Error('The recording is too short. Listen for at least 3 seconds and try again.');
+  }
+  let peak = 0;
+  for (let index = 0; index < samples; index++) {
+    const value = Math.abs(pcm.readInt16LE(index * 2));
+    if (value > peak) peak = value;
+  }
+  if (peak < 120) {
+    throw new Error('The microphone did not pick up any sound. Move closer to the source and try again.');
+  }
+  if (peak >= 26000) return pcm;
+  const gain = 28000 / peak;
+  const output = Buffer.alloc(samples * 2);
+  for (let index = 0; index < samples; index++) {
+    const value = Math.round(pcm.readInt16LE(index * 2) * gain);
+    output.writeInt16LE(Math.max(-32768, Math.min(32767, value)), index * 2);
+  }
+  return output;
 }
 
 /**
@@ -206,9 +234,6 @@ export function generateSignature(pcm: Buffer): { uri: string; sampleMs: number 
       }
       const step = Buffer.alloc(5);
       step.writeUInt8(peak.fftPassNumber - previous, 0);
-      // The Shazam signature stores both fields as unsigned 16-bit values.
-      // Loud or clipped recordings can push the magnitude past 32767, so
-      // clamping (and encoding them as unsigned) keeps the fingerprint valid.
       step.writeUInt16LE(Math.max(0, Math.min(0xffff, peak.peakMagnitude)), 1);
       step.writeUInt16LE(Math.max(0, Math.min(0xffff, peak.correctedPeakFrequencyBin)), 3);
       peakChunks.push(step);
@@ -275,8 +300,7 @@ function youtubeIdFromUri(uri?: string): string | undefined {
   return /^[A-Za-z0-9_-]{11}$/.test(uri) ? uri : undefined;
 }
 
-function toResult(track: ShazamTrack, fallbackVideoId?: string): RecognizeResult {
-  const song = track.sections?.find((section) => section.type === 'SONG');
+function toResult(track: ShazamTrack, fallbackVideoId?: string): RecognizeResult {  const song = track.sections?.find((section) => section.type === 'SONG');
   const metadata = song?.metadata || [];
   const value = (name: string) => metadata.find((entry) => entry.title === name)?.text;
   const youtubeOption = track.hub?.options?.find((option) => /video/i.test(option.type || ''));
@@ -292,6 +316,53 @@ function toResult(track: ShazamTrack, fallbackVideoId?: string): RecognizeResult
     shazamUrl: track.url,
     youtubeVideoId: youtube,
     lyrics,
+  };
+}
+
+/** Wrap mono 16-bit PCM in a minimal WAV container for ACRCloud. */
+function wavFromPcm(pcm: Buffer): Buffer {
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(SAMPLE_RATE, 24);
+  header.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+interface AcrCloudTrack {
+  title?: string;
+  artists?: Array<{ name?: string }>;
+  album?: { name?: string };
+  release_date?: string;
+  cover_art?: string;
+  genres?: Array<{ name?: string }>;
+  external_ids?: { isrc?: string; upc?: string };
+  external_metadata?: { youtube?: { vid?: string } };
+  score?: number;
+}
+
+function acrCloudResult(track: AcrCloudTrack): RecognizeResult {
+  const artist = (track.artists || [])
+    .map((entry) => entry.name)
+    .filter(Boolean)
+    .join(', ');
+  return {
+    title: track.title || 'Unknown track',
+    artist: artist || 'Unknown artist',
+    album: track.album?.name,
+    coverArt: track.cover_art,
+    genre: track.genres?.[0]?.name,
+    releaseDate: track.release_date,
+    youtubeVideoId: track.external_metadata?.youtube?.vid,
   };
 }
 
@@ -357,8 +428,87 @@ export class RecognitionService {
   }
 
   async fromPcm(pcm: Buffer): Promise<RecognizeResult> {
+    const prepared = preparePcm(pcm);
+    const config = settingsStore.get().recognition;
+    if (config?.acrcloudHost && config.acrcloudAccessKey && config.acrcloudAccessSecret) {
+      try {
+        return await this.acrcloud(prepared, config);
+      } catch (error: any) {
+        const message = String(error?.message || error);
+        // Misconfiguration must be visible; a plain "no match" still gets a
+        // second chance with Shazam for recorded (non-hummed) audio.
+        if (/rejected the credentials|ACRCloud:|Invalid|signature/i.test(message)) throw error;
+        try {
+          return await this.shazam(prepared);
+        } catch {
+          throw error;
+        }
+      }
+    }
+    return this.shazam(prepared);
+  }
+
+  private async shazam(pcm: Buffer): Promise<RecognizeResult> {
     const { uri, sampleMs } = generateSignature(pcm);
     return this.request(uri, sampleMs || 12000);
+  }
+
+  /**
+   * ACRCloud's humming project recognises melodies that are sung, hummed or
+   * whistled — something spectral fingerprinting (Shazam) cannot do. The API
+   * is the same /v1/identify endpoint; the console project type selects the
+   * humming engine.
+   */
+  private async acrcloud(
+    pcm: Buffer,
+    config: { acrcloudHost: string; acrcloudAccessKey: string; acrcloudAccessSecret: string },
+  ): Promise<RecognizeResult> {
+    const host = config.acrcloudHost.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (!host) throw new Error('ACRCloud host is missing.');
+    const endpoint = '/v1/identify';
+    const timestamp = Math.floor(Date.now() / 1000);
+    const stringToSign = `POST\n${endpoint}\n${config.acrcloudAccessKey}\naudio\n${timestamp}`;
+    const signature = crypto
+      .createHmac('sha1', config.acrcloudAccessSecret)
+      .update(stringToSign)
+      .digest('base64');
+    const wav = wavFromPcm(pcm);
+    const bytes = wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer;
+    const form = new FormData();
+    form.append('access_key', config.acrcloudAccessKey);
+    form.append('data_type', 'audio');
+    form.append('signature_version', '1');
+    form.append('signature', signature);
+    form.append('sample_bytes', String(wav.length));
+    form.append('timestamp', String(timestamp));
+    form.append('sample', new Blob([bytes], { type: 'audio/wav' }), 'sample.wav');
+
+    let response: Response;
+    try {
+      response = await fetch(`https://${host}${endpoint}`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error: any) {
+      throw new Error(`Could not reach ACRCloud: ${error?.message || error}`);
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('ACRCloud rejected the credentials. Check the host, access key and secret in Settings → Integrations.');
+    }
+    if (!response.ok) throw new Error(`ACRCloud returned HTTP ${response.status}.`);
+    const json: any = await response.json().catch(() => null);
+    const code = Number(json?.status?.code);
+    if (Number.isFinite(code) && code !== 0) {
+      if (code === 1001) throw new Error('No match found. Try a longer, clearer part of the melody.');
+      const message = json?.status?.msg || 'Unknown error';
+      throw new Error(`ACRCloud: ${message} (code ${code}).`);
+    }
+    const metadata = json?.metadata || {};
+    const track: AcrCloudTrack | undefined =
+      metadata.humming?.[0] || metadata.music?.[0] || metadata.custom_files?.[0];
+    if (!track?.title) throw new Error('No match found. Try a longer, clearer part of the melody.');
+    return acrCloudResult(track);
   }
 
   async fromFile(file: string): Promise<RecognizeResult> {
@@ -369,19 +519,14 @@ export class RecognitionService {
 
   async fromVideoId(videoId: string): Promise<RecognizeResult> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auralis-recognize-'));
-    const ffmpeg = ffmpegPath();
     const args = [
       '--no-warnings',
       '--no-playlist',
       '-f',
       'bestaudio/best',
-      '--download-sections',
-      '*0:10-0:22',
-      '--force-keyframes-at-cuts',
       '-o',
       path.join(dir, 'sample.%(ext)s'),
     ];
-    if (ffmpeg && path.isAbsolute(ffmpeg)) args.push('--ffmpeg-location', path.dirname(ffmpeg));
     const cookie = sessionStore.cookie;
     if (cookie) {
       const cookiePath = path.join(dir, 'cookies.txt');
@@ -396,17 +541,20 @@ export class RecognitionService {
     }
     args.push(`https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`);
     try {
-      await run(ytdlpPath(), args, 120_000);
+      // Downloading first (instead of letting yt-dlp pipe a network URL into
+      // ffmpeg) avoids a crash in some static ffmpeg builds when reading HTTPS.
+      await run(ytdlpPath(), args, 180_000);
       const file = fs.readdirSync(dir).find((name) => name.startsWith('sample.'));
       if (!file) throw new Error('Could not download a clip for recognition.');
-      const pcm = await this.decodeToPcm(path.join(dir, file));
+      const pathName = path.join(dir, file);
+      const pcm = await this.decodeToPcm(pathName, 10).catch(() => this.decodeToPcm(pathName, 0));
       return this.fromPcm(pcm);
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
     }
   }
 
-  private decodeToPcm(file: string): Promise<Buffer> {
+  private decodeToPcm(file: string, startSeconds = 0): Promise<Buffer> {
     const ffmpeg = ffmpegPath();
     if (!ffmpeg) {
       throw new Error(
@@ -421,6 +569,7 @@ export class RecognitionService {
         '-hide_banner',
         '-loglevel',
         'error',
+        ...(startSeconds > 0 ? ['-ss', String(startSeconds)] : []),
         '-t',
         '12',
         '-i',

@@ -15,9 +15,10 @@ import {
   Tray,
 } from 'electron';
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { Readable } from 'node:stream';
 import type { PlaylistImportResult, SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
 import { innertube } from './services/innertube';
@@ -56,17 +57,12 @@ let loginWindow: BrowserWindow | null = null;
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-// Keep the established desktop rendering path by default. Users who want
-// native Wayland can set ELECTRON_OZONE_PLATFORM_HINT=auto (or pass an
-// explicit --ozone-platform flag) without rebuilding.
-if (
-  process.platform === 'linux' &&
-  process.env.DISPLAY &&
-  !process.env.ELECTRON_OZONE_PLATFORM_HINT &&
-  !process.argv.some((argument) => argument.startsWith('--ozone-platform'))
-) {
-  app.commandLine.appendSwitch('ozone-platform', 'x11');
-}
+// Let Electron follow the actual desktop session. Forcing X11 on a Wayland
+// compositor made BrowserWindow.minimize() a no-op under XWayland, so the
+// titlebar's minimize button silently did nothing. Native Wayland also avoids
+// the XWayland compositing path, which is noticeably smoother for the glass
+// and artwork effects. Users can still force a backend with
+// ELECTRON_OZONE_PLATFORM_HINT or an explicit --ozone-platform flag.
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -220,7 +216,7 @@ function createWindow() {
     minHeight: 680,
     show: false,
     frame: false,
-    backgroundColor: settings.theme === 'light' ? '#f6f5f8' : '#0b0b0f',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#070b08' : '#f2f6f1',
     title: 'Auralis',
     icon: iconPath() || undefined,
     webPreferences: {
@@ -313,6 +309,18 @@ function isAllowedLocalMedia(filePath: string): boolean {
   }
 }
 
+function isAllowedImageUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+    return /(^|\.)googlevideo\.com$|(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)googleusercontent\.com$|(^|\.)google\.com$|(^|\.)gstatic\.com$|(^|\.)ytimg\.com$|(^|\.)ggpht\.com$/i.test(
+      url.hostname,
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedStreamUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
@@ -340,25 +348,21 @@ async function streamFastThenFallback(
 ): Promise<Response> {
   // googlevideo rejects ranges larger than roughly one megabyte on some
   // clients (notably podcast episodes) with a 403. Stay just below that
-  // limit and retry smaller chunks before paying the yt-dlp fallback latency.
-  let first: Response | null = null;
-  for (const size of [FIRST_STREAM_CHUNK, 524_287]) {
-    const attempt = await net.fetch(remote, {
-      headers: { ...headers, Range: `bytes=0-${size}` },
-      method: 'GET',
-    }).catch(() => null);
-    if (attempt?.ok && attempt.body) {
-      first = attempt;
-      break;
-    }
-    await attempt?.body?.cancel().catch(() => {});
-  }
-  if (!first) {
+  // limit; if a URL is stricter still, retry with progressively smaller
+  // first chunks before paying the yt-dlp fallback latency.
+  const first = await net.fetch(remote, {
+    headers: { ...headers, Range: `bytes=0-${FIRST_STREAM_CHUNK}` },
+    method: 'GET',
+  }).catch(() => null);
+  if (!first || !first.ok || !first.body) {
     const fallbackUrl = await fallback;
-    if (!fallbackUrl) return new Response('Media request failed', { status: 502 });
+    if (!fallbackUrl) return first ? withCors(first) : new Response('Media request failed', { status: 502 });
     const response = await net.fetch(fallbackUrl, { headers, method: 'GET' });
     return withCors(response);
   }
+  // Some origins ignore the Range header and send the complete file with a
+  // 200. That body cannot be capped, so pass it through without adding a
+  // fallback wait at the end of the track.
   if (first.status === 200) return withCors(first);
   const total = rangeTotal(first);
   const contentType = first.headers.get('content-type') || 'audio/webm';
@@ -377,26 +381,72 @@ async function streamFastThenFallback(
           }
         }
         if (cancelled) return;
-        const fallbackUrl = await fallback;
-        if (cancelled) return;
-        if (!fallbackUrl) {
+
+        // A range response that delivered the whole file needs no splice.
+        if (total && sent >= total) {
           controller.close();
           return;
         }
+
+        const fallbackUrl = await fallback;
+        if (cancelled) return;
+        if (!fallbackUrl) {
+          // With a known total, a short body is a truncated response, not the
+          // end of the track. Surface it so the player retries instead of
+          // silently advancing to the next song.
+          if (total && sent < total) throw new Error('Stream ended before the full track was delivered.');
+          controller.close();
+          return;
+        }
+
         const rest = await net.fetch(fallbackUrl, {
           headers: { ...headers, Range: `bytes=${sent}-` },
           method: 'GET',
         });
+        // 416 means the first body already contained every byte. Some fast
+        // URLs answer a range request with the whole file.
+        if (rest.status === 416) {
+          controller.close();
+          return;
+        }
         if (!rest.ok || !rest.body) {
           throw new Error(`Stream continuation failed (${rest.status})`);
         }
+
+        // Some origins ignore the Range header and answer 200 with the file
+        // from byte 0. Skip the prefix we already sent so playback stays
+        // continuous instead of splicing duplicate audio into the stream.
+        let skip = 0;
+        if (rest.status === 200) {
+          skip = sent;
+        } else {
+          const restRange = /bytes\s+(\d+)-/i.exec(rest.headers.get('content-range') || '');
+          const restStart = restRange ? Number(restRange[1]) : 0;
+          if (restStart > sent) throw new Error('Stream continuation has a gap.');
+          if (restStart < sent) skip = sent - restStart;
+        }
+        let delivered = sent;
+        let skipped = 0;
         const restReader = rest.body.getReader();
         while (!cancelled) {
           const { done, value } = await restReader.read();
           if (done) break;
-          if (value?.byteLength) controller.enqueue(value);
+          if (!value?.byteLength) continue;
+          let chunk = value;
+          if (skipped < skip) {
+            const take = Math.min(skip - skipped, chunk.byteLength);
+            skipped += take;
+            chunk = chunk.subarray(take);
+            if (!chunk.byteLength) continue;
+          }
+          delivered += chunk.byteLength;
+          controller.enqueue(chunk);
         }
-        if (!cancelled) controller.close();
+        if (cancelled) return;
+        if (total && delivered < total) {
+          throw new Error('Stream ended before the full track was delivered.');
+        }
+        controller.close();
       } catch (error) {
         if (!cancelled) {
           try {
@@ -415,8 +465,232 @@ async function streamFastThenFallback(
     'Content-Type': contentType,
     'Accept-Ranges': 'bytes',
   });
-  if (total) outputHeaders.set('Content-Length', String(total));
-  return withCors(new Response(stream, { status: 200, headers: outputHeaders }));
+  // A 206 with an explicit Content-Range is what makes Chromium treat the
+  // resource as genuinely seekable. A bare 200 (even with Accept-Ranges) left
+  // the element reporting an empty `seekable` range on some streams, so every
+  // forward drag restarted at 0.
+  if (total) {
+    outputHeaders.set('Content-Length', String(total));
+    outputHeaders.set('Content-Range', `bytes 0-${total - 1}/${total}`);
+  }
+  return withCors(new Response(stream, { status: total ? 206 : 200, headers: outputHeaders }));
+}
+
+function mediaMime(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case '.mp3': return 'audio/mpeg';
+    case '.m4a':
+    case '.aac': return 'audio/mp4';
+    case '.opus': return 'audio/ogg';
+    case '.ogg': return 'audio/ogg';
+    case '.webm': return 'audio/webm';
+    case '.flac': return 'audio/flac';
+    case '.wav': return 'audio/wav';
+    default: return 'application/octet-stream';
+  }
+}
+
+/**
+ * Serve a local audio file with proper `Accept-Ranges` / `206 Content-Range`
+ * semantics. Without this, the `<audio>` element treats cached and downloaded
+ * tracks as unseekable and every seek restarts from the beginning.
+ */
+function serveLocalMedia(request: Request, filePath: string): Response {
+  const stat = fs.statSync(filePath);
+  const total = stat.size;
+  const type = mediaMime(filePath);
+  const baseHeaders: Record<string, string> = {
+    'Content-Type': type,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  const range = request.headers.get('range');
+  const match = range ? /^bytes=(\d*)-(\d*)$/i.exec(range.trim()) : null;
+  if (match && (match[1] || match[2])) {
+    let start = match[1] ? Number(match[1]) : 0;
+    let end = match[2] ? Number(match[2]) : total - 1;
+    if (!match[1] && match[2]) {
+      // Suffix range: last N bytes.
+      start = Math.max(0, total - Number(match[2]));
+      end = total - 1;
+    }
+    if (!Number.isFinite(start) || start >= total) {
+      return withCors(new Response(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${total}` },
+      }));
+    }
+    end = Math.min(Math.max(end, start), total - 1);
+    const body = Readable.toWeb(fs.createReadStream(filePath, { start, end })) as unknown as ReadableStream;
+    return withCors(new Response(body, {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        'Content-Range': `bytes ${start}-${end}/${total}`,
+        'Content-Length': String(end - start + 1),
+      },
+    }));
+  }
+  const body = Readable.toWeb(fs.createReadStream(filePath)) as unknown as ReadableStream;
+  return withCors(new Response(body, {
+    status: 200,
+    headers: { ...baseHeaders, 'Content-Length': String(total) },
+  }));
+}
+
+/**
+ * Artwork is small, immutable and requested repeatedly (card, hero, player,
+ * palette extraction). A tiny memory + disk cache removes the visible
+ * "cover buffering" on slow CDN days and makes returning to a page instant.
+ */
+const IMAGE_MEMORY_MAX_BYTES = 96 * 1024 * 1024;
+const IMAGE_MEMORY_MAX_ENTRIES = 240;
+const IMAGE_DISK_MAX_BYTES = 256 * 1024 * 1024;
+const IMAGE_CACHE_TTL = 7 * 24 * 60 * 60_000;
+
+interface CachedImage {
+  at: number;
+  type: string;
+  body: Buffer;
+}
+
+const imageMemory = new Map<string, CachedImage>();
+let imageMemoryBytes = 0;
+let imageCacheDirValue: string | null = null;
+let imageDiskPruneTimer: NodeJS.Timeout | null = null;
+let imageDiskQueue: Promise<void> = Promise.resolve();
+
+function imageCacheDir(): string {
+  if (!imageCacheDirValue) imageCacheDirValue = path.join(app.getPath('userData'), 'image-cache');
+  return imageCacheDirValue;
+}
+
+function imageCacheKey(remote: string): string {
+  return crypto.createHash('sha1').update(remote).digest('hex');
+}
+
+function rememberImage(remote: string, entry: CachedImage) {
+  const previous = imageMemory.get(remote);
+  if (previous) imageMemoryBytes -= previous.body.length;
+  imageMemory.set(remote, entry);
+  imageMemoryBytes += entry.body.length;
+  while (imageMemory.size > IMAGE_MEMORY_MAX_ENTRIES || imageMemoryBytes > IMAGE_MEMORY_MAX_BYTES) {
+    const oldestKey = imageMemory.keys().next().value;
+    if (!oldestKey) break;
+    const oldest = imageMemory.get(oldestKey);
+    imageMemory.delete(oldestKey);
+    imageMemoryBytes -= oldest?.body.length ?? 0;
+  }
+}
+
+function queueImageDiskWrite(remote: string, entry: CachedImage) {
+  const base = path.join(imageCacheDir(), imageCacheKey(remote));
+  imageDiskQueue = imageDiskQueue
+    .then(async () => {
+      await fs.promises.mkdir(imageCacheDir(), { recursive: true });
+      await fs.promises.writeFile(`${base}.img`, entry.body);
+      await fs.promises.writeFile(`${base}.type`, entry.type);
+    })
+    .catch(() => undefined);
+  if (!imageDiskPruneTimer) {
+    imageDiskPruneTimer = setTimeout(() => {
+      imageDiskPruneTimer = null;
+      void pruneImageDisk();
+    }, 8_000);
+    imageDiskPruneTimer.unref?.();
+  }
+}
+
+async function pruneImageDisk() {
+  try {
+    const dir = imageCacheDir();
+    const names = await fs.promises.readdir(dir);
+    const now = Date.now();
+    const files: { path: string; at: number; size: number }[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.img')) continue;
+      const filePath = path.join(dir, name);
+      const stat = await fs.promises.stat(filePath).catch(() => null);
+      if (!stat) continue;
+      if (now - stat.mtimeMs > IMAGE_CACHE_TTL) {
+        await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
+        await fs.promises.rm(`${filePath.slice(0, -4)}.type`, { force: true }).catch(() => undefined);
+        continue;
+      }
+      files.push({ path: filePath, at: stat.mtimeMs, size: stat.size });
+    }
+    let total = files.reduce((sum, file) => sum + file.size, 0);
+    if (total <= IMAGE_DISK_MAX_BYTES) return;
+    files.sort((a, b) => a.at - b.at);
+    for (const file of files) {
+      if (total <= IMAGE_DISK_MAX_BYTES) break;
+      await fs.promises.rm(file.path, { force: true }).catch(() => undefined);
+      await fs.promises.rm(`${file.path.slice(0, -4)}.type`, { force: true }).catch(() => undefined);
+      total -= file.size;
+    }
+  } catch {
+    // A cache prune must never break image loading.
+  }
+}
+
+async function readImageCache(remote: string): Promise<CachedImage | null> {
+  const memory = imageMemory.get(remote);
+  if (memory && Date.now() - memory.at <= IMAGE_CACHE_TTL) return memory;
+  try {
+    const base = path.join(imageCacheDir(), imageCacheKey(remote));
+    const [body, type, stat] = await Promise.all([
+      fs.promises.readFile(`${base}.img`),
+      fs.promises.readFile(`${base}.type`, 'utf8').catch(() => 'image/jpeg'),
+      fs.promises.stat(`${base}.img`),
+    ]);
+    if (!body.length || Date.now() - stat.mtimeMs > IMAGE_CACHE_TTL) return null;
+    const entry: CachedImage = { at: stat.mtimeMs, type: type.trim() || 'image/jpeg', body };
+    rememberImage(remote, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function imageResponse(entry: CachedImage): Response {
+  return withCors(
+    new Response(new Uint8Array(entry.body), {
+      status: 200,
+      headers: {
+        'Content-Type': entry.type,
+        'Content-Length': String(entry.body.length),
+        'Cache-Control': 'public, max-age=604800, immutable',
+      },
+    }),
+  );
+}
+
+async function serveImage(remote: string, headers: Record<string, string>): Promise<Response> {
+  const cached = await readImageCache(remote);
+  if (cached) return imageResponse(cached);
+  // YouTube's CDN is burst-sensitive: retry once before declaring the cover
+  // unavailable rather than tripling the request rate on a transient blip.
+  let last: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await net.fetch(remote, { headers, method: 'GET' });
+      if (response.ok && response.body) {
+        const type = response.headers.get('content-type') || 'image/jpeg';
+        const body = Buffer.from(await response.arrayBuffer());
+        if (body.length) {
+          const entry: CachedImage = { at: Date.now(), type, body };
+          rememberImage(remote, entry);
+          queueImageDiskWrite(remote, entry);
+          return imageResponse(entry);
+        }
+      }
+      last = response;
+    } catch {
+      // Fall through to the retry.
+    }
+    if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  return last ? withCors(last) : withCors(new Response('Image fetch failed', { status: 502 }));
 }
 
 function registerMediaProtocol() {
@@ -428,8 +702,25 @@ function registerMediaProtocol() {
         if (!filePath || !fs.existsSync(filePath) || !isAllowedLocalMedia(filePath)) {
           return new Response('Not found', { status: 404 });
         }
-        const response = await net.fetch(pathToFileURL(filePath).toString());
-        return withCors(response);
+        // Serve local/cached audio ourselves so the media element always sees
+        // a real byte-range response. `net.fetch(file://)` does not advertise
+        // range support, which left downloaded and cached tracks unseekable —
+        // dragging their progress bar snapped straight back to the start.
+        return serveLocalMedia(request, filePath);
+      }
+      if (url.host === 'image') {
+        const encoded = url.pathname.replace(/^\//, '');
+        const remote = Buffer.from(encoded, 'base64url').toString('utf8');
+        if (!isAllowedImageUrl(remote)) return new Response('Bad request', { status: 400 });
+        const headers: Record<string, string> = {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+          Referer: 'https://music.youtube.com/',
+          Origin: 'https://music.youtube.com',
+          Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+        };
+        const response = await serveImage(remote, headers);
+        return response;
       }
       if (url.host === 'stream') {
         const encoded = url.pathname.replace(/^\//, '');
@@ -445,7 +736,11 @@ function registerMediaProtocol() {
         const rangeMatch = range ? /^bytes=(\d+)-/i.exec(range.trim()) : null;
         const start = rangeMatch ? Number(rangeMatch[1]) : 0;
         const suffixRange = range ? /^bytes=-\d+$/i.test(range.trim()) : false;
-        const fallback = start === 0 && !suffixRange ? fallbackStreamTask(remote) : undefined;
+        // Only the open-ended `bytes=0-` request uses the fast-then-fallback
+        // splice. A bounded range is proxied directly so we never return more
+        // bytes than the caller asked for.
+        const openEnded = !range || /^bytes=0-$/i.test(range.trim());
+        const fallback = start === 0 && !suffixRange && openEnded ? fallbackStreamTask(remote) : undefined;
         if (fallback) {
           // A fast player URL only supports its first range. Deliver a
           // continuous response (fast first chunk followed by the full-range
@@ -632,6 +927,11 @@ function registerIpc() {
     trayAvailable,
   }));
   ipcMain.handle('app:minimize', () => mainWindow?.minimize());
+  ipcMain.handle('app:window-state', () => ({
+    maximized: Boolean(mainWindow?.isMaximized()),
+    minimized: Boolean(mainWindow?.isMinimized()),
+    fullScreen: Boolean(mainWindow?.isFullScreen()),
+  }));
   ipcMain.handle('app:toggle-maximize', () => {
     if (!mainWindow) return false;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();

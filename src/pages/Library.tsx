@@ -25,6 +25,7 @@ import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatBytes, formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
+import { withoutVideos } from '../lib/shelves';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { MediaCard, ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -137,6 +138,8 @@ function YouTubeLibrary() {
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
 
+  const shelves = data ? withoutVideos(data.shelves) : [];
+
   return (
     <div className="youtube-library">
       <div className="library-subhead">
@@ -153,7 +156,11 @@ function YouTubeLibrary() {
           </Button>
         </div>
       </div>
-      {data?.shelves.length ? <ShelfGrid shelves={data.shelves} /> : <EmptyState icon={<LibraryBig size={26} />} title="Your library is empty" message="Save songs and playlists on YouTube Music and they will appear here." />}
+      {shelves.length ? (
+        <ShelfGrid shelves={shelves} />
+      ) : (
+        <EmptyState icon={<LibraryBig size={26} />} title="Your library is empty" message="Save songs and playlists on YouTube Music and they will appear here." />
+      )}
     </div>
   );
 }

@@ -43,7 +43,7 @@ page.on('console', (message) => {
 await page.waitForLoadState('domcontentloaded');
 await page.waitForSelector('.app-shell', { timeout: 60000 });
 try {
-  await page.waitForSelector('.home-hero', { timeout: 30000 });
+  await page.waitForSelector('.dynamic-hero', { timeout: 30000 });
 } catch {
   issues.push('[home] hero did not appear');
 }
@@ -72,7 +72,7 @@ console.log('[shell]', JSON.stringify(shell, null, 2));
 await shot(page, 'home');
 
 async function clickSidebar(text) {
-  const item = page.locator('.sidebar-item', { hasText: text }).first();
+  const item = page.locator('.sidebar-item, .sidebar-settings', { hasText: text }).first();
   await item.click();
   await page.waitForTimeout(1800);
 }

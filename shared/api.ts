@@ -27,6 +27,7 @@ export interface AuralisApi {
   app: {
     info(): Promise<AppInfo>;
     minimize(): Promise<void>;
+    windowState(): Promise<{ maximized: boolean; minimized: boolean; fullScreen: boolean }>;
     toggleMaximize(): Promise<boolean>;
     close(): Promise<void>;
     openExternal(url: string): Promise<void>;

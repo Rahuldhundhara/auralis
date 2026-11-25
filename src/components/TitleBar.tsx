@@ -5,19 +5,51 @@ export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    let alive = true;
+    void window.auralis.app
+      .windowState()
+      .then((state) => {
+        if (alive) setMaximized(state.maximized);
+      })
+      .catch(() => {
+        // The window:state event below will still keep this in sync.
+      });
     const unsubscribe = window.auralis.window.onStateChange((state) => {
       if (state === 'maximized') setMaximized(true);
       if (state === 'unmaximized') setMaximized(false);
     });
-    return unsubscribe;
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
   }, []);
+
+  const minimize = () => {
+    void window.auralis.app.minimize().catch(() => {});
+  };
+
+  const toggleMaximize = async () => {
+    try {
+      setMaximized(await window.auralis.app.toggleMaximize());
+    } catch {
+      // Keep the last known state; the window:state event will correct it.
+    }
+  };
+
+  const close = async () => {
+    try {
+      await window.auralis.app.close();
+    } catch {
+      window.close();
+    }
+  };
 
   return (
     <header
       className="titlebar"
       onDoubleClick={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
-        void window.auralis.app.toggleMaximize().then(setMaximized);
+        void toggleMaximize();
       }}
     >
       <div className="titlebar-brand">
@@ -32,7 +64,7 @@ export function TitleBar() {
           className="window-btn"
           aria-label="Minimize"
           title="Minimize"
-          onClick={() => void window.auralis.app.minimize()}
+          onClick={minimize}
         >
           <Minus size={16} />
         </button>
@@ -41,7 +73,7 @@ export function TitleBar() {
           className="window-btn"
           aria-label={maximized ? 'Restore' : 'Maximize'}
           title={maximized ? 'Restore' : 'Maximize'}
-          onClick={() => void window.auralis.app.toggleMaximize().then(setMaximized)}
+          onClick={() => void toggleMaximize()}
         >
           {maximized ? <Copy size={13} /> : <Square size={12} />}
         </button>
@@ -50,7 +82,7 @@ export function TitleBar() {
           className="window-btn is-close"
           aria-label="Close"
           title="Close"
-          onClick={() => void window.auralis.app.close()}
+          onClick={() => void close()}
         >
           <X size={16} />
         </button>

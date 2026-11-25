@@ -812,6 +812,14 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
   // wraps the real playable video id; expose that track directly so cards can
   // play it instead of trying to browse a synthetic id.
   const trackId = id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
+  // Song/video/episode top results are directly playable. Build the track from
+  // the real artist/album runs instead of leaving callers to guess from the
+  // subtitle's first chip — that chip is often the "Song" type label.
+  const playableId =
+    trackId ||
+    ((type === 'song' || type === 'video' || type === 'episode') && /^[A-Za-z0-9_-]{11}$/.test(id)
+      ? id
+      : undefined);
   return {
     type,
     id,
@@ -820,12 +828,14 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
     thumbnail,
     round: type === 'artist',
     browseId: id.startsWith('MPED') ? id : undefined,
-    track: trackId
+    artists: parsedSubtitle.artists.length ? parsedSubtitle.artists : undefined,
+    track: playableId
       ? {
-          id: trackId,
+          id: playableId,
           type: type === 'episode' ? 'episode' : 'song',
           title,
           artists: parsedSubtitle.artists,
+          album: parsedSubtitle.album,
           duration: parsedSubtitle.duration,
           thumbnail,
           source: 'youtube',

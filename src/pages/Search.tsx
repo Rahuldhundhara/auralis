@@ -66,7 +66,7 @@ function SearchLanding() {
         <h1>What do you want to hear?</h1>
         <p>Songs, albums, artists, playlists and podcasts from YouTube Music.</p>
         <SearchField large />
-        <p className="search-landing-hint">Use “Identify your song” beside the search bar to name a tune by singing, humming or playing it.</p>
+        <p className="search-landing-hint">Use “Identify your song” beside the search bar to name a tune by playing it nearby or singing along.</p>
       </div>
       {history.length ? (
         <section className="search-history-section">
@@ -148,6 +148,8 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
     };
   }, [data, extra]);
 
+  const topResult = results?.top && results.top.type !== 'video' ? results.top : undefined;
+
   // Resolve the first few likely results while the user is scanning the page.
   // The bridge deduplicates these with the click's resolve call, so the common
   // first/second-row click starts audio without waiting for yt-dlp. Keep this
@@ -155,7 +157,7 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   useEffect(() => {
     if (!results) return;
     const candidates = [
-      results.top?.track,
+      topResult?.track,
       ...results.songs.slice(0, 3),
       ...results.episodes.slice(0, 2),
     ].filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
@@ -170,7 +172,7 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
     if (!unique.length) return;
     const timers = unique.map((track, index) => window.setTimeout(() => prefetchTrack(track), 120 + index * 90));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [results]);
+  }, [results, topResult]);
 
   if (!query) return <SearchLanding />;
 
@@ -230,9 +232,9 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
 
       {results && hasAny ? (
         <div className="search-results">
-          {filter === 'All' && results.top ? (
+          {filter === 'All' && topResult ? (
             <div className="search-top-layout">
-              <TopResult card={results.top} />
+              <TopResult card={topResult} />
               {results.songs.length ? (
                 <section className="top-songs">
                   <div className="section-heading">

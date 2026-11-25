@@ -1,15 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
-import { Compass, Play, Radio, Sparkles } from 'lucide-react';
-import type { Shelf as ShelfType, Track } from '@shared/types';
+import { useState, useEffect, useRef } from 'react';
+import { Pause, Play, Radio, Sparkles } from 'lucide-react';
+import type { Card, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { toast } from '../stores/ui';
-import { greeting, homeTagline, shuffleArray } from '../lib/format';
+import { shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
+import { withoutVideos } from '../lib/shelves';
 import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
+import { taglineForTrack } from '../lib/vibeTagline';
+import { extractAverageColor } from '../lib/artColor';
+import { proxiedArtwork } from '../lib/image';
 import { Shelf } from '../components/MediaCard';
+import { useTranslation } from '../lib/i18n';
+import {
+  fetchPersonalizedArtists,
+  fetchPersonalizedTracks,
+  fetchSimilarArtists,
+  fetchTrendingInGenres,
+  trackCard,
+} from '../lib/personalized';
 
 function uniqueTracks<T extends { id: string }>(tracks: T[]): T[] {
   const seen = new Set<string>();
@@ -20,30 +32,135 @@ function uniqueTracks<T extends { id: string }>(tracks: T[]): T[] {
   });
 }
 
-function QuickAccess() {
-  const library = useAppStore((state) => state.library);
-  const recent = library.recent.slice(0, 12);
-  const navigate = useNavStore((state) => state.navigate);
-  const carouselRef = useRef<HTMLDivElement>(null);
-  const prefetchedRef = useRef(new Set<string>());
+/* ------------------------------------------------------------------ */
+/* Dynamic music-reactive hero banner                                 */
+/* ------------------------------------------------------------------ */
 
-  const prefetch = (track: Track | undefined) => {
-    if (!track?.id || prefetchedRef.current.has(track.id)) return;
-    prefetchedRef.current.add(track.id);
-    void window.auralis.player.prefetch(track).catch(() => {});
-  };
+function DynamicHero({ tracks }: { tracks: Track[] }) {
+  const current = usePlayerStore((state) => state.current);
+  const playing = usePlayerStore((state) => state.playing);
+  const [artColor, setArtColor] = useState<{ r: number; g: number; b: number }>({ r: 16, g: 185, b: 129 });
+  const [tagline, setTagline] = useState("This one's for you.");
+  const prevIdRef = useRef<string>('');
 
   useEffect(() => {
-    if (!recent[0]?.id) return;
-    const timer = window.setTimeout(() => prefetch(recent[0]), 1200);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recent[0]?.id]);
+    const activeTrack = current || tracks[0];
+    const signature = `${activeTrack?.id || ''}:${activeTrack?.thumbnail || ''}`;
+    if (signature === prevIdRef.current) return;
+    prevIdRef.current = signature;
+
+    if (activeTrack?.thumbnail) {
+      extractAverageColor(activeTrack.thumbnail).then((color) => {
+        if (color) setArtColor({ r: color.r, g: color.g, b: color.b });
+      });
+    }
+    setTagline(taglineForTrack(activeTrack));
+  }, [current?.id, current?.thumbnail, tracks]);
+
+  const featured = current || tracks[0] || null;
+  const artwork = proxiedArtwork(featured?.thumbnail);
+  const artistLine = featured?.artists?.map((a) => a.name).join(' • ') || 'Auralis';
+  const albumLine = featured?.album?.name && featured.album.name !== featured.title ? featured.album.name : null;
+
+  const hexColor = `rgb(${artColor.r}, ${artColor.g}, ${artColor.b})`;
+  const hexColorDim = `rgba(${artColor.r}, ${artColor.g}, ${artColor.b}, 0.35)`;
+  const hexColorDeep = `rgba(${Math.round(artColor.r * 0.35)}, ${Math.round(artColor.g * 0.35)}, ${Math.round(artColor.b * 0.35)}, 0.92)`;
+
+  const playPause = () => {
+    const state = usePlayerStore.getState();
+    if (state.current) {
+      state.toggle();
+      return;
+    }
+    const list = tracks;
+    if (list.length) {
+      usePlayerStore.getState().playQueue(list, 0);
+    } else {
+      toast('Nothing to play yet — open Explore and pick a song.', 'info');
+    }
+  };
+
+  const startRadio = () => {
+    if (!featured) {
+      toast('Radio needs a track to start from.', 'info');
+      return;
+    }
+    usePlayerStore.getState().startRadio(featured);
+    toast('Radio ready — endless discovery', 'success');
+  };
+
+  return (
+    <section
+      className="dynamic-hero"
+      aria-label="Featured music"
+      style={{
+        // @ts-ignore
+        '--art-color': hexColor,
+        '--art-color-dim': hexColorDim,
+        '--art-color-deep': hexColorDeep,
+      }}
+    >
+      <div
+        className="dynamic-hero-backdrop"
+        style={{
+          backgroundImage: artwork ? `url('${artwork}')` : 'none',
+          backgroundColor: hexColorDeep,
+        }}
+        aria-hidden="true"
+      />
+      <div className="dynamic-hero-shade" aria-hidden="true" />
+
+      <div className="dynamic-hero-content">
+        <div className="dynamic-hero-art-wrap">
+          <Artwork
+            src={featured?.thumbnail}
+            alt={featured?.title || 'Current track'}
+            className="dynamic-hero-art"
+            eager
+          />
+        </div>
+        <div className="dynamic-hero-text">
+          <span className="dynamic-tagline">{tagline}</span>
+          <h1 className="dynamic-title">{featured?.title || 'Select a song to start'}</h1>
+          <p className="dynamic-artist">{artistLine}</p>
+          {albumLine ? <p className="dynamic-album">{albumLine}</p> : null}
+          <div className="dynamic-hero-actions">
+            <button
+              type="button"
+              className="dynamic-play-btn"
+              onClick={playPause}
+              aria-label={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? (
+                <><Pause size={16} fill="currentColor" />Pause</>
+              ) : (
+                <><Play size={16} fill="currentColor" />Play</>
+              )}
+            </button>
+            <button type="button" className="cinematic-btn" onClick={startRadio}>
+              <Radio size={15} />
+              <span>Radio</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Jump back in grid                                                   */
+/* ------------------------------------------------------------------ */
+
+function QuickAccess({ recent }: { recent: Track[] }) {
+  const navigate = useNavStore((state) => state.navigate);
+  const items = recent.slice(0, 6);
+
+  if (!items.length) return null;
 
   const createMix = () => {
-    const downloaded = library.downloads
-      .filter((item) => item.status === 'done')
-      .map((item) => item.track);
+    const library = useAppStore.getState().library;
+    const downloaded = library.downloads.filter((item) => item.status === 'done').map((item) => item.track);
     const pool = uniqueTracks([...library.liked, ...recent, ...downloaded]);
     if (!pool.length) {
       toast('Play or like a few songs first, then Auralis can build a mix.', 'info');
@@ -55,75 +172,149 @@ function QuickAccess() {
     toast(`Created a ${mix.length}-song mix from your library.`, 'success');
   };
 
-  const nudge = (direction: -1 | 1) => {
-    carouselRef.current?.scrollBy({ left: direction * Math.max(260, carouselRef.current.clientWidth * 0.7), behavior: 'smooth' });
-  };
-
-  if (!recent.length) return null;
   return (
-    <section className="quick-access">
-      <div className="section-heading">
+    <section className="jump-back-section">
+      <div className="jump-back-head">
         <div>
-          <h2>Jump back in</h2>
-          <span className="section-subtitle">Your recent listening, ready when you are.</span>
+          <div className="jump-back-title">
+            <h2>Jump Back In</h2>
+            <span className="jump-back-badge">Recent</span>
+          </div>
+          <p className="jump-back-sub">Pick up right where you left your headphones</p>
         </div>
-        <div className="section-heading-actions">
+        <div className="jump-back-actions">
+          <button
+            type="button"
+            className="sync-btn"
+            onClick={() => toast('Synchronizing with YouTube Music library...', 'info')}
+          >
+            Sync YouTube Library
+          </button>
+          <button type="button" className="see-all-link" onClick={() => navigate({ page: 'recent' })}>
+            See all ({items.length})
+          </button>
           <Button variant="ghost" size="sm" icon={<Sparkles size={15} />} onClick={createMix}>
             Create a Mix
           </Button>
-          <button type="button" className="text-button" onClick={() => navigate({ page: 'recent' })}>
-            See all
-          </button>
         </div>
       </div>
-      <div className="quick-carousel-wrap">
-        <button type="button" className="quick-carousel-arrow is-left" aria-label="Scroll recent songs left" onClick={() => nudge(-1)}>
-          ‹
-        </button>
-        <div ref={carouselRef} className="quick-grid" role="list" aria-label="Recently played songs">
-          {recent.map((track, index) => (
+      <div className="jump-back-grid">
+        {items.map((track, index) => (
+          <div
+            key={track.id}
+            className="jump-back-card"
+            onClick={() => usePlayerStore.getState().playQueue(items, index)}
+          >
+            <Artwork src={track.thumbnail} alt={track.title} className="jump-back-cover" />
+            <div className="jump-back-meta">
+              <h4>{track.title}</h4>
+              <p>{track.artists.map((a) => a.name).join(', ')}</p>
+              <span className="sub">{track.duration > 0 ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : ''} • Track</span>
+            </div>
             <button
               type="button"
-              role="listitem"
-              key={track.id}
-              className="quick-card"
-              onClick={() => usePlayerStore.getState().playQueue(recent, index)}
-              onMouseEnter={() => prefetch(track)}
-              onFocus={() => prefetch(track)}
+              className="jump-back-play"
+              onClick={(e) => {
+                e.stopPropagation();
+                usePlayerStore.getState().playQueue(items, index);
+              }}
+              aria-label={`Play ${track.title}`}
             >
-              <Artwork src={track.thumbnail} alt={track.title} className="quick-art" />
-              <span className="quick-text">
-                <span className="quick-title">{track.title}</span>
-                <span className="quick-artist">{track.artists.map((artist) => artist.name).join(', ')}</span>
-              </span>
-              <span className="quick-play">
-                <Play size={15} fill="currentColor" />
-              </span>
+              <Play size={16} fill="currentColor" />
             </button>
-          ))}
-        </div>
-        <button type="button" className="quick-carousel-arrow is-right" aria-label="Scroll recent songs right" onClick={() => nudge(1)}>
-          ›
-        </button>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
 export function HomePage() {
   const { data, loading, error, reload } = useAsync(() => window.auralis.yt.home(), []);
+  const { data: charts } = useAsync(() => window.auralis.yt.charts(), []);
+  const { data: newReleases } = useAsync(() => window.auralis.yt.newReleases(), []);
   const [extraShelves, setExtraShelves] = useState<ShelfType[]>([]);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
-  const navigate = useNavStore((state) => state.navigate);
-  const liked = useAppStore((state) => state.library.liked);
   const recent = useAppStore((state) => state.library.recent);
+  const personalization = useAppStore((state) => state.settings.personalization);
+  const { t } = useTranslation();
+
+  const {
+    data: favoriteArtistsCards,
+    loading: artistsLoading,
+  } = useAsync(
+    () =>
+      personalization.onboardingCompleted
+        ? fetchPersonalizedArtists(personalization.favoriteArtists)
+        : Promise.resolve<Card[]>([]),
+    [personalization.onboardingCompleted, personalization.favoriteArtists],
+  );
+  const {
+    data: tasteTracks,
+    loading: tasteLoading,
+  } = useAsync(
+    () =>
+      personalization.onboardingCompleted
+        ? fetchPersonalizedTracks(personalization.preferredGenres, [])
+        : Promise.resolve<Track[]>([]),
+    [personalization.onboardingCompleted, personalization.preferredGenres],
+  );
+  const {
+    data: similarArtistsCards,
+    loading: similarLoading,
+  } = useAsync(
+    () =>
+      personalization.onboardingCompleted
+        ? fetchSimilarArtists(personalization.preferredGenres, personalization.favoriteArtists)
+        : Promise.resolve<Card[]>([]),
+    [personalization.onboardingCompleted, personalization.preferredGenres, personalization.favoriteArtists],
+  );
+  const {
+    data: recommendedTracks,
+    loading: recommendedLoading,
+  } = useAsync(
+    () =>
+      personalization.onboardingCompleted
+        ? fetchPersonalizedTracks([], personalization.favoriteArtists)
+        : Promise.resolve<Track[]>([]),
+    [personalization.onboardingCompleted, personalization.favoriteArtists],
+  );
+  const {
+    data: trendingTracks,
+    loading: trendingLoading,
+  } = useAsync(
+    () =>
+      personalization.onboardingCompleted
+        ? fetchTrendingInGenres(personalization.preferredGenres)
+        : Promise.resolve<Track[]>([]),
+    [personalization.onboardingCompleted, personalization.preferredGenres],
+  );
+
+  const personalizedLoading = artistsLoading || tasteLoading || similarLoading || recommendedLoading || trendingLoading;
 
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
 
-  const tracks = tracksFromPage(data);
-  const shelves = [...(data?.shelves || []), ...extraShelves];
+  const tracks = tracksFromPage(data).filter((track) => !track.isVideo && track.type !== 'video');
+
+  const hotShelves = charts
+    ? charts.shelves
+        .slice(0, 1)
+        .map((shelf) => ({ ...shelf, title: 'Hot Picks Worldwide', subtitle: 'Top tracks across the globe right now' }))
+    : [];
+
+  const trendyShelves = newReleases
+    ? newReleases.shelves
+        .slice(0, 1)
+        .map((shelf) => ({ ...shelf, title: 'Trendy Right Now', subtitle: 'New releases landing globally' }))
+    : [];
+
+  const shelves = withoutVideos([...hotShelves, ...trendyShelves, ...(data?.shelves || []), ...extraShelves]);
 
   const loadMore = async () => {
     const next = continuation || data?.continuation;
@@ -132,86 +323,75 @@ export function HomePage() {
     try {
       const page = await window.auralis.yt.home(next);
       const titles = new Set(shelves.map((shelf) => shelf.title));
-      setExtraShelves([...extraShelves, ...page.shelves.filter((shelf) => !shelf.title || !titles.has(shelf.title))]);
+      const nextShelves = withoutVideos(page.shelves).filter((shelf) => !shelf.title || !titles.has(shelf.title));
+      setExtraShelves([...extraShelves, ...nextShelves]);
       setContinuation(page.continuation);
     } finally {
       setLoadingMore(false);
     }
   };
 
-  const shuffleLibrary = () => {
-    const pool = liked.length ? liked : recent;
-    if (!pool.length) {
-      navigate({ page: 'explore' });
-      return;
-    }
-    usePlayerStore.getState().playQueue(shuffleArray(pool), 0);
-  };
-
-  const heroTracks = tracks.slice(0, 4);
+  function TrackShelf({ title, tracks }: { title: string; tracks: Track[] }) {
+    if (!tracks.length) return null;
+    const items = tracks.map((track) => trackCard(track));
+    return <Shelf shelf={{ title, items, style: 'carousel' }} />;
+  }
 
   return (
     <div className="page home-page">
-      <section className="home-hero">
-        <div className="home-hero-copy">
-          <span className="eyebrow">
-            <Sparkles size={14} /> Made for {new Date().toLocaleDateString(undefined, { weekday: 'long' })}
-          </span>
-          <h1>{greeting()}</h1>
-          <p className="home-tagline">{homeTagline}</p>
-          <p className="home-hero-subline">Your music, your mood. Pick up where you left off or let Auralis find something new.</p>
-          <div className="home-hero-actions">
-            <Button variant="primary" icon={<Play size={17} fill="currentColor" />} onClick={shuffleLibrary}>
-              Shuffle my library
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<Radio size={17} />}
-              onClick={() => {
-                if (heroTracks[0]) usePlayerStore.getState().startRadio(heroTracks[0]);
-                else navigate({ page: 'explore' });
-              }}
-            >
-              Start a radio
-            </Button>
-            <Button variant="ghost" icon={<Compass size={17} />} onClick={() => navigate({ page: 'explore' })}>
-              Explore
-            </Button>
-          </div>
-        </div>
-        <div className="home-hero-art" aria-hidden="true">
-          {heroTracks.length ? (
-            heroTracks.map((track, index) => (
-              <Artwork
-                key={`${track.id}-${index}`}
-                src={track.thumbnail}
-                alt={track.title}
-                className={`hero-tile hero-tile-${index + 1}`}
-              />
-            ))
-          ) : (
-            <div className="hero-tile hero-tile-placeholder">
-              <img src="./icon.png" alt="" />
-            </div>
-          )}
-        </div>
-      </section>
+      <DynamicHero tracks={tracks.length ? tracks : recent} />
 
-      <QuickAccess />
-
-      <div className="quick-actions-row">
-        <button type="button" className="pill-action" onClick={() => navigate({ page: 'library', tab: 'youtube' })}>
-          <Play size={15} /> Your YouTube library
-        </button>
-      </div>
+      <QuickAccess recent={recent.length ? uniqueTracks([...recent, ...tracks]) : tracks} />
 
       <div className="shelf-stack">
-        {shelves.map((shelf, index) => (
-          <Shelf key={`${shelf.title}-${index}`} shelf={shelf} />
-        ))}
+        {personalization.onboardingCompleted ? (
+          <>
+            {favoriteArtistsCards?.length ? (
+              <Shelf
+                shelf={{
+                  title: t('home.yourFavouriteArtists'),
+                  items: favoriteArtistsCards,
+                  style: 'grid',
+                }}
+              />
+            ) : null}
+            <TrackShelf title={t('home.basedOnYourTaste')} tracks={tasteTracks || []} />
+            {similarArtistsCards?.length ? (
+              <Shelf
+                shelf={{
+                  title: t('home.discoverSimilarArtists'),
+                  items: similarArtistsCards,
+                  style: 'grid',
+                }}
+              />
+            ) : null}
+            <TrackShelf title={t('home.recommendedForYou')} tracks={recommendedTracks || []} />
+            <TrackShelf title={t('home.trendingInYourGenres')} tracks={trendingTracks || []} />
+            {personalizedLoading && (
+              <div className="shelf-row" style={{ opacity: 0.5, pointerEvents: 'none' }}>
+                <span className="skeleton" style={{ width: 120, height: 20, display: 'inline-block', marginRight: 12 }} />
+                <span className="skeleton" style={{ width: 200, height: 16, display: 'inline-block' }} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {shelves.map((shelf, index) => {
+              const isTrending = shelf.title === 'Trendy Right Now' || shelf.title === 'Hot Picks Worldwide';
+              return (
+                <Shelf
+                  key={`${shelf.title}-${index}`}
+                  shelf={shelf}
+                  row={isTrending}
+                  maxItems={isTrending ? 20 : undefined}
+                />
+              );
+            })}
+          </>
+        )}
       </div>
 
-      {data?.continuation || continuation ? (
+      {!personalization.onboardingCompleted && (data?.continuation || continuation) ? (
         <div className="load-more-row">
           <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
             {loadingMore ? 'Loading…' : 'Show more'}

@@ -33,9 +33,19 @@ export function downloadsDir(): string {
   return path.join(userDataDir(), 'offline');
 }
 
+/**
+ * TESTING MODE: when true, the complete onboarding flow is shown on every
+ * launch (for repeated testing of the selection process). Only the
+ * onboarding completion flag is reset — accounts, playlists, favourites,
+ * listening history and all other data are untouched.
+ *
+ * To restore normal first-time-only behaviour, set this back to `false`.
+ */
+export const ALWAYS_SHOW_ONBOARDING = false;
+
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#8ab4f8',
+  accent: '#28b463',
   language: 'en',
   region: 'US',
   startPage: 'home',
@@ -73,6 +83,12 @@ export const DEFAULT_SETTINGS: Settings = {
     openaiApiKey: '',
     openaiModel: 'gpt-4o-mini',
   },
+  recognition: {
+    acrcloudHost: '',
+    acrcloudAccessKey: '',
+    acrcloudAccessSecret: '',
+  },
+  notificationsRead: [],
   downloadDir: downloadsDir(),
   downloadQuality: 'best',
   autoDownloadLiked: false,
@@ -96,6 +112,12 @@ export const DEFAULT_SETTINGS: Settings = {
   hardwareAcceleration: true,
   scrobbleThreshold: 0.5,
   sidebarCollapsed: false,
+  personalization: {
+    onboardingCompleted: false,
+    preferredGenres: [],
+    favoriteArtists: [],
+    uiLanguage: 'en',
+  },
 };
 
 const DEFAULT_LIBRARY: LibraryData = {
@@ -230,6 +252,15 @@ export const settingsStore = new JsonFile<Settings>(path.join(userDataDir(), 'se
   }
   merged.volume = Math.min(1, Math.max(0, Number(merged.volume) || 0));
   merged.playbackRate = Math.min(2, Math.max(0.5, Number(merged.playbackRate) || 1));
+  // TESTING MODE (see ALWAYS_SHOW_ONBOARDING): always present the onboarding
+  // flow on launch so preferences can be re-tested. Library, history,
+  // playlists and downloads are never touched by this.
+  if (ALWAYS_SHOW_ONBOARDING && merged.personalization) {
+    merged.personalization.onboardingCompleted = false;
+  }
+  // The original default accent was a blue tint. Migrate profiles that never
+  // changed the accent to the Auralis green identity.
+  if (!merged.accent || String(merged.accent).toLowerCase() === '#8ab4f8') merged.accent = '#28b463';
   return normalizePlatformSettings(merged);
 });
 

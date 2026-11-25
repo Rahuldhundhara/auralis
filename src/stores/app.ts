@@ -55,7 +55,7 @@ interface AppState {
 
 const EMPTY_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#8ab4f8',
+  accent: '#28b463',
   language: 'en',
   region: 'US',
   startPage: 'home',
@@ -79,6 +79,12 @@ const EMPTY_SETTINGS: Settings = {
     openaiApiKey: '',
     openaiModel: 'gpt-4o-mini',
   },
+  recognition: {
+    acrcloudHost: '',
+    acrcloudAccessKey: '',
+    acrcloudAccessSecret: '',
+  },
+  notificationsRead: [],
   downloadDir: '',
   downloadQuality: 'best',
   autoDownloadLiked: false,
@@ -90,6 +96,12 @@ const EMPTY_SETTINGS: Settings = {
   hardwareAcceleration: true,
   scrobbleThreshold: 0.5,
   sidebarCollapsed: false,
+  personalization: {
+    onboardingCompleted: false,
+    preferredGenres: [],
+    favoriteArtists: [],
+    uiLanguage: 'en',
+  },
 };
 
 const EMPTY_LIBRARY: LibraryData = {
@@ -123,14 +135,14 @@ export function applyAppearance(settings: Settings) {
   const theme = resolvedTheme(settings.theme);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
-  const accent = settings.accent || '#8ab4f8';
+  const accent = settings.accent || '#28b463';
   document.documentElement.style.setProperty('--accent', accent);
-  const rgb = hexToRgb(accent) || [138, 180, 248];
+  const rgb = hexToRgb(accent) || [63, 220, 134];
   document.documentElement.style.setProperty('--accent-rgb', rgb.join(', '));
   const luminance = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
   document.documentElement.style.setProperty('--accent-contrast', luminance > 0.62 ? '#101014' : '#ffffff');
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'light' ? '#f7f6fa' : '#0b0b10');
+  if (meta) meta.setAttribute('content', theme === 'light' ? '#f2f6f1' : '#040604');
 }
 
 let initialized = false;

@@ -27,6 +27,87 @@ interface ProviderOutput {
   lines: LyricsLine[];
 }
 
+type LyricWord = NonNullable<LyricsLine['words']>[number];
+
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
+
+/** True when two adjacent word tokens need a visible space between them. */
+function wordNeedsSpace(previous: string, next: string): boolean {
+  if (!previous || !next) return false;
+  if (/\s$/.test(previous) || /^\s/.test(next)) return false;
+  // Punctuation attaches to the word before it; opening brackets attach after.
+  if (/^[,.;:!?%)\]}\u2019\u201d]/.test(next)) return false;
+  if (/[(\[{\u2018\u201c]$/.test(previous)) return false;
+  // CJK scripts do not use inter-word spaces.
+  if (CJK_RE.test(previous) || CJK_RE.test(next)) return false;
+  return true;
+}
+
+/**
+ * Word-level providers split a line into syllable tokens and rarely share a
+ * boundary convention. Guessing from gaps or trailing spaces alone produces
+ * garbage like "e nough" and "Ibeen". Every provider also ships the plain
+ * line text, so the exact boundaries are derived from it by walking the
+ * tokens against the text. Fall back to heuristics when they do not line up.
+ */
+function alignWordBoundaries(words: LyricWord[], text: string): boolean {
+  let cursor = 0;
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index];
+    if (!word.text) return false;
+    const found = text.indexOf(word.text, cursor);
+    if (found === -1) return false;
+    cursor = found + word.text.length;
+    let end = cursor;
+    while (end < text.length && text[end] === ' ') end++;
+    word.space = index < words.length - 1 && end > cursor;
+    cursor = end;
+  }
+  return true;
+}
+
+/** Normalise a syllable list against the plain line text. */
+function normalizeWords(
+  words: LyricWord[],
+  rawText: string,
+): { words: LyricWord[] | undefined; text: string } {
+  const text = rawText.replace(/\s+/g, ' ').trim();
+  const cleaned = words
+    .map((word) => ({ ...word, text: String(word.text || '').replace(/\s+/g, ' ').trim() }))
+    .filter((word) => word.text.length > 0);
+  if (!cleaned.length) return { words: undefined, text };
+  if (text && alignWordBoundaries(cleaned, text)) {
+    return { words: cleaned, text };
+  }
+  // Fall back to heuristics: trust explicit space flags, else add spaces.
+  const hasSignals = cleaned.some((word) => word.space === true);
+  for (let index = 1; index < cleaned.length; index++) {
+    const previous = cleaned[index - 1];
+    previous.space = hasSignals
+      ? Boolean(previous.space)
+      : wordNeedsSpace(previous.text, cleaned[index].text);
+  }
+  return { words: cleaned, text: wordsToText(cleaned) };
+}
+
+function wordsToText(words: LyricWord[]): string {
+  let out = '';
+  for (let index = 0; index < words.length; index++) {
+    if (index > 0 && words[index - 1].space) out += ' ';
+    out += words[index].text;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeAgent(singer: string | undefined): string | undefined {
+  const value = String(singer || '').trim();
+  if (!value) return undefined;
+  // Apple Music / AMLL use bare ids such as "v1", "bgm" — they are internal
+  // identifiers, not names worth showing.
+  if (/^(v\d+|bgm?|bg|background|duet)$/i.test(value)) return undefined;
+  return value;
+}
+
 const API_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
   Accept: 'application/json, text/plain, */*',
@@ -79,6 +160,10 @@ export function parseLrc(raw: string): LyricsLine[] {
   const lines: LyricsLine[] = [];
   const timeRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
   const wordRe = /<([^<>|]+):(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)(?::([01]))?>/g;
+  // LRC files may carry a global `[offset:+/-ms]` adjustment. A positive
+  // value shifts every timestamp later, which is how most players read it.
+  const offsetMatch = (raw || '').match(/\[offset:\s*([+-]?\d+)\s*\]/i);
+  const offset = offsetMatch ? Number(offsetMatch[1]) / 1000 : 0;
   const sorted = (raw || '').replace(/\r\n/g, '\n').split('\n');
   for (const original of sorted) {
     const stamps: number[] = [];
@@ -89,7 +174,7 @@ export function parseLrc(raw: string): LyricsLine[] {
       const minutes = Number(match[1]);
       const seconds = Number(match[2]);
       const fraction = match[3] ? Number(match[3].padEnd(3, '0')) : 0;
-      stamps.push(minutes * 60 + seconds + fraction / 1000);
+      stamps.push(Math.max(0, minutes * 60 + seconds + fraction / 1000 + offset));
       lastIndex = timeRe.lastIndex;
     }
     if (!stamps.length) continue;
@@ -109,20 +194,28 @@ export function parseLrc(raw: string): LyricsLine[] {
     }
     const words: NonNullable<LyricsLine['words']> = [];
     wordRe.lastIndex = 0;
-    let wordMatch: RegExpExecArray | null;
-    while ((wordMatch = wordRe.exec(text))) {
+    const wordMatches = Array.from(text.matchAll(wordRe));
+    for (let index = 0; index < wordMatches.length; index++) {
+      const wordMatch = wordMatches[index];
+      const start = wordMatch.index ?? 0;
+      const end = start + wordMatch[0].length;
+      const gap = index === 0 ? '' : text.slice((wordMatches[index - 1].index ?? 0) + wordMatches[index - 1][0].length, start);
       words.push({
         text: wordMatch[1],
-        start: Number(wordMatch[2]),
-        end: Number(wordMatch[3]),
+        start: Math.max(0, Number(wordMatch[2]) + offset),
+        end: Math.max(0, Number(wordMatch[3]) + offset),
+        space: /\s/.test(gap) ? true : undefined,
       });
     }
-    if (words.length) text = words.map((w) => w.text).join('');
+    const rawText = text.replace(wordRe, '').trim();
+    const normalized = normalizeWords(words, rawText);
+    const normalizedWords = normalized.words;
+    text = normalized.text;
     for (const time of stamps) {
       lines.push({
         time,
         text,
-        words: words.length ? words : undefined,
+        words: normalizedWords,
         agent,
         background: background || undefined,
       });
@@ -142,6 +235,17 @@ function plainToLines(raw: string): LyricsLine[] {
     .map((text) => ({ time: 0, text }));
 }
 
+/**
+ * A provider can claim to be synced while only a handful of lines carry
+ * timestamps (for example when a parser misses one timestamp format). Treat
+ * that as unsynced so the panel never highlights the wrong line.
+ */
+function isSynced(lines: LyricsLine[]): boolean {
+  if (lines.length < 2) return false;
+  const timed = lines.reduce((count, line) => count + (line.time > 0 ? 1 : 0), 0);
+  return timed >= 2 && timed / lines.length >= 0.6;
+}
+
 /** Basic TTML parser (line and word timing). */
 export function parseTtml(raw: string): LyricsLine[] {
   if (!raw) return [];
@@ -151,26 +255,33 @@ export function parseTtml(raw: string): LyricsLine[] {
   while ((match = pRe.exec(raw))) {
     const attrs = match[1];
     const body = match[2];
-    const begin = Number((attrs.match(/\bbegin="([^"]+)"/) || [])[1]) || 0;
-    const end = Number((attrs.match(/\bend="([^"]+)"/) || [])[1]) || 0;
+    const beginRaw = (attrs.match(/\bbegin="([^"]+)"/) || [])[1];
+    const endRaw = (attrs.match(/\bend="([^"]+)"/) || [])[1];
+    const begin = beginRaw ? timeToSeconds(beginRaw) : 0;
+    const end = endRaw ? timeToSeconds(endRaw) : 0;
     const spans: NonNullable<LyricsLine['words']> = [];
     const spanRe = /<span\b([^>]*)>([\s\S]*?)<\/span>/gi;
-    let span: RegExpExecArray | null;
-    while ((span = spanRe.exec(body))) {
+    const spanMatches = Array.from(body.matchAll(spanRe));
+    for (let index = 0; index < spanMatches.length; index++) {
+      const span = spanMatches[index];
       const sAttrs = span[1];
       const text = span[2].replace(/<[^>]+>/g, '');
       if (!text.trim()) continue;
+      const start = span.index ?? 0;
+      const gap = index === 0 ? '' : body.slice((spanMatches[index - 1].index ?? 0) + spanMatches[index - 1][0].length, start);
       const sBegin = (sAttrs.match(/\bbegin="([^"]+)"/) || [])[1];
       const sEnd = (sAttrs.match(/\bend="([^"]+)"/) || [])[1];
       spans.push({
         text,
-        start: sBegin ? timeToSeconds(sBegin) : begin,
-        end: sEnd ? timeToSeconds(sEnd) : end,
+        start: Math.max(0, sBegin ? timeToSeconds(sBegin) : begin),
+        end: Math.max(0, sEnd ? timeToSeconds(sEnd) : end),
+        space: /\s/.test(gap) ? true : undefined,
       });
     }
-    const text = body.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
+    const plain = body.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
+    const { words: normalized, text } = normalizeWords(spans, plain);
     if (!text) continue;
-    lines.push({ time: begin, text, words: spans.length ? spans : undefined });
+    lines.push({ time: Math.max(0, begin), text, words: normalized });
   }
   if (!lines.length) return plainToLines(raw.replace(/<[^>]+>/g, ''));
   lines.sort((a, b) => a.time - b.time);
@@ -211,7 +322,7 @@ async function fromBetterLyrics(track: Track): Promise<ProviderOutput | null> {
   if (!ttml) return null;
   const lines = parseTtml(ttml);
   if (!lines.length) return null;
-  return { provider: 'BetterLyrics', raw: ttml, synced: lines.some((l) => l.time > 0), lines };
+  return { provider: 'BetterLyrics', raw: ttml, synced: isSynced(lines), lines };
 }
 
 async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
@@ -236,15 +347,17 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
               text: String(w.text),
               start: Number(w.time || 0) / 1000,
               end: (Number(w.time || 0) + Number(w.duration || 0)) / 1000,
+              space: /\s$/.test(String(w.text)) ? true : undefined,
             }))
         : undefined;
+      const { words: normalized, text } = normalizeWords(words ?? [], String(item.text || ''));
       return {
         time: Number(item.time || 0) / 1000,
-        text: String(item.text || words?.map((w: { text: string }) => w.text).join('') || '').trim(),
-        words: words?.length ? words : undefined,
+        text: text || String(item.text || '').trim(),
+        words: normalized,
         translation: item.translation?.text || undefined,
         romanized: item.transliteration?.text || undefined,
-        agent: item.element?.singer || undefined,
+        agent: normalizeAgent(item.element?.singer),
         background: Boolean(item.syllabus?.some((w: any) => w.isBackground)),
       };
     }).filter((line: LyricsLine) => line.text);
@@ -252,7 +365,7 @@ async function fromLyricsPlus(track: Track): Promise<ProviderOutput | null> {
     return {
       provider: 'LyricsPlus',
       raw: JSON.stringify(json).slice(0, 200_000),
-      synced: String(json?.type || '').toLowerCase() === 'word' || lines.some((l) => l.time > 0),
+      synced: isSynced(lines),
       lines,
     };
   }
@@ -278,10 +391,17 @@ async function fromLrcLib(track: Track): Promise<ProviderOutput | null> {
     }
   }
   if (!json || json.instrumental) return null;
-  const raw = json.syncedLyrics || json.plainLyrics;
+  let raw = json.syncedLyrics || json.plainLyrics;
   if (!raw) return null;
-  const synced = Boolean(json.syncedLyrics);
-  const lines = synced ? parseLrc(raw) : plainToLines(raw);
+  let lines = json.syncedLyrics ? parseLrc(json.syncedLyrics) : [];
+  let synced = isSynced(lines);
+  if (!synced && json.plainLyrics) {
+    const plainLines = plainToLines(json.plainLyrics);
+    if (plainLines.length) {
+      lines = plainLines;
+      raw = json.plainLyrics;
+    }
+  }
   if (!lines.length) return null;
   return { provider: 'LrcLib', raw, synced, lines };
 }
@@ -305,7 +425,7 @@ async function fromKuGou(track: Track): Promise<ProviderOutput | null> {
   }
   const lines = parseLrc(text);
   if (!lines.length) return null;
-  return { provider: 'KuGou', raw: text, synced: true, lines };
+  return { provider: 'KuGou', raw: text, synced: isSynced(lines), lines };
 }
 
 async function fromZemer(track: Track): Promise<ProviderOutput | null> {
@@ -324,7 +444,7 @@ async function fromZemer(track: Track): Promise<ProviderOutput | null> {
     if (!raw) continue;
     const lines = /\[\d{1,3}:\d{2}/.test(raw) ? parseLrc(raw) : plainToLines(raw);
     if (lines.length) {
-      return { provider: 'Zemer', raw, synced: lines.some((l) => l.time > 0), lines };
+      return { provider: 'Zemer', raw, synced: isSynced(lines), lines };
     }
   }
   return null;
@@ -335,7 +455,7 @@ async function fromYouTubeSubtitle(track: Track): Promise<ProviderOutput | null>
   if (!raw) return null;
   const lines = parseLrc(raw);
   if (!lines.length) return null;
-  return { provider: 'YouTubeSubtitle', raw, synced: true, lines };
+  return { provider: 'YouTubeSubtitle', raw, synced: isSynced(lines), lines };
 }
 
 const PROVIDERS: Record<string, (track: Track) => Promise<ProviderOutput | null>> = {

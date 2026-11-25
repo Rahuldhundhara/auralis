@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
-  ChevronUp,
+  Download,
+  FolderCheck,
   Heart,
-  ListMusic,
   Loader2,
   MicVocal,
   MoreHorizontal,
@@ -13,6 +13,7 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  Speaker,
   Timer,
   Volume1,
   Volume2,
@@ -21,35 +22,85 @@ import {
 import type { Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
-import { usePlayerStore } from '../stores/player';
-import { useUiStore, type MenuItem } from '../stores/ui';
+import { beginSeekDrag, endSeekDrag, usePlayerStore } from '../stores/player';
+import { toast, useUiStore, type MenuItem } from '../stores/ui';
 import { artistsLine, formatDuration } from '../lib/format';
-import { showTrackMenu, toggleLikeTrack } from '../lib/actions';
+import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton, Range } from './primitives';
 
-export function SeekBar({ compact = false }: { compact?: boolean }) {
+export function SeekBar({ compact = false, remaining = false }: { compact?: boolean; remaining?: boolean }) {
   const position = usePlayerStore((state) => state.position);
   const duration = usePlayerStore((state) => state.duration);
   const buffered = usePlayerStore((state) => state.buffered);
   const loading = usePlayerStore((state) => state.loading);
   const seek = usePlayerStore((state) => state.seek);
+  const [localPos, setLocalPos] = useState<number | null>(null);
+  const dragPos = useRef<number | null>(null);
+  // True only between pointerdown and pointerup/cancel of an actual drag.
+  // Keyboard (or other non-drag input) also fires onValueChange, but never
+  // sets this — see the release effect below.
+  const draggingRef = useRef(false);
   const safeDuration = duration > 0 ? duration : 1;
+  const displayedPos = localPos ?? position;
+
+  // While the user is dragging, the thumb follows `localPos` (the finger),
+  // never the store position, so re-renders from playback events can never
+  // move or abort the native drag.
+  const handleSeek = (newPos: number) => {
+    dragPos.current = newPos;
+    setLocalPos(newPos);
+    seek(newPos);
+  };
+  const startDrag = () => {
+    draggingRef.current = true;
+    dragPos.current = null;
+    beginSeekDrag();
+  };
+  const endDrag = () => {
+    // Re-stamp the exact final pointer value on release. `localPos` state can
+    // lag the last input event by one render; the ref cannot.
+    const target = dragPos.current;
+    dragPos.current = null;
+    if (target !== null) seek(target);
+    setLocalPos(null);
+    draggingRef.current = false;
+    endSeekDrag();
+  };
+
+  // Release a keyboard (or other non-drag) transient as soon as the store has
+  // converged on it. Without this, `localPos` stays pinned forever — the thumb
+  // and time labels freeze at the previous track's position even after the
+  // store resets for the next track. Never releases mid-drag, so slow drags
+  // cannot jump.
+  useEffect(() => {
+    if (localPos === null || draggingRef.current) return;
+    if (Math.abs(position - localPos) <= 1.5) {
+      dragPos.current = null;
+      setLocalPos(null);
+    }
+  }, [localPos, position]);
+
   return (
     <div className={`seek-bar ${compact ? 'is-compact' : ''}`}>
-      {!compact ? <span className="time">{formatDuration(position)}</span> : null}
+      {!compact ? <span className="time">{formatDuration(displayedPos)}</span> : null}
       <Range
         className="seek-range"
         min={0}
         max={safeDuration}
         step={0.25}
-        value={Math.min(position, safeDuration)}
-        buffer={Math.max(position, Math.min(buffered, safeDuration))}
-        onValueChange={seek}
+        value={Math.min(displayedPos, safeDuration)}
+        buffer={Math.max(displayedPos, Math.min(buffered, safeDuration))}
+        onValueChange={handleSeek}
+        onPointerDown={startDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         aria-label="Seek"
-        aria-valuetext={`${formatDuration(position)} of ${formatDuration(duration)}`}
-        disabled={loading || duration <= 0}
+        aria-valuetext={`${formatDuration(displayedPos)} of ${formatDuration(duration)}`}
+        disabled={duration <= 0 || (loading && localPos === null)}
       />
-      {!compact ? <span className="time">{formatDuration(duration)}</span> : null}
+      {!compact ? (
+        <span className="time">{remaining ? `-${formatDuration(Math.max(0, duration - displayedPos))}` : formatDuration(duration)}</span>
+      ) : null}
     </div>
   );
 }
@@ -59,6 +110,39 @@ function MiniProgress() {
   const duration = usePlayerStore((state) => state.duration);
   const buffered = usePlayerStore((state) => state.buffered);
   const seek = usePlayerStore((state) => state.seek);
+  const [localPos, setLocalPos] = useState<number | null>(null);
+  const dragPos = useRef<number | null>(null);
+  const draggingRef = useRef(false);
+  const displayedPos = localPos ?? position;
+  // Same drag discipline as SeekBar: while the thumb is under the user's
+  // finger it follows `localPos`, so store races can never move or abort the
+  // native drag. Released on pointer up / cancel, or once the store has
+  // converged for non-drag input (keyboard).
+  const handleSeek = (newPos: number) => {
+    dragPos.current = newPos;
+    setLocalPos(newPos);
+    seek(newPos);
+  };
+  const startDrag = () => {
+    draggingRef.current = true;
+    dragPos.current = null;
+    beginSeekDrag();
+  };
+  const endDrag = () => {
+    const target = dragPos.current;
+    dragPos.current = null;
+    if (target !== null) seek(target);
+    setLocalPos(null);
+    draggingRef.current = false;
+    endSeekDrag();
+  };
+  useEffect(() => {
+    if (localPos === null || draggingRef.current) return;
+    if (Math.abs(position - localPos) <= 1.5) {
+      dragPos.current = null;
+      setLocalPos(null);
+    }
+  }, [localPos, position]);
   if (!duration || duration <= 0) return null;
   return (
     <Range
@@ -66,11 +150,14 @@ function MiniProgress() {
       min={0}
       max={duration}
       step={0.25}
-      value={Math.min(position, duration)}
-      buffer={Math.max(position, Math.min(buffered, duration))}
-      onValueChange={seek}
+      value={Math.min(displayedPos, duration)}
+      buffer={Math.max(displayedPos, Math.min(buffered, duration))}
+      onValueChange={handleSeek}
+      onPointerDown={startDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
       aria-label="Song progress"
-      aria-valuetext={`${formatDuration(position)} of ${formatDuration(duration)}`}
+      aria-valuetext={`${formatDuration(displayedPos)} of ${formatDuration(duration)}`}
     />
   );
 }
@@ -93,10 +180,10 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         onClick={() => usePlayerStore.getState().toggleShuffle()}
         disabled={!hasQueue}
       >
-        <Shuffle size={big ? 20 : 16} />
+        <Shuffle size={big ? 18 : 16} />
       </IconButton>
       <IconButton label="Previous" size={big ? 'lg' : 'md'} onClick={() => usePlayerStore.getState().previous()} disabled={!hasQueue}>
-        <SkipBack size={big ? 26 : 19} fill="currentColor" />
+        <SkipBack size={big ? 22 : 19} fill="currentColor" />
       </IconButton>
       <button
         type="button"
@@ -105,15 +192,15 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         onClick={() => usePlayerStore.getState().toggle()}
       >
         {loading || buffering ? (
-          <Loader2 size={big ? 30 : 22} className="spin" />
+          <Loader2 size={big ? 26 : 22} className="spin" />
         ) : playing ? (
-          <Pause size={big ? 30 : 22} fill="currentColor" />
+          <Pause size={big ? 26 : 22} fill="currentColor" />
         ) : (
-          <Play size={big ? 30 : 22} fill="currentColor" className="play-icon-offset" />
+          <Play size={big ? 26 : 22} fill="currentColor" className="play-icon-offset" />
         )}
       </button>
       <IconButton label="Next" size={big ? 'lg' : 'md'} onClick={() => usePlayerStore.getState().next()} disabled={!hasQueue}>
-        <SkipForward size={big ? 26 : 19} fill="currentColor" />
+        <SkipForward size={big ? 22 : 19} fill="currentColor" />
       </IconButton>
       <IconButton
         label={repeat === 'one' ? 'Repeat this song' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
@@ -122,7 +209,7 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         onClick={() => usePlayerStore.getState().cycleRepeat()}
         disabled={!hasQueue}
       >
-        {repeat === 'one' ? <Repeat1 size={big ? 20 : 16} /> : <Repeat size={big ? 20 : 16} />}
+        {repeat === 'one' ? <Repeat1 size={big ? 18 : 16} /> : <Repeat size={big ? 18 : 16} />}
       </IconButton>
     </div>
   );
@@ -135,8 +222,14 @@ export function VolumeControl() {
   const toggleMute = usePlayerStore((state) => state.toggleMute);
   const Icon = muted || volume === 0 ? VolumeX : volume < 0.45 ? Volume1 : Volume2;
   return (
-    <div className="volume-control">
-      <IconButton label={muted ? 'Unmute' : 'Mute'} size="sm" onClick={() => toggleMute()}>
+    <div className={`volume-control ${muted || volume === 0 ? 'is-muted' : ''}`}>
+      <IconButton
+        className="volume-toggle"
+        label={muted ? 'Unmute' : 'Mute'}
+        size="sm"
+        active={muted}
+        onClick={() => toggleMute()}
+      >
         <Icon size={18} />
       </IconButton>
       <Range
@@ -148,6 +241,17 @@ export function VolumeControl() {
         onValueChange={setVolume}
         aria-label="Volume"
       />
+      <IconButton
+        className="volume-max"
+        label="Set volume to maximum"
+        size="sm"
+        onClick={() => {
+          if (muted) toggleMute();
+          setVolume(1);
+        }}
+      >
+        <Volume2 size={17} />
+      </IconButton>
     </div>
   );
 }
@@ -193,25 +297,49 @@ function SleepTimerButton() {
   );
 }
 
-export function PlayerTrackInfo({ track, compact = false }: { track: Track; compact?: boolean }) {
+function PlayerLikeButton({ track }: { track: Track }) {
   const liked = useAppStore((state) => state.library.liked.some((item) => item.id === track.id));
-  const toggleLike = useAppStore((state) => state.toggleLike);
+  return (
+    <IconButton
+      label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
+      size="sm"
+      className={`player-like ${liked ? 'is-liked' : ''}`}
+      onClick={() => void toggleLikeTrack(track)}
+    >
+      <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
+    </IconButton>
+  );
+}
+
+function PlayerDownloadButton({ track }: { track: Track }) {
+  const downloads = useAppStore((state) => state.library.downloads);
+  const item = downloads.find((entry) => entry.track.id === track.id && entry.status === 'done');
+  return (
+    <IconButton
+      label={item ? 'Show downloaded file' : 'Download'}
+      size="sm"
+      className="player-download"
+      onClick={() => {
+        if (item?.path) void window.auralis.app.showItemInFolder(item.path);
+        else void downloadTrackAction(track);
+      }}
+    >
+      {item ? <FolderCheck size={18} /> : <Download size={18} />}
+    </IconButton>
+  );
+}
+
+export function PlayerTrackInfo({ track, compact = false }: { track: Track; compact?: boolean }) {
   const navigate = useNavStore((state) => state.navigate);
   return (
     <div className={`player-track-info ${compact ? 'is-compact' : ''}`}>
       <button
         type="button"
         className="player-art-button"
-        onClick={() => {
-          const ui = useUiStore.getState();
-          ui.setNowPlayingOpen(true, 'queue');
-        }}
+        onClick={() => useUiStore.getState().setNowPlayingOpen(true, 'lyrics')}
         title="Open now playing"
       >
         <Artwork src={track.thumbnail} alt={track.title} className="player-art" />
-        <span className="player-art-expand">
-          <ChevronUp size={18} />
-        </span>
       </button>
       <div className="player-track-text">
         <div className="player-title-line">
@@ -239,26 +367,12 @@ export function PlayerTrackInfo({ track, compact = false }: { track: Track; comp
             : 'Unknown artist'}
         </div>
       </div>
-      <IconButton
-        label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
-        size="sm"
-        className={liked ? 'is-liked' : ''}
-        onClick={() => void toggleLikeTrack(track)}
-      >
-        <Heart size={17} fill={liked ? 'currentColor' : 'none'} />
-      </IconButton>
     </div>
   );
 }
 
 export function PlayerBar() {
   const current = usePlayerStore((state) => state.current);
-  const queueOpen = useUiStore((state) => state.queueOpen);
-  const nowPlayingOpen = useUiStore((state) => state.nowPlayingOpen);
-  const nowPlayingTab = useUiStore((state) => state.nowPlayingTab);
-  const setQueueOpen = useUiStore((state) => state.setQueueOpen);
-  const setNowPlayingOpen = useUiStore((state) => state.setNowPlayingOpen);
-  const setNowPlayingTab = useUiStore((state) => state.setNowPlayingTab);
 
   if (!current) {
     return (
@@ -284,38 +398,29 @@ export function PlayerBar() {
       <MiniProgress />
       <div className="player-left">
         <PlayerTrackInfo track={current} />
+        <PlayerLikeButton track={current} />
+        <PlayerDownloadButton track={current} />
       </div>
       <div className="player-center">
         <TransportControls />
         <SeekBar />
       </div>
       <div className="player-right">
-        <SleepTimerButton />
         <IconButton
           label="Lyrics"
           size="sm"
-          active={nowPlayingOpen && nowPlayingTab === 'lyrics'}
-          onClick={() => {
-            setNowPlayingTab('lyrics');
-            setNowPlayingOpen(true, 'lyrics');
-          }}
+          onClick={() => useUiStore.getState().setNowPlayingOpen(true, 'lyrics')}
         >
           <MicVocal size={18} />
         </IconButton>
-        <IconButton label="Queue" size="sm" active={queueOpen} onClick={() => setQueueOpen(!queueOpen)}>
-          <ListMusic size={19} />
-        </IconButton>
         <IconButton
-          label="More options"
+          label="Connect device"
           size="sm"
-          onClick={(event) => showTrackMenu(current, event)}
+          onClick={() => toast('Connect to AirPlay / Spotify Connect speaker', 'info')}
         >
-          <MoreHorizontal size={19} />
+          <Speaker size={18} />
         </IconButton>
         <VolumeControl />
-        <IconButton label="Open now playing" size="sm" onClick={() => setNowPlayingOpen(true, 'queue')}>
-          <ChevronUp size={19} />
-        </IconButton>
       </div>
     </footer>
   );

@@ -18,12 +18,13 @@ import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { PlayerBar } from './components/PlayerBar';
-import { QueuePanel } from './components/QueuePanel';
 import { NowPlaying } from './components/NowPlaying';
 import { DialogHost } from './components/Dialogs';
 import { Splash } from './components/Splash';
 import { HomePage } from './pages/Home';
 import { ExplorePage } from './pages/Explore';
+import { PodcastsPage } from './pages/Podcasts';
+import { Onboarding } from './components/Onboarding';
 import { SearchPage } from './pages/Search';
 import { DetailPage } from './pages/Detail';
 import { LibraryPage } from './pages/Library';
@@ -105,6 +106,8 @@ function RouteView({ route }: { route: Route }) {
       return <DetailPage kind="artist" id={route.id} />;
     case 'podcast':
       return <DetailPage kind="podcast" id={route.id} />;
+    case 'podcasts':
+      return <PodcastsPage />;
     case 'browse':
       return <DetailPage kind="browse" id={route.id} params={route.params} title={route.title} />;
     case 'library':
@@ -144,7 +147,10 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const startApplied = useRef(false);
   const [splashDone, setSplashDone] = useState(false);
-  const showApp = ready && splashDone;
+  const onboardingCompleted = useAppStore((state) => state.settings.personalization.onboardingCompleted);
+  const onboardingOpen = useUiStore((state) => state.onboardingOpen);
+  const postSplash = ready && splashDone;
+  const showApp = postSplash && onboardingCompleted;
   const key = routeKey(route);
 
   useEffect(() => {
@@ -192,7 +198,6 @@ export default function App() {
         input?.focus();
         input?.select();
       } else if (event.key === 'Escape') {
-        useUiStore.getState().setQueueOpen(false);
         useUiStore.getState().setNowPlayingOpen(false);
       }
     };
@@ -235,10 +240,16 @@ export default function App() {
     if (!node) return;
     const saved = useScrollStore.getState().positions[key] ?? 0;
     node.scrollTop = saved;
-    const timer = window.setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = useScrollStore.getState().positions[key] ?? 0;
-    }, 90);
-    return () => window.clearTimeout(timer);
+    if (!saved) return;
+    // Correct once after paint only if the browser clamped the restore while
+    // the route was still mounting. A second timed assignment used to yank the
+    // viewport back 90ms later if the user had already started scrolling.
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollRef.current && Math.abs(scrollRef.current.scrollTop - saved) > 1) {
+        scrollRef.current.scrollTop = saved;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [key]);
 
   return (
@@ -263,13 +274,17 @@ export default function App() {
             </main>
           </div>
         </div>
+      ) : postSplash ? (
+        <Onboarding onComplete={() => useUiStore.getState().closeOnboarding()} editing={onboardingCompleted} />
       ) : (
         <Splash />
       )}
+      {showApp && onboardingOpen ? (
+        <Onboarding onComplete={() => useUiStore.getState().closeOnboarding()} editing />
+      ) : null}
       {showApp ? (
         <>
           <PlayerBar />
-          <QueuePanel />
           <NowPlaying />
         </>
       ) : null}

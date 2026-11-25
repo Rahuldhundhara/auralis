@@ -42,12 +42,14 @@ interface UiState {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (value: boolean) => void;
 
-  queueOpen: boolean;
-  setQueueOpen: (value: boolean) => void;
   nowPlayingOpen: boolean;
   setNowPlayingOpen: (value: boolean, tab?: 'lyrics' | 'queue' | 'about') => void;
   nowPlayingTab: 'lyrics' | 'queue' | 'about';
   setNowPlayingTab: (tab: 'lyrics' | 'queue' | 'about') => void;
+
+  onboardingOpen: boolean;
+  openOnboarding: () => void;
+  closeOnboarding: () => void;
 
   toasts: Toast[];
   toast: (message: string, kind?: Toast['kind'], action?: Toast['action']) => void;
@@ -68,12 +70,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarCollapsed: false,
   setSidebarCollapsed: (value) => set({ sidebarCollapsed: value }),
 
-  queueOpen: false,
-  setQueueOpen: (value) => set({ queueOpen: value }),
   nowPlayingOpen: false,
   setNowPlayingOpen: (value, tab) => set(tab ? { nowPlayingOpen: value, nowPlayingTab: tab } : { nowPlayingOpen: value }),
-  nowPlayingTab: 'queue',
+  nowPlayingTab: 'lyrics',
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
+
+  onboardingOpen: false,
+  openOnboarding: () => set({ onboardingOpen: true }),
+  closeOnboarding: () => set({ onboardingOpen: false }),
 
   toasts: [],
   toast: (message, kind = 'info', action) => {

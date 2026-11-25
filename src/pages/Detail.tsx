@@ -26,6 +26,7 @@ import { confirmDialog, toast, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { tracksFromPage } from '../lib/actions';
+import { proxiedArtwork } from '../lib/image';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, Modal, PageSkeleton, Spinner } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -305,14 +306,10 @@ export function DetailPage({
       }
       setDownloading(undefined);
       await refreshLibrary();
-      const itemLabel =
-        kind === 'podcast'
-          ? completed === 1 ? 'episode' : 'episodes'
-          : completed === 1 ? 'song' : 'songs';
       toast(
         failed
           ? `Downloaded ${completed} ${kind === 'podcast' ? 'episodes' : 'songs'}; ${failed} failed.`
-          : `Downloaded ${completed} ${itemLabel}.`,
+          : `Downloaded ${completed} ${kind === 'podcast' ? (completed === 1 ? 'episode' : 'episodes') : completed === 1 ? 'song' : 'songs'}.`,
         failed ? 'error' : 'success',
       );
     };
@@ -491,7 +488,7 @@ export function DetailPage({
     <section className={`detail-hero detail-hero-${kind}`}>
       <div
         className="detail-hero-bg"
-        style={cover ? { backgroundImage: `url(${cover})` } : undefined}
+        style={cover ? { backgroundImage: `url(${proxiedArtwork(cover)})` } : undefined}
         aria-hidden="true"
       />
       <div className="detail-hero-inner">

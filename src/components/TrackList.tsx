@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, MoreHorizontal, Play, X } from 'lucide-react';
 import type { Track } from '@shared/types';
 import {
@@ -41,6 +41,7 @@ export function TrackList({
   onRemove,
 }: TrackListProps) {
   const current = usePlayerStore((state) => state.current);
+  const queue = usePlayerStore((state) => state.queue);
   const playing = usePlayerStore((state) => state.playing);
   const loading = usePlayerStore((state) => state.loading);
   const liked = useAppStore((state) => state.library.liked);
@@ -48,6 +49,19 @@ export function TrackList({
   const toggleLike = useAppStore((state) => state.toggleLike);
   const [hovered, setHovered] = useState<number | null>(null);
   const prefetchTimer = useRef<number | undefined>(undefined);
+
+  // The player hydrates missing cover art for the track it is playing. Mirror
+  // that back onto list rows so a playlist entry that arrived without a
+  // thumbnail picks up its real cover as soon as it starts, without issuing a
+  // second metadata request.
+  const hydratedArt = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of queue) {
+      if (item.thumbnail) map.set(item.id, item.thumbnail);
+    }
+    if (current?.thumbnail) map.set(current.id, current.thumbnail);
+    return map;
+  }, [queue, current]);
 
   useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
 
@@ -74,6 +88,7 @@ export function TrackList({
       {tracks.map((track, index) => {
         const isCurrent = current?.id === track.id;
         const isPlaying = isCurrent && playing;
+        const art = hydratedArt.get(track.id) || track.thumbnail;
         const isLiked = likedIds.has(track.id);
         const downloaded = Boolean(downloadForTrack(downloads, track.id));
         const number = index + 1;
@@ -124,7 +139,7 @@ export function TrackList({
               )}
             </div>
             {showArt ? (
-              <Artwork src={track.thumbnail} alt={track.title} className="track-art" />
+              <Artwork src={art} alt={track.title} className="track-art" />
             ) : null}
             <div className="track-main">
               <div className="track-title-line">

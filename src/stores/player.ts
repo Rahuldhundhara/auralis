@@ -31,6 +31,8 @@ interface PlayerState {
   sleepTimerEndOfTrack: boolean;
   error?: string;
   streamFormat?: string;
+  /** True when the current track reached its natural end and playback stopped. */
+  ended: boolean;
   init: () => void;
   playQueue: (
     tracks: Track[],
@@ -75,6 +77,7 @@ let compressorNode: DynamicsCompressorNode | null = null;
 let limiterNode: DynamicsCompressorNode | null = null;
 let eqNodes: BiquadFilterNode[] = [];
 let masterNode: GainNode | null = null;
+let analyserNode: AnalyserNode | null = null;
 let graphAttempted = false;
 let initialized = false;
 let loadToken = 0;
@@ -83,9 +86,65 @@ let prefetchTimer: number | undefined;
 let lyricsTimer: number | undefined;
 let bufferWatchTimer: number | undefined;
 let bufferRetries = 0;
+let bufferingUiTimer: number | undefined;
 let retryCurrent: (() => void) | undefined;
+/** The user's play/pause intent while a track is still resolving. */
+let loadAutoplayIntent = true;
 let pendingSeek = 0;
-let lastSeekAt = 0;
+/** True while an explicit seek request is in flight. While true, `timeupdate`
+ *  must not overwrite the optimistic seek position — the media element fires
+ *  timeupdate with the pre-seek position until the seek lands, which is what
+ *  made the progress bar visibly jump back after a drag. */
+let seekInFlight = false;
+/** The timestamp the latest user seek is heading to. Used to confirm the
+ *  seek actually landed — for non-seekable streams `seeked` fires even
+ *  though the element never moved. */
+let seekTarget = 0;
+/** Whether the most recent seek happened while playback was active. A seek
+ *  near the end of a stream can leave the element paused at the target
+ *  (readyState 1, no buffered data at EOF to resume from), so arrival
+ *  callbacks must explicitly resume instead of relying on the browser's
+ *  auto-resume — otherwise the song sits frozen and `ended` never fires.
+ *  Cleared by an explicit user pause so a seek while paused stays paused. */
+let seekResumePlayback = false;
+/** The position the store must hold while a seek/load is still travelling to
+ *  it. Set by both `seek()` and `load()` (to their target/startAt) and
+ *  released by `timeupdate` once the element genuinely arrives.
+ *
+ * This is the root fix for "drag forward → song jumps back to the previous
+ * position": mid-drag/sec transient `timeupdate` reports (pre-seek timestamps,
+ * the element's 0 after `el.src = ''` during a reload, etc.) can never stomp
+ * the pinned position, so the progress bar and the audible playback stay
+ * locked to the timestamp the user actually picked. */
+let positionHold: number | null = null;
+let seekCheckTimer: number | undefined;
+/** Monotonic id for the latest explicit seek. Older verification callbacks
+ *  compare against it and bail, so a stale drag can never reload or move the
+ *  position after the user has picked a newer timestamp. */
+let seekEpoch = 0;
+/** While a track has just ended, keep the "Song ended" state alive across the
+ *  auto-advance load so it is actually visible. The next track's `playing`
+ *  event (a real new song starting) clears it immediately. */
+let endedGraceUntil = 0;
+/** True while the user is actively dragging a seek bar. A verification timer
+ *  must never reload the stream mid-drag — that disables the range input and
+ *  aborts the native drag, leaving the song at an intermediate position. */
+let seekDragging = false;
+/** Wall-clock start of the current drag, used to recover if a pointer-up is
+ *  ever missed (e.g. the bar unmounts mid-drag). Without this a stuck flag
+ *  would loop the verification timer forever and block future seeks. */
+let seekDraggingSince = 0;
+
+/** Called on pointer down for a seek bar. */
+export function beginSeekDrag() {
+  seekDragging = true;
+  seekDraggingSince = Date.now();
+}
+
+/** Called on pointer up / cancel for a seek bar. */
+export function endSeekDrag() {
+  seekDragging = false;
+}
 let recorded = false;
 let playbackStartedAt = 0;
 let lastPositionUpdate = 0;
@@ -138,6 +197,63 @@ function updatePositionState() {
   }
 }
 
+/**
+ * YouTube Music occasionally omits `thumbnail` (and sometimes `duration`)
+ * from the renderer a track came from — playlist panels and search rows for
+ * region/age-restricted videos are the two known cases. When metadata is
+ * missing, ask the watch endpoint for the track's own metadata once and
+ * merge it into the live queue, the current track and the local library
+ * mirrors (recent / liked / downloads) so the player bar, Explore hero,
+ * Now Playing and the recent lists all settle on the same real cover.
+ *
+ * Never blocks playback: a no-op when the track already carries artwork, and
+ * silent on network failure (the `Artwork` fallback covers that case, which
+ * is the only legitimate time to show one).
+ */
+async function hydrateMissingMetadata(
+  track: Track,
+  isCurrent: () => boolean,
+): Promise<void> {
+  if (track.thumbnail && track.duration > 0) return;
+  try {
+    const result = await window.auralis.yt.next({ videoId: track.id });
+    if (!isCurrent()) return;
+    const remote =
+      (result?.tracks || []).find((item) => item?.id === track.id) ||
+      (result?.tracks || [])[0];
+    if (!remote) return;
+    const patch: Partial<Track> = {};
+    if (!track.thumbnail && remote.thumbnail) patch.thumbnail = remote.thumbnail;
+    if (!(track.duration > 0) && remote.duration > 0) patch.duration = remote.duration;
+    if (!(track.artists?.length > 0) && remote.artists?.length) patch.artists = remote.artists;
+    if (!track.album?.name && remote.album?.name) patch.album = remote.album;
+    if (Object.keys(patch).length === 0) return;
+    const patchTrack = (item: Track) =>
+      item?.id === track.id ? { ...item, ...patch } : item;
+    usePlayerStore.setState({
+      queue: usePlayerStore.getState().queue.map(patchTrack),
+      current: patchTrack(usePlayerStore.getState().current ?? track),
+    });
+    const current = usePlayerStore.getState().current;
+    if (current) updateMediaSession(current, Boolean(usePlayerStore.getState().playing));
+    // Keep the local library mirrors in sync so Recently Played / Liked /
+    // Downloads show the same cover without waiting for the next refresh.
+    // Functional update — never clobber a concurrent library write.
+    useAppStore.setState((state) => ({
+      library: {
+        ...state.library,
+        recent: state.library.recent.map(patchTrack),
+        liked: state.library.liked.map(patchTrack),
+        downloads: state.library.downloads.map((item) =>
+          item?.track?.id === track.id ? { ...item, track: { ...item.track, ...patch } } : item,
+        ),
+      },
+    }));
+  } catch {
+    // Best-effort hydration; the artwork fallback covers the rest.
+  }
+}
+
 function ensureAudio(): HTMLAudioElement {
   if (audio) return audio;
   audio = new Audio();
@@ -152,6 +268,39 @@ function ensureAudio(): HTMLAudioElement {
 export function getAudioPosition(): number {
   const value = audio?.currentTime;
   return Number.isFinite(value) ? (value as number) : 0;
+}
+
+/** True while a seek/load is still travelling to its optimistic target. */
+export function isSeeking(): boolean {
+  return seekInFlight || positionHold !== null;
+}
+
+let spectrumBuffer: Uint8Array<ArrayBuffer> | null = null;
+let waveformBuffer: Uint8Array<ArrayBuffer> | null = null;
+
+/** Live frequency data for the sidebar visualizer (null until audio graph is ready). */
+export function getAudioSpectrum(): Uint8Array<ArrayBuffer> | null {
+  if (!analyserNode) return null;
+  if (!spectrumBuffer || spectrumBuffer.length !== analyserNode.frequencyBinCount) {
+    spectrumBuffer = new Uint8Array(analyserNode.frequencyBinCount);
+  }
+  analyserNode.getByteFrequencyData(spectrumBuffer);
+  return spectrumBuffer;
+}
+
+/** Overall time-domain loudness (0–1), used for beat-accurate bar punches. */
+export function getAudioEnergy(): number {
+  if (!analyserNode) return 0;
+  if (!waveformBuffer || waveformBuffer.length !== analyserNode.fftSize) {
+    waveformBuffer = new Uint8Array(analyserNode.fftSize);
+  }
+  analyserNode.getByteTimeDomainData(waveformBuffer);
+  let sum = 0;
+  for (let i = 0; i < waveformBuffer.length; i++) {
+    const sample = (waveformBuffer[i] - 128) / 128;
+    sum += sample * sample;
+  }
+  return Math.min(1, Math.sqrt(sum / waveformBuffer.length) * 3.6);
 }
 
 function buildGraph() {
@@ -173,6 +322,11 @@ function buildGraph() {
     limiterNode.attack.value = 0.003;
     limiterNode.release.value = 0.12;
     masterNode = audioContext.createGain();
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 256;
+    analyserNode.smoothingTimeConstant = 0.55;
+    analyserNode.minDecibels = -88;
+    analyserNode.maxDecibels = -12;
     eqNodes = EQ_FREQUENCIES.map((frequency) => {
       const filter = audioContext!.createBiquadFilter();
       filter.type = 'peaking';
@@ -191,7 +345,8 @@ function buildGraph() {
     node.connect(compressorNode);
     compressorNode.connect(limiterNode);
     limiterNode.connect(masterNode);
-    masterNode.connect(audioContext.destination);
+    masterNode.connect(analyserNode);
+    analyserNode.connect(audioContext.destination);
     graphAttempted = true;
     applyDsp(useAppStore.getState().settings);
   } catch {
@@ -202,6 +357,7 @@ function buildGraph() {
     compressorNode = null;
     limiterNode = null;
     masterNode = null;
+    analyserNode = null;
     eqNodes = [];
   }
 }
@@ -307,6 +463,30 @@ function clearBufferWatch() {
   bufferWatchTimer = undefined;
 }
 
+/** Brief network hiccups are normal; don't flash the player spinner for every
+ *  `waiting` event. Only surface buffering once playback has actually been
+ *  stalled for a moment. */
+function clearBufferingUi() {
+  window.clearTimeout(bufferingUiTimer);
+  bufferingUiTimer = undefined;
+  if (usePlayerStore.getState().buffering) {
+    usePlayerStore.setState({ buffering: false });
+  }
+}
+
+function markBuffering() {
+  if (bufferingUiTimer) return;
+  const state = usePlayerStore.getState();
+  if (!state.playing || !audio || audio.paused) return;
+  bufferingUiTimer = window.setTimeout(() => {
+    bufferingUiTimer = undefined;
+    const current = usePlayerStore.getState();
+    if (!current.playing || !audio || audio.paused) return;
+    usePlayerStore.setState({ buffering: true });
+    armBufferWatch();
+  }, 900);
+}
+
 function armBufferWatch() {
   clearBufferWatch();
   bufferWatchTimer = window.setTimeout(() => {
@@ -315,14 +495,7 @@ function armBufferWatch() {
     // Ignore the short wait that happens while the initial stream is being
     // opened. Only recover when playback has actually stalled.
     if (!state.buffering || !state.playing || !state.current || !audio || audio.paused) return;
-    // A long seek may have to wait for the full-range fallback URL. Restarting
-    // the whole track during that wait is what made seeks appear to reset to
-    // zero, so give the seek up to 30 seconds to resolve first.
-    if (audio.seeking && lastSeekAt && Date.now() - lastSeekAt < 30_000) {
-      armBufferWatch();
-      return;
-    }
-    if (bufferRetries >= 2) return;
+    if (bufferRetries >= 3) return;
     bufferRetries += 1;
     const position = Math.max(0, audio.currentTime || state.position);
     console.warn('[auralis] playback stalled; retrying the stream', {
@@ -342,11 +515,25 @@ function attachAudioListeners() {
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
       usePlayerStore.setState({ duration: audio.duration });
     }
-    if (pendingSeek > 0 && Number.isFinite(audio.duration)) {
-      audio.currentTime = Math.min(pendingSeek, Math.max(0, audio.duration - 0.5));
+    if (pendingSeek !== 0) {
+      // Always honour a pending seek target. Clamp only against a known
+      // finite duration — some proxy streams report Infinity duration, and
+      // skipping the seek there made playback restart from ~0 (the classic
+      // "drag forward, song jumps back" symptom).
+      const clampedSeek = Number.isFinite(audio.duration) && audio.duration > 0
+        ? Math.min(pendingSeek, Math.max(0, audio.duration - 0.5))
+        : pendingSeek;
+      try { audio.currentTime = clampedSeek; } catch { /* best effort */ }
       pendingSeek = 0;
     }
-    usePlayerStore.setState({ loading: false });
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+      // Probe duration via progress / timeupdate when it lands.
+      usePlayerStore.setState({ loading: false, buffering: false });
+      updatePositionState();
+      return;
+    }
+    // Start (or resume) playback from `pendingSeek` when the caller asked for it.
+    if (!audio.paused || state.playing) audio.play().catch(() => {});
     updatePositionState();
     void state;
   });
@@ -368,7 +555,25 @@ function attachAudioListeners() {
     if (!audio) return;
     const state = usePlayerStore.getState();
     const position = audio.currentTime || 0;
-    usePlayerStore.setState({ position, duration: Number.isFinite(audio.duration) ? audio.duration : state.duration });
+    const duration = Number.isFinite(audio.duration) ? audio.duration : state.duration;
+    // While a seek/load is still travelling to its target (`positionHold`),
+    // the element reports stale timestamps — most notably 0 right after a
+    // reload clears `el.src` mid-resolve. Never let those reports overwrite
+    // the pinned position; that feedback loop is exactly what made the song
+    // visibly jump back to its previous position after dragging. Release the
+    // hold only once the element genuinely arrives at the target.
+    if (positionHold !== null) {
+      if (Math.abs(position - positionHold) <= 1) {
+        positionHold = null;
+      } else {
+        usePlayerStore.setState({ duration });
+        return;
+      }
+    } else if (seekInFlight) {
+      usePlayerStore.setState({ duration });
+      return;
+    }
+    usePlayerStore.setState({ position, duration });
     if (Date.now() - lastPositionUpdate > 1000) {
       lastPositionUpdate = Date.now();
       updatePositionState();
@@ -376,6 +581,7 @@ function attachAudioListeners() {
     if (Date.now() - lastPersist > 5000) schedulePersist();
   });
   audio.addEventListener('play', () => {
+    clearBufferingUi();
     usePlayerStore.setState({ playing: true, buffering: false, error: undefined });
     updateMediaSession(usePlayerStore.getState().current, true);
     updatePositionState();
@@ -383,42 +589,87 @@ function attachAudioListeners() {
   });
   audio.addEventListener('pause', () => {
     clearBufferWatch();
+    clearBufferingUi();
     usePlayerStore.setState({ playing: false, buffering: false });
     updateMediaSession(usePlayerStore.getState().current, false);
     updatePositionState();
     notifyDiscord();
   });
-  audio.addEventListener('seeking', () => {
-    lastSeekAt = Date.now();
-  });
   audio.addEventListener('seeked', () => {
-    lastSeekAt = 0;
+    if (!audio) return;
+    if (!seekInFlight && positionHold === null) {
+      // The browser can pause the element while a seek near the end is still
+      // landing (the `pause` event clears the store's playing flag). The
+      // seek intent flag survives that event, so resume here when playback
+      // was active for the seek.
+      if (seekResumePlayback && audio.paused) void audio.play().catch(() => {});
+      updatePositionState();
+      return;
+    }
+    // Confirm we are actually at the target for a hold to make sense (a hold
+    // can also come from a mid-drag error retry reload).
+    const arrived = Math.abs((audio.currentTime || 0) - seekTarget) <= 1;
+    if (arrived) {
+      seekInFlight = false;
+      positionHold = null;
+      window.clearTimeout(seekCheckTimer);
+      seekCheckTimer = undefined;
+      if (audio) usePlayerStore.setState({ position: audio.currentTime || 0 });
+      if (seekResumePlayback && audio.paused) void audio.play().catch(() => {});
+    }
     updatePositionState();
   });
   audio.addEventListener('waiting', () => {
-    usePlayerStore.setState({ buffering: true });
-    armBufferWatch();
+    markBuffering();
   });
   audio.addEventListener('stalled', () => {
     const state = usePlayerStore.getState();
     if (!state.playing) return;
-    usePlayerStore.setState({ buffering: true });
-    armBufferWatch();
+    markBuffering();
   });
   audio.addEventListener('playing', () => {
     clearBufferWatch();
+    clearBufferingUi();
     bufferRetries = 0;
-    usePlayerStore.setState({ buffering: false, loading: false, playing: true });
+    // A new song has actually started — clear the "Song ended" state.
+    endedGraceUntil = 0;
+    usePlayerStore.setState({ buffering: false, loading: false, playing: true, ended: false });
     updatePositionState();
   });
   audio.addEventListener('canplay', () => {
     clearBufferWatch();
+    clearBufferingUi();
     usePlayerStore.setState({ loading: false, buffering: false });
   });
   audio.addEventListener('ended', () => {
     clearBufferWatch();
+    clearBufferingUi();
     const state = usePlayerStore.getState();
+    if (audio) {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const position = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+      const tolerance = Math.max(3, Math.min(10, duration * 0.08));
+      // A truncated proxy response can look like a real end-of-track to the
+      // media element. Retry once near the current position instead of
+      // silently skipping to the next song.
+      if (state.current && duration > 0 && position > 0 && position < duration - tolerance && errorRetries < 1) {
+        const token = loadToken;
+        errorRetries += 1;
+        console.warn('[auralis] stream ended early; retrying the current track', {
+          trackId: state.current.id,
+          position,
+          duration,
+        });
+        retryCurrent?.();
+        if (loadToken !== token) return;
+      }
+    }
     finalizePlayback(true);
+    pendingSeek = 0;
+    // Mark the track as finished so the lyrics panel can show the
+    // "Song ended" indicator. Loading the next track clears it.
+    endedGraceUntil = Date.now() + 2500;
+    usePlayerStore.setState({ ended: true, playing: false });
     if (state.sleepTimerEndOfTrack) {
       usePlayerStore.setState({ sleepTimerEndOfTrack: false, sleepTimerEnd: undefined });
       useUiStore.getState().toast('Sleep timer ended at the end of the track. Playback paused.', 'info');
@@ -427,8 +678,12 @@ function attachAudioListeners() {
     if (state.repeat === 'one') {
       recorded = false;
       playbackStartedAt = Date.now();
+      seekInFlight = false;
+      positionHold = null;
+      seekTarget = 0;
       if (audio) {
         audio.currentTime = 0;
+        usePlayerStore.setState({ ended: false, position: 0 });
         void audio.play();
       }
       return;
@@ -437,6 +692,8 @@ function attachAudioListeners() {
   });
   audio.addEventListener('error', () => {
     clearBufferWatch();
+    clearBufferingUi();
+    seekInFlight = false;
     if (!audio || !audio.src) return;
     if (!activeSrc || audio.src !== activeSrc) return;
     const state = usePlayerStore.getState();
@@ -508,9 +765,6 @@ function bindKeyboard() {
       if (current) {
         useAppStore.getState().toggleLike(current).catch(() => {});
       }
-    } else if (event.key.toLowerCase() === 'q') {
-      const ui = useUiStore.getState();
-      ui.setQueueOpen(!ui.queueOpen);
     }
   });
 }
@@ -542,8 +796,10 @@ function restoreSession() {
     radioContinuation: saved.radioContinuation,
     repeat: saved.repeat || 'off',
     shuffle: Boolean(saved.shuffle),
+    ended: false,
   });
   updateMediaSession(track, false);
+  void hydrateMissingMetadata(track, () => usePlayerStore.getState().current?.id === track.id);
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => {
@@ -554,6 +810,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     isRetry = false,
   ) => {
     clearBufferWatch();
+    clearBufferingUi();
     window.clearTimeout(lyricsTimer);
     lyricsTimer = undefined;
     if (!isRetry) {
@@ -564,15 +821,41 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     const el = ensureAudio();
     const playable = playableTrack(track);
     buildGraph();
+    if (analyserNode) {
+      // Ensure the media element source path is live before setting src.
+      void audioContext?.resume();
+    }
     window.clearTimeout(prefetchTimer);
     prefetchTimer = undefined;
+    // A fresh load supersedes any in-flight seek: cancel its verification
+    // timer so a stale drag position can never force a reload of this track.
+    window.clearTimeout(seekCheckTimer);
+    seekCheckTimer = undefined;
+    seekInFlight = false;
+    seekDragging = false;
+    // Invalidate any in-flight seek verification from the previous track.
+    seekEpoch += 1;
+    // Pin the store position to this load's startAt until the element
+    // genuinely arrives there. Without the pin, transient `timeupdate`
+    // reports (e.g. 0 right after `el.src = ''` below, or a mid-drag
+    // error/retry reload) overwrite the target and playback visibly jumps
+    // back to the previous timestamp.
+    positionHold = startAt;
     loadToken++;
     const token = loadToken;
     recorded = false;
     playbackStartedAt = Date.now();
     pendingSeek = startAt;
-    lastSeekAt = 0;
+    // A fresh load owns the resume intent (autoplay) so a previous track's
+    // seek can never resurrect playback after a track change. The intent can
+    // still be changed while the stream resolves by pressing play/pause.
+    // Retries reuse the current intent so a paused track stays paused.
+    loadAutoplayIntent = isRetry ? loadAutoplayIntent : autoplay;
+    seekResumePlayback = loadAutoplayIntent;
     activeSrc = '';
+    // Drop any previous source immediately so the old track cannot bleed
+    // through while the new stream is being resolved.
+    el.src = '';
     el.pause();
     set({
       current: playable,
@@ -584,11 +867,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       duration: track.duration || 0,
       error: undefined,
       streamFormat: undefined,
+      ended: Date.now() < endedGraceUntil ? get().ended : false,
     });
     updateMediaSession(playable, false);
     updatePositionState();
     schedulePersist();
     useAppStore.getState().addRecent(track).catch(() => {});
+    // If the API left this track without artwork, backfill it from the watch
+    // endpoint so the bar/hero/Now Playing flip from the fallback to the real
+    // cover the moment it arrives.
+    void hydrateMissingMetadata(track, () => loadToken === token && get().current?.id === track.id);
     const settings = useAppStore.getState().settings;
     if (settings.lastfm.enabled && settings.lastfm.nowPlaying && settings.lastfm.sessionKey) {
       window.auralis.lastfm.nowPlaying(track).catch(() => {});
@@ -607,14 +895,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       el.volume = settings.muted ? 0 : settings.volume;
       el.muted = settings.muted;
       set({ streamFormat: stream.format });
-      if (autoplay) {
+      if (autoplay && loadAutoplayIntent) {
         try {
+          if (audioContext?.state !== 'running') {
+            try {
+              await audioContext?.resume();
+            } catch {
+              // best effort — context may already be running
+            }
+          }
           await el.play();
         } catch (error: any) {
           set({ playing: false, loading: false, error: error?.message || 'Playback was blocked.' });
         }
       } else {
-        set({ loading: false });
+        set({ loading: false, playing: false, buffering: false });
       }
       lyricsTimer = window.setTimeout(() => {
         const current = usePlayerStore.getState();
@@ -633,10 +928,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             void window.auralis.player.prefetch(next).catch(() => {});
             void window.auralis.player.cache(next).catch(() => {});
           }
-        }, 450);
+        }, 250);
       }
     } catch (error: any) {
       if (token !== loadToken) return;
+      const state = get();
+      const nextIndex = state.index + 1;
+      // If this track cannot be resolved and there is another track in the
+      // queue, skip straight to it instead of stopping playback.
+      if (nextIndex < state.queue.length) {
+        set({ index: nextIndex, error: undefined });
+        void load(state.queue[nextIndex], true, 0);
+        return;
+      }
       set({
         loading: false,
         playing: false,
@@ -648,7 +952,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
   retryCurrent = () => {
     const state = get();
-    if (state.current) void load(state.current, true, Math.max(0, audio?.currentTime || 0), true);
+    if (!state.current) return;
+    // A user seek/drag is active: the seek machinery (verification timer +
+    // pendingSeek on loadedmetadata) owns recovery right now. A retry here
+    // would reset the element (`el.src = ''`), abort the in-flight native
+    // drag, and freeze progress at an intermediate timestamp — the exact
+    // "drag, then it jumps back" loop. Defer entirely to the seek path.
+    if (seekInFlight || positionHold !== null) return;
+    // Retry from the store position (which equals the element's position
+    // whenever no hold is active), never from the element's transient value.
+    const resumeAt = state.position || audio?.currentTime || 0;
+    void load(state.current, true, Math.max(0, resumeAt), true);
   };
 
   const radioTracksForQueue = (tracks: Track[]) => {
@@ -729,6 +1043,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     sleepTimerEndOfTrack: false,
     error: undefined,
     streamFormat: undefined,
+    ended: false,
 
     init: () => {
       if (initialized) return;
@@ -859,10 +1174,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     toggle: () => {
       const state = get();
       if (state.loading) {
-        loadToken++;
-        activeSrc = '';
-        clearBufferWatch();
-        set({ loading: false, playing: false, buffering: false });
+        // A stream can take a moment to resolve. Remember the user's intent
+        // instead of ignoring the button, so pressing pause while loading
+        // keeps the track paused when it arrives.
+        loadAutoplayIntent = !loadAutoplayIntent;
+        seekResumePlayback = loadAutoplayIntent;
         return;
       }
       if (state.playing) {
@@ -870,10 +1186,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         return;
       }
       if (state.current && audio?.src) {
-        audioContext?.resume().catch(() => {});
-        void audio.play().catch((error) => {
-          set({ error: error?.message || 'Playback failed.' });
-        });
+        get().play();
         return;
       }
       if (state.queue.length) {
@@ -884,16 +1197,33 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     play: () => {
+      loadAutoplayIntent = true;
       const state = get();
       if (state.current && audio?.src) {
-        audioContext?.resume().catch(() => {});
-        void audio.play().catch(() => {});
+        if (audioContext?.state !== 'running') {
+          audioContext?.resume().catch(() => {});
+        }
+        // Pressing play after the track ended restarts it from the top.
+        if (state.ended || (Number.isFinite(audio.duration) && audio.duration > 0 && audio.currentTime >= audio.duration - 0.25)) {
+          get().seek(0);
+        }
+        set({ ended: false });
+        if (audio.paused || audio.readyState < 1) {
+          audio.play().then(() => {}).catch((error) => {
+            set({ error: error?.message || 'Playback failed.' });
+          });
+        }
       } else {
         get().toggle();
       }
     },
 
     pause: () => {
+      // An intentional pause cancels resume-on-seek: a seek issued while
+      // paused must stay paused (and must not be resurrected by arrival
+      // callbacks).
+      loadAutoplayIntent = false;
+      seekResumePlayback = false;
       audio?.pause();
       finalizePlayback(false);
       schedulePersist();
@@ -969,12 +1299,93 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     seek: (seconds) => {
-      if (!audio) return;
-      const duration = get().duration || audio.duration || 0;
-      const target = Math.max(0, Math.min(seconds, duration || seconds));
-      lastSeekAt = Date.now();
-      audio.currentTime = target;
-      set({ position: target });
+      if (!Number.isFinite(seconds)) return;
+      const duration = get().duration || (audio && Number.isFinite(audio.duration) ? audio.duration : 0) || 0;
+      // Never clamp a legitimate seek to the very end of the track — the
+      // media element cannot start playback from exactly `duration`.
+      const upper = duration > 0 ? Math.max(0, duration - 0.25) : Number.MAX_SAFE_INTEGER;
+      const target = Math.min(upper, Math.max(0, seconds));
+      // Every seek gets a monotonic epoch. Async callbacks from an older
+      // seek can then prove they are stale and must not touch the position,
+      // the verification timer or the stream.
+      const epoch = ++seekEpoch;
+      // Stamp the intent first: while this seek is in flight, `timeupdate`
+      // reports pre-seek timestamps and must not touch the store position.
+      pendingSeek = target;
+      seekTarget = target;
+      seekInFlight = true;
+      seekResumePlayback = get().playing;
+      // Pin the store position to the target until the element genuinely
+      // arrives there (see `positionHold`).
+      positionHold = target;
+      // Optimistic UI update so the bar lands on the selected timestamp now.
+      set({ position: target, ended: false });
+
+      // Drive the element whenever it already holds this track's stream. We
+      // deliberately do NOT require `audio.seekable.length > 0`: Chromium
+      // reports an empty seekable range until metadata settles, yet
+      // assigning currentTime still starts the range fetch. Requiring it
+      // here silently dropped fast forward seeks.
+      const loading = get().loading;
+      if (audio && !loading && audio.src && audio.readyState >= 1) {
+        try { audio.currentTime = target; } catch { /* verified below */ }
+      }
+
+      // A single shared verification timer. Dragging resets it, so only the
+      // final position is ever verified and no intermediate reloads stack up.
+      window.clearTimeout(seekCheckTimer);
+      const trackId = get().current?.id;
+      const tokenAtSeek = loadToken;
+      let waited = 0;
+      const verifySeek = () => {
+        seekCheckTimer = undefined;
+        if (epoch !== seekEpoch) return;        // a newer seek owns position
+        if (!audio) return;
+        if (loadToken !== tokenAtSeek) return;  // a new track owns position
+        const current = get().current;
+        if (!current || current.id !== trackId) return;
+        // Never reload while the user is still dragging. Keep the position
+        // pinned and re-check shortly; the pointer-up handler re-stamps the
+        // final target and schedules a fresh verification. Recover after a
+        // long stall in case a pointer-up event was missed.
+        if (seekDragging) {
+          if (Date.now() - seekDraggingSince > 8000) {
+            seekDragging = false;
+          } else {
+            seekCheckTimer = window.setTimeout(verifySeek, 400);
+            return;
+          }
+        }
+        const at = audio.currentTime || 0;
+        if (Math.abs(at - target) <= 1) {
+          seekInFlight = false;
+          positionHold = null;
+          set({ position: at });
+          // A seek near the end can leave the element paused with no buffered
+          // data to auto-resume from. If playback was active, resume
+          // explicitly so the track plays out and `ended` fires normally.
+          if (seekResumePlayback && audio.paused) void audio.play().catch(() => {});
+          return;
+        }
+        // The element is still fetching the target byte range (or still
+        // starting the stream). Reloading now would abort that range request
+        // and reset the element to 0 — the exact jump-back the user reports.
+        // Wait for the in-flight seek instead of destroying it.
+        if (audio.seeking || audio.readyState < 1) {
+          waited += 1;
+          if (waited <= 12) {
+            seekCheckTimer = window.setTimeout(verifySeek, 750);
+            return;
+          }
+        }
+        // The element finished a seek but landed somewhere else, or the
+        // stream is genuinely not seekable. Re-open it at the requested
+        // offset; `load` applies `pendingSeek` on metadata.
+        seekInFlight = false;
+        void load(current, !audio.paused, target, true);
+      };
+      seekCheckTimer = window.setTimeout(verifySeek, 750);
+
       updatePositionState();
     },
 
@@ -1075,6 +1486,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (!queue.length) {
         audio?.pause();
         if (audio) audio.removeAttribute('src');
+        positionHold = null;
+        seekInFlight = false;
         set({
           queue: [],
           index: 0,
@@ -1149,12 +1562,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     stop: () => {
       clearBufferWatch();
+      positionHold = null;
+      seekInFlight = false;
+      seekDragging = false;
+      seekResumePlayback = false;
+      seekTarget = 0;
+      seekEpoch += 1;
       finalizePlayback(false);
       if (audio) {
         audio.pause();
         audio.currentTime = 0;
       }
-      set({ playing: false, position: 0, buffered: 0 });
+      set({ playing: false, position: 0, buffered: 0, ended: false });
       updateMediaSession(get().current, false);
       notifyDiscord();
       persistNow();
