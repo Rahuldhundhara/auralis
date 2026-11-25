@@ -140,7 +140,7 @@ The **YouTube Music** item in the sidebar opens a songs-only view of the signed-
 
 #### First run and account
 
-- Mandatory welcome screen: the shell and routes are not mounted until a YouTube Music account is connected, and signing out returns there.
+- Mandatory welcome screen: the shell and routes are not mounted until a YouTube Music account is connected, and signing out returns there. Its background carries a large, softly blurred Auralis mark behind the existing ambient orbs.
 - Taste onboarding on first run: 18 curated languages, up to eight artists picked from the real charts and per-language artist search, a **Your artists** shelf on Home and **Edit preferences** in Settings. It can be skipped and never invents artists.
 - Sign-in is visible everywhere: a permanent sidebar account card and the top-bar chip. Signed in, the card shows the real avatar, display name, channel handle and a connection dot.
 - Chrome-window sign-in opens a visible real Chrome window with an Auralis-owned profile at `userData/chrome-login`; your own Chrome profile is never opened, copied or modified. Sign-in runs with no DevTools port, cookies are read by a short-lived headless Chrome after a graceful close, and a 5-minute timeout cancels. The embedded Google window remains as a fallback and the manual cookie dialog stays available.

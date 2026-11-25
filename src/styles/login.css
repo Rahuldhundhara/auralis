@@ -24,6 +24,19 @@
   pointer-events: none;
 }
 
+.login-watermark {
+  position: absolute;
+  top: 46%;
+  left: 56%;
+  width: min(72vw, 820px);
+  height: auto;
+  transform: translate(-50%, -50%);
+  opacity: 0.12;
+  filter: blur(18px) saturate(1.1);
+  pointer-events: none;
+  user-select: none;
+}
+
 .login-orb {
   position: absolute;
   border-radius: 50%;

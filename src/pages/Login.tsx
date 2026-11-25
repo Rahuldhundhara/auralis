@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import logoMark from '../assets/splash/a.png';
 import {
   ArrowRight,
   Clock3,
@@ -36,6 +37,7 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-atmosphere" aria-hidden="true">
+        <img src={logoMark} alt="" className="login-watermark" draggable={false} />
         <span className="login-orb login-orb-a" />
         <span className="login-orb login-orb-b" />
         <span className="login-rings" />
