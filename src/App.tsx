@@ -133,6 +133,30 @@ function routeKey(route: Route): string {
   return JSON.stringify(route);
 }
 
+/**
+ * Top-level destinations are kept mounted once visited. Previously every
+ * navigation changed the route-stage key, which destroyed the current page,
+ * aborted its requests and re-fetched the same shelves when the user came
+ * back. Keeping these pages alive makes repeat navigation instant and also
+ * preserves their scroll/player context.
+ */
+const KEEP_ALIVE_PAGES = new Set<Route['page']>([
+  'home',
+  'explore',
+  'search',
+  'podcasts',
+  'library',
+  'liked',
+  'recent',
+  'history',
+  'downloads',
+  'settings',
+]);
+
+function isKeepAliveRoute(route: Route): boolean {
+  return KEEP_ALIVE_PAGES.has(route.page);
+}
+
 /* ------------------------------------------------------------------ */
 /* App shell                                                           */
 /* ------------------------------------------------------------------ */
@@ -144,6 +168,11 @@ export default function App() {
   const entries = useNavStore((state) => state.entries);
   const index = useNavStore((state) => state.index);
   const route = entries[index] || { page: 'home' as const };
+  const key = routeKey(route);
+  const activeViewKey = isKeepAliveRoute(route) ? route.page : `@${key}`;
+  const [mountedRoutes, setMountedRoutes] = useState<Record<string, Route>>(() =>
+    isKeepAliveRoute(route) ? { [route.page]: route } : {},
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const startApplied = useRef(false);
   const [splashDone, setSplashDone] = useState(false);
@@ -151,7 +180,15 @@ export default function App() {
   const onboardingOpen = useUiStore((state) => state.onboardingOpen);
   const postSplash = ready && splashDone;
   const showApp = postSplash && onboardingCompleted;
-  const key = routeKey(route);
+
+  useEffect(() => {
+    if (!isKeepAliveRoute(route)) return;
+    setMountedRoutes((current) => {
+      const previous = current[route.page];
+      if (previous && routeKey(previous) === key) return current;
+      return { ...current, [route.page]: route };
+    });
+  }, [key, route]);
 
   useEffect(() => {
     // Let the cold-start reveal finish before the library appears. The app
@@ -267,8 +304,20 @@ export default function App() {
                 useScrollStore.getState().setPosition(key, event.currentTarget.scrollTop);
               }}
             >
-              <div className="route-stage" key={key}>
-                <RouteView route={route} />
+              <div className="route-stage">
+                {Object.entries(mountedRoutes).map(([page, cachedRoute]) => {
+                  const active = page === activeViewKey;
+                  return (
+                    <div key={page} className="route-page" hidden={!active}>
+                      <RouteView route={active ? route : cachedRoute} />
+                    </div>
+                  );
+                })}
+                {isKeepAliveRoute(route) ? null : (
+                  <div key={activeViewKey} className="route-page">
+                    <RouteView route={route} />
+                  </div>
+                )}
               </div>
               <div className="content-bottom-space" />
             </main>

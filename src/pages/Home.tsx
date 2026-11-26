@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Pause, Play, Radio, Sparkles } from 'lucide-react';
 import type { Card, Shelf as ShelfType, Track } from '@shared/types';
 import { useAppStore } from '../stores/app';
@@ -12,7 +12,7 @@ import { withoutVideos } from '../lib/shelves';
 import { Artwork, Button, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { taglineForTrack } from '../lib/vibeTagline';
 import { extractAverageColor } from '../lib/artColor';
-import { proxiedArtwork } from '../lib/image';
+import { displayArtwork } from '../lib/image';
 import { Shelf } from '../components/MediaCard';
 import { useTranslation } from '../lib/i18n';
 import {
@@ -30,6 +30,33 @@ function uniqueTracks<T extends { id: string }>(tracks: T[]): T[] {
     seen.add(track.id);
     return true;
   });
+}
+
+/** Fill artist cards that lost their photo with artwork from Home's shelves. */
+function withArtistArt(cards: Card[] | undefined, shelves: ShelfType[]): Card[] {
+  if (!cards?.length) return [];
+  const byId = new Map<string, string>();
+  const byName = new Map<string, string>();
+  for (const shelf of shelves) {
+    for (const card of shelf.items || []) {
+      if ((card.type !== 'artist' && card.type !== 'profile') || !card.thumbnail) continue;
+      const id = (card.browseId || card.id || '').trim();
+      if (id) byId.set(id, card.thumbnail);
+      byName.set(card.title.trim().toLowerCase(), card.thumbnail);
+    }
+  }
+  return cards.map((card) => {
+    if (card.thumbnail) return card;
+    const id = (card.browseId || card.id || '').trim();
+    const thumbnail = byId.get(id) || byName.get(card.title.trim().toLowerCase());
+    return thumbnail ? { ...card, thumbnail } : card;
+  });
+}
+
+function TrackShelf({ title, tracks }: { title: string; tracks: Track[] }) {
+  if (!tracks.length) return null;
+  const items = tracks.map((track) => trackCard(track));
+  return <Shelf shelf={{ title, items, style: 'carousel' }} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -58,7 +85,7 @@ function DynamicHero({ tracks }: { tracks: Track[] }) {
   }, [current?.id, current?.thumbnail, tracks]);
 
   const featured = current || tracks[0] || null;
-  const artwork = proxiedArtwork(featured?.thumbnail);
+  const artwork = displayArtwork(featured?.thumbnail);
   const artistLine = featured?.artists?.map((a) => a.name).join(' • ') || 'Auralis';
   const albumLine = featured?.album?.name && featured.album.name !== featured.title ? featured.album.name : null;
 
@@ -130,6 +157,7 @@ function DynamicHero({ tracks }: { tracks: Track[] }) {
               className="dynamic-play-btn"
               onClick={playPause}
               aria-label={playing ? 'Pause' : 'Play'}
+              data-playing={playing ? 'true' : 'false'}
             >
               {playing ? (
                 <><Pause size={16} fill="currentColor" />Pause</>
@@ -297,24 +325,38 @@ export function HomePage() {
 
   const personalizedLoading = artistsLoading || tasteLoading || similarLoading || recommendedLoading || trendingLoading;
 
+  const tracks = useMemo(
+    () => tracksFromPage(data).filter((track) => !track.isVideo && track.type !== 'video'),
+    [data],
+  );
+  const quickRecent = useMemo(
+    () => (recent.length ? uniqueTracks([...recent, ...tracks]) : tracks),
+    [recent, tracks],
+  );
+  const shelves = useMemo(() => {
+    const hotShelves = charts
+      ? charts.shelves
+          .slice(0, 1)
+          .map((shelf) => ({ ...shelf, title: 'Hot Picks Worldwide', subtitle: 'Top tracks across the globe right now' }))
+      : [];
+    const trendyShelves = newReleases
+      ? newReleases.shelves
+          .slice(0, 1)
+          .map((shelf) => ({ ...shelf, title: 'Trendy Right Now', subtitle: 'New releases landing globally' }))
+      : [];
+    return withoutVideos([...hotShelves, ...trendyShelves, ...(data?.shelves || []), ...extraShelves]);
+  }, [charts, newReleases, data, extraShelves]);
+  const favoriteArtistItems = useMemo(
+    () => withArtistArt(favoriteArtistsCards, shelves),
+    [favoriteArtistsCards, shelves],
+  );
+  const similarArtistItems = useMemo(
+    () => withArtistArt(similarArtistsCards, shelves),
+    [similarArtistsCards, shelves],
+  );
+
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorPanel message={error} retry={reload} />;
-
-  const tracks = tracksFromPage(data).filter((track) => !track.isVideo && track.type !== 'video');
-
-  const hotShelves = charts
-    ? charts.shelves
-        .slice(0, 1)
-        .map((shelf) => ({ ...shelf, title: 'Hot Picks Worldwide', subtitle: 'Top tracks across the globe right now' }))
-    : [];
-
-  const trendyShelves = newReleases
-    ? newReleases.shelves
-        .slice(0, 1)
-        .map((shelf) => ({ ...shelf, title: 'Trendy Right Now', subtitle: 'New releases landing globally' }))
-    : [];
-
-  const shelves = withoutVideos([...hotShelves, ...trendyShelves, ...(data?.shelves || []), ...extraShelves]);
 
   const loadMore = async () => {
     const next = continuation || data?.continuation;
@@ -331,17 +373,11 @@ export function HomePage() {
     }
   };
 
-  function TrackShelf({ title, tracks }: { title: string; tracks: Track[] }) {
-    if (!tracks.length) return null;
-    const items = tracks.map((track) => trackCard(track));
-    return <Shelf shelf={{ title, items, style: 'carousel' }} />;
-  }
-
   return (
     <div className="page home-page">
       <DynamicHero tracks={tracks.length ? tracks : recent} />
 
-      <QuickAccess recent={recent.length ? uniqueTracks([...recent, ...tracks]) : tracks} />
+      <QuickAccess recent={quickRecent} />
 
       <div className="shelf-stack">
         {personalization.onboardingCompleted ? (
@@ -350,7 +386,7 @@ export function HomePage() {
               <Shelf
                 shelf={{
                   title: t('home.yourFavouriteArtists'),
-                  items: favoriteArtistsCards,
+                  items: favoriteArtistItems,
                   style: 'grid',
                 }}
               />
@@ -360,7 +396,7 @@ export function HomePage() {
               <Shelf
                 shelf={{
                   title: t('home.discoverSimilarArtists'),
-                  items: similarArtistsCards,
+                  items: similarArtistItems,
                   style: 'grid',
                 }}
               />

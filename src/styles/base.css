@@ -715,7 +715,7 @@ a {
     linear-gradient(90deg, rgba(var(--accent-rgb), 0.035), transparent 38%),
     color-mix(in srgb, var(--bg) 76%, transparent);
   border-bottom: 1px solid var(--divider);
-  backdrop-filter: blur(18px);
+  backdrop-filter: none;
   z-index: 40;
 }
 
@@ -1698,7 +1698,7 @@ img.artwork {
   overflow: auto;
   padding: 34px;
   background: var(--overlay);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
   animation: fade-in 160ms var(--ease);
 }
 

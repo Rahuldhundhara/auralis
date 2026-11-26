@@ -20,12 +20,12 @@ import {
   Trophy,
   Users,
 } from 'lucide-react';
-import type { SearchResults, Shelf as ShelfType } from '@shared/types';
+import type { Card, SearchResults, Shelf as ShelfType, Track } from '@shared/types';
 import { useAsync } from '../lib/useAsync';
+import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
-import { proxiedArtwork } from '../lib/image';
-import { Button, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
+import { Artwork, Button, EmptyState, ErrorPanel, PageSkeleton } from '../components/primitives';
 import { Shelf } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
 import { PodcastScene } from '../components/PodcastScene';
@@ -73,8 +73,31 @@ function dedupe<T extends { id: string }>(items: T[]): T[] {
   });
 }
 
+function episodeCard(episode: Track): Card {
+  return {
+    type: 'episode',
+    id: episode.id,
+    title: episode.title,
+    subtitle: episode.artists.map((artist) => artist.name).filter(Boolean).join(', ') || 'Podcast episode',
+    thumbnail: episode.thumbnail,
+    artists: episode.artists,
+    track: episode,
+  };
+}
+
+function podcastShelf(
+  title: string,
+  subtitle: string | undefined,
+  items: Card[],
+  maxItems = 12,
+): ShelfType | undefined {
+  if (!items.length) return undefined;
+  return { title, subtitle, items: items.slice(0, maxItems), style: 'carousel' };
+}
+
 export function PodcastsPage() {
   const navigate = useNavStore((state) => state.navigate);
+  const recent = useAppStore((state) => state.library.recent);
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [category, setCategory] = useState(DEFAULT_PODCAST_THEME.id);
@@ -121,20 +144,65 @@ export function PodcastsPage() {
     return { shows, episodes };
   }, [searchTerm]);
 
-  const showShelf = useMemo<ShelfType | undefined>(() => {
-    if (!data) return undefined;
-    const items = dedupe(data.shows.podcasts || []);
-    if (!items.length) return undefined;
-    return {
-      title: submitted ? `Shows for “${submitted}”` : `${activeTheme.label} shows`,
-      subtitle: 'Follow a show to keep up with every new episode.',
-      items,
-      style: 'grid',
-    };
-  }, [data, submitted, activeTheme.label]);
+  const shows = useMemo<Card[]>(() => {
+    if (!data) return [];
+    return dedupe(data.shows.podcasts || []).map((show) => ({
+      ...show,
+      type: 'podcast' as const,
+      browseId: show.browseId || show.id,
+    }));
+  }, [data]);
 
-  const episodes = useMemo(() => (data ? dedupe(data.episodes.episodes || []) : []), [data]);
-  const latestShows = useMemo(() => (data ? dedupe(data.shows.podcasts || []).slice(0, 6) : []), [data]);
+  const episodes = useMemo(() => {
+    if (!data) return [];
+    const fallbackArt = shows.find((show) => show.thumbnail)?.thumbnail;
+    return dedupe(data.episodes.episodes || []).map((episode) =>
+      episode.thumbnail ? episode : { ...episode, thumbnail: fallbackArt },
+    );
+  }, [data, shows]);
+
+  const episodeCards = useMemo(() => episodes.map(episodeCard), [episodes]);
+
+  const recentEpisodeCards = useMemo(() => {
+    const fallbackArt = episodes.find((episode) => episode.thumbnail)?.thumbnail;
+    return dedupe(recent.filter((track) => track.type === 'episode'))
+      .slice(0, 10)
+      .map((episode) => episodeCard(episode.thumbnail ? episode : { ...episode, thumbnail: fallbackArt }));
+  }, [episodes, recent]);
+
+  const suggestedShows = shows.slice(0, 4);
+  const trendingShows = shows.length > 8 ? shows.slice(4, 12) : shows.slice(0, 8);
+  const recommendedShows = shows.length > 12 ? shows.slice(12, 20) : shows.slice(4, 12);
+
+  const searchShowShelf = podcastShelf(
+    `Shows for “${submitted}”`,
+    'Follow a show to keep up with every new episode.',
+    shows,
+  );
+  const trendingShelf = podcastShelf(
+    'Trending shows',
+    `Popular ${activeTheme.label.toLowerCase()} shows this week.`,
+    trendingShows,
+  );
+  const recentShelf = podcastShelf(
+    'Recently played',
+    'Episodes from your listening history.',
+    recentEpisodeCards,
+    8,
+  );
+  const recommendedShelf = podcastShelf(
+    'Recommended for you',
+    recentEpisodeCards.length
+      ? 'Based on your listening history and this category.'
+      : `Picked from ${activeTheme.label.toLowerCase()} for this session.`,
+    recommendedShows,
+  );
+  const newEpisodeShelf = podcastShelf(
+    'New & recently added',
+    'Fresh episodes in this category.',
+    episodeCards,
+    10,
+  );
   const featuredEpisode = episodes[0];
   const categoryNumber = Math.max(
     1,
@@ -148,7 +216,7 @@ export function PodcastsPage() {
   };
 
   const scrollToEpisodes = () => {
-    document.getElementById('podcast-episodes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('podcast-episodes')?.scrollIntoView({ behavior: 'auto', block: 'start' });
   };
 
   return (
@@ -239,30 +307,57 @@ export function PodcastsPage() {
             </span>
           </aside>
         </div>
+
+        <div className="podcasts-category-row" role="tablist" aria-label="Podcast categories">
+          {PODCAST_CATEGORIES.map((entry) => {
+            const Icon = CATEGORY_ICONS[entry.id] ?? Headphones;
+            const selected = !submitted && category === entry.id;
+            return (
+              <button
+                type="button"
+                key={entry.id}
+                role="tab"
+                aria-selected={selected}
+                className={`podcasts-category ${selected ? 'is-active' : ''}`}
+                onClick={() => {
+                  setSubmitted('');
+                  setCategory(entry.id);
+                }}
+              >
+                <Icon size={14} />
+                {entry.label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
-      <div className="podcasts-category-row" role="tablist" aria-label="Podcast categories">
-        {PODCAST_CATEGORIES.map((entry) => {
-          const Icon = CATEGORY_ICONS[entry.id] ?? Headphones;
-          const selected = !submitted && category === entry.id;
-          return (
-            <button
-              type="button"
-              key={entry.id}
-              role="tab"
-              aria-selected={selected}
-              className={`podcasts-category ${selected ? 'is-active' : ''}`}
-              onClick={() => {
-                setSubmitted('');
-                setCategory(entry.id);
-              }}
-            >
-              <Icon size={14} />
-              {entry.label}
-            </button>
-          );
-        })}
-      </div>
+      {suggestedShows.length && !submitted ? (
+        <section className="podcasts-quick-row podcasts-suggestions" id="podcast-suggestions">
+          <div className="section-heading">
+            <h2>Suggested for you</h2>
+            <p>Four shows picked for this category.</p>
+          </div>
+          <div className="podcasts-quick-grid">
+            {suggestedShows.map((show) => (
+              <button
+                type="button"
+                key={show.id}
+                className="podcast-quick-card"
+                onClick={() => navigate({ page: 'podcast', id: show.browseId || show.id })}
+              >
+                <span className="podcast-quick-art">
+                  {show.thumbnail ? <Artwork src={show.thumbnail} alt="" /> : <Podcast size={22} />}
+                </span>
+                <span className="podcast-quick-text">
+                  <strong>{show.title}</strong>
+                  <span>{show.subtitle || 'Podcast'}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {submitted ? (
         <div className="podcasts-search-note">
@@ -282,7 +377,7 @@ export function PodcastsPage() {
       {loading && !data ? <PageSkeleton /> : null}
       {error && !data ? <ErrorPanel message={error} retry={reload} /> : null}
 
-      {data && !showShelf && !episodes.length ? (
+      {data && !shows.length && !episodes.length ? (
         <EmptyState
           icon={<Podcast size={26} />}
           title="No podcasts found"
@@ -290,42 +385,57 @@ export function PodcastsPage() {
         />
       ) : null}
 
-      {showShelf ? <Shelf shelf={showShelf} grid /> : null}
+      {submitted ? (
+        <>
+          {searchShowShelf ? <Shelf shelf={searchShowShelf} /> : null}
+          {episodes.length ? (
+            <section className="podcasts-episodes" id="podcast-episodes">
+              <div className="section-heading">
+                <h2>Matching episodes</h2>
+              </div>
+              <TrackList tracks={episodes} showArt showAlbum={false} showIndex={false} />
+            </section>
+          ) : null}
+        </>
+      ) : (
+        <>
+          {trendingShelf ? (
+            <div className="podcasts-section">
+              <Shelf shelf={trendingShelf} />
+            </div>
+          ) : null}
 
-      {latestShows.length && !submitted ? (
-        <section className="podcasts-quick-row">
-          <div className="section-heading">
-            <h2>Quick picks</h2>
-          </div>
-          <div className="podcasts-quick-grid">
-            {latestShows.slice(0, 4).map((show) => (
-              <button
-                type="button"
-                key={show.id}
-                className="podcast-quick-card"
-                onClick={() => navigate({ page: 'podcast', id: show.browseId || show.id })}
-              >
-                <span className="podcast-quick-art">
-                  {show.thumbnail ? <img src={proxiedArtwork(show.thumbnail)} alt="" loading="lazy" /> : <Podcast size={22} />}
-                </span>
-                <span className="podcast-quick-text">
-                  <strong>{show.title}</strong>
-                  <span>{show.subtitle || 'Podcast'}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
+          {recentShelf ? (
+            <div className="podcasts-section">
+              <Shelf shelf={recentShelf} />
+            </div>
+          ) : null}
 
-      {episodes.length ? (
-        <section className="podcasts-episodes" id="podcast-episodes">
-          <div className="section-heading">
-            <h2>{submitted ? 'Matching episodes' : 'Latest episodes'}</h2>
-          </div>
-          <TrackList tracks={episodes} showArt showAlbum={false} showIndex={false} />
-        </section>
-      ) : null}
+          {recommendedShelf ? (
+            <div className="podcasts-section">
+              <Shelf shelf={recommendedShelf} />
+            </div>
+          ) : null}
+
+          {newEpisodeShelf ? (
+            <div className="podcasts-section" id="podcast-episodes">
+              <Shelf shelf={newEpisodeShelf} />
+            </div>
+          ) : null}
+
+          {episodes.length ? (
+            <section className="podcasts-section podcasts-crave-list">
+              <div className="section-heading">
+                <h2>Episodes you crave</h2>
+                <p>Ten recommended episodes, picked from this category.</p>
+              </div>
+              <div className="shelf-list-card">
+                <TrackList tracks={episodes.slice(0, 10)} showArt showAlbum={false} showIndex />
+              </div>
+            </section>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

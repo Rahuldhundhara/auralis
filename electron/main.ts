@@ -17,10 +17,13 @@ import {
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import type { PlaylistImportResult, SessionState, Settings, Track } from '../shared/types';
 import { ytm } from './services/ytm';
+import { findChrome, openChromeLogin, disposeChromeLogin } from './services/chromeLogin';
 import { innertube } from './services/innertube';
 import { fallbackStreamTask, fallbackStreamUrl, streams, streamCacheDir } from './services/streams';
 import { lyricsService } from './services/lyrics';
@@ -555,7 +558,14 @@ interface CachedImage {
 }
 
 const imageMemory = new Map<string, CachedImage>();
+/** Short-lived failures stop a dead CDN URL from being retried by every card. */
+const imageFailures = new Map<string, number>();
+const IMAGE_FAILURE_TTL = 60_000;
+const inflightImages = new Map<string, Promise<Response>>();
 let imageMemoryBytes = 0;
+let imageSlots = 0;
+const imageWaiters: Array<() => void> = [];
+const IMAGE_MAX_CONCURRENT = 6;
 let imageCacheDirValue: string | null = null;
 let imageDiskPruneTimer: NodeJS.Timeout | null = null;
 let imageDiskQueue: Promise<void> = Promise.resolve();
@@ -665,32 +675,127 @@ function imageResponse(entry: CachedImage): Response {
   );
 }
 
-async function serveImage(remote: string, headers: Record<string, string>): Promise<Response> {
-  const cached = await readImageCache(remote);
-  if (cached) return imageResponse(cached);
-  // YouTube's CDN is burst-sensitive: retry once before declaring the cover
-  // unavailable rather than tripling the request rate on a transient blip.
-  let last: Response | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await net.fetch(remote, { headers, method: 'GET' });
-      if (response.ok && response.body) {
-        const type = response.headers.get('content-type') || 'image/jpeg';
-        const body = Buffer.from(await response.arrayBuffer());
-        if (body.length) {
-          const entry: CachedImage = { at: Date.now(), type, body };
-          rememberImage(remote, entry);
-          queueImageDiskWrite(remote, entry);
-          return imageResponse(entry);
-        }
-      }
-      last = response;
-    } catch {
-      // Fall through to the retry.
-    }
-    if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 350));
+function acquireImageSlot(): Promise<void> {
+  if (imageSlots < IMAGE_MAX_CONCURRENT) {
+    imageSlots += 1;
+    return Promise.resolve();
   }
-  return last ? withCors(last) : withCors(new Response('Image fetch failed', { status: 502 }));
+  return new Promise((resolve) => imageWaiters.push(() => {
+    imageSlots += 1;
+    resolve();
+  }));
+}
+
+function releaseImageSlot(): void {
+  const next = imageWaiters.shift();
+  if (next) next();
+  else imageSlots -= 1;
+}
+
+interface RemoteImage {
+  status: number;
+  type: string;
+  body: Buffer;
+}
+
+/**
+ * Download a cover with plain Node HTTP. Unlike the renderer-facing fetch
+ * path this cannot be stalled by custom-protocol scheduling, and an explicit
+ * socket timeout keeps one slow CDN host from consuming an image slot.
+ */
+function downloadRemoteImage(
+  remote: string,
+  headers: Record<string, string>,
+  redirects = 3,
+): Promise<RemoteImage> {
+  return new Promise((resolve, reject) => {
+    let url: URL;
+    try {
+      url = new URL(remote);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const client = url.protocol === 'https:' ? https : http;
+    const request = client.get(url, { headers }, (response) => {
+      const status = response.statusCode || 0;
+      if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+        response.resume();
+        if (redirects <= 0) {
+          reject(new Error('too many image redirects'));
+          return;
+        }
+        const next = new URL(response.headers.location, url).toString();
+        downloadRemoteImage(next, headers, redirects - 1).then(resolve, reject);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 8 * 1024 * 1024) {
+          request.destroy(new Error('image too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on('end', () => {
+        resolve({
+          status,
+          type: response.headers['content-type'] || 'image/jpeg',
+          body: Buffer.concat(chunks),
+        });
+      });
+      response.on('error', reject);
+    });
+    request.setTimeout(9_000, () => request.destroy(new Error('image timeout')));
+    request.on('error', reject);
+  });
+}
+
+async function serveImage(remote: string, headers: Record<string, string>): Promise<Response> {
+  const failedAt = imageFailures.get(remote);
+  if (failedAt && Date.now() - failedAt < IMAGE_FAILURE_TTL) {
+    return withCors(new Response('Image temporarily unavailable', { status: 502 }));
+  }
+  const existing = inflightImages.get(remote);
+  if (existing) return existing;
+
+  const task = (async () => {
+    await acquireImageSlot();
+    try {
+      const cached = await readImageCache(remote);
+      if (cached) return imageResponse(cached);
+      // YouTube's CDN is burst-sensitive: retry once before declaring the
+      // cover unavailable rather than tripling the request rate on a blip.
+      let lastStatus = 502;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const image = await downloadRemoteImage(remote, headers);
+          lastStatus = image.status;
+          if (image.status >= 200 && image.status < 300 && image.body.length) {
+            const entry: CachedImage = { at: Date.now(), type: image.type, body: image.body };
+            rememberImage(remote, entry);
+            queueImageDiskWrite(remote, entry);
+            imageFailures.delete(remote);
+            return imageResponse(entry);
+          }
+        } catch {
+          // Fall through to the retry.
+        }
+        if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      imageFailures.set(remote, Date.now());
+      const status = lastStatus >= 400 && lastStatus <= 599 ? lastStatus : 502;
+      return withCors(new Response('Image fetch failed', { status }));
+    } finally {
+      releaseImageSlot();
+      inflightImages.delete(remote);
+    }
+  })();
+
+  inflightImages.set(remote, task);
+  return task;
 }
 
 function registerMediaProtocol() {
@@ -716,7 +821,6 @@ function registerMediaProtocol() {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
           Referer: 'https://music.youtube.com/',
-          Origin: 'https://music.youtube.com',
           Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
         };
         const response = await serveImage(remote, headers);
@@ -773,7 +877,7 @@ function withCors(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function openLoginWindow(): Promise<SessionState> {
+async function openEmbeddedLoginWindow(): Promise<SessionState> {
   if (loginWindow) {
     loginWindow.focus();
     return ytm.session();
@@ -846,6 +950,24 @@ async function openLoginWindow(): Promise<SessionState> {
       complete(ytm.session());
     });
   });
+}
+
+/**
+ * Linux keeps the old embedded fallback for machines without Chrome, but a
+ * real Chrome window avoids Google's "This browser or app may not be secure"
+ * block. The normal Chrome profile is never touched.
+ */
+async function openLoginWindow(): Promise<SessionState> {
+  if (process.platform === 'linux' && findChrome()) {
+    try {
+      const state = await openChromeLogin();
+      broadcast('session-change', state);
+      return state;
+    } catch (error) {
+      console.warn('[auralis] Chrome sign-in failed; using embedded window:', error);
+    }
+  }
+  return openEmbeddedLoginWindow();
 }
 
 function settingsPatchHandlers() {
@@ -1263,6 +1385,7 @@ async function bootstrap() {
 app.on('before-quit', () => {
   quitting = true;
   flushStores();
+  disposeChromeLogin();
   void discord.clear();
   // A second instance quits before Electron is ready. Calling globalShortcut
   // then throws and shows an error dialog instead of focusing the first window.

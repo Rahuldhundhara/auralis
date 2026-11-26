@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { DownloadItem, DownloadProgress, StreamInfo, Track } from '../../shared/types';
 import { downloadsDir, ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 import { innertube } from './innertube';
+import { playableVideoId } from './ytm-parse';
 
 const CACHE_TTL_MS = 90 * 60_000;
 const STREAM_CACHE_MAX_BYTES = 512 * 1024 * 1024;
@@ -159,11 +160,13 @@ function cookieFile(): string | null {
   return file;
 }
 
-function commonArgs(): string[] {
+function commonArgs(useCookies = true): string[] {
   const args: string[] = ['--no-warnings', '--no-playlist'];
   const settings = settingsStore.get();
-  const cookies = cookieFile();
-  if (cookies) args.push('--cookies', cookies);
+  if (useCookies) {
+    const cookies = cookieFile();
+    if (cookies) args.push('--cookies', cookies);
+  }
   if (settings.proxy?.trim()) args.push('--proxy', settings.proxy.trim());
   return args;
 }
@@ -441,7 +444,8 @@ export class StreamService {
   }
 
   private async resolveRemote(track: Track, quality: string): Promise<StreamInfo> {
-    const fast = await fastPlayerUrl(track.id, quality);
+    const videoId = playableVideoId(track.id) || track.id;
+    const fast = await fastPlayerUrl(videoId, quality);
     let url: string;
     let format = 'audio';
     if (fast) {
@@ -491,13 +495,24 @@ export class StreamService {
       '-f',
       format,
       '-g',
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+      `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(track.id) || track.id)}`,
     ];
     let lastError: Error | undefined;
-    const attempts = [['--extractor-args', 'youtube:player_client=android'], []];
-    for (const extractorArgs of attempts) {
+    // Saved cookies can go stale after a YouTube session rotation. When that
+    // happens yt-dlp sees a restricted format list, so retry the same request
+    // anonymously before giving up on the track.
+    const attempts = [
+      { args: [] as string[], cookies: false },
+      { args: ['--extractor-args', 'youtube:player_client=android'], cookies: false },
+      { args: [] as string[], cookies: true },
+      { args: ['--extractor-args', 'youtube:player_client=android'], cookies: true },
+    ];
+    for (const attempt of attempts) {
       try {
-        const { stdout } = await runYtdlp([...commonArgs(), ...extractorArgs, ...base], timeoutMs);
+        const { stdout } = await runYtdlp(
+          [...commonArgs(attempt.cookies), ...attempt.args, ...base],
+          timeoutMs,
+        );
         const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line));
         if (url) return url;
         lastError = new Error('yt-dlp did not return a playable audio URL.');
@@ -505,7 +520,7 @@ export class StreamService {
         lastError = error instanceof Error ? error : new Error(String(error));
         // A genuinely unavailable/private video will not succeed with the
         // fallback either; avoid doubling the error latency.
-        if (/video is unavailable|video unavailable|private video|removed by the uploader|account.*terminated/i.test(lastError.message)) break;
+        if (/video is unavailable|video unavailable|removed by the uploader|account.*terminated/i.test(lastError.message)) break;
       }
     }
     throw lastError || new Error('yt-dlp did not return a playable audio URL.');
@@ -554,7 +569,7 @@ export class StreamService {
           qualityFormat(settingsStore.get().audioQuality),
           '-o',
           output,
-          `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+          `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(track.id) || track.id)}`,
         ];
         await runYtdlp(args, 180_000);
         const file = cachedAudioFile(track.id);
@@ -651,7 +666,7 @@ export class StreamService {
       qualityFormat(settingsStore.get().downloadQuality === 'high' ? 'high' : settingsStore.get().downloadQuality),
       '-o',
       output,
-      `https://music.youtube.com/watch?v=${encodeURIComponent(track.id)}`,
+      `https://music.youtube.com/watch?v=${encodeURIComponent(playableVideoId(track.id) || track.id)}`,
     ];
 
     const id = newId('dl');

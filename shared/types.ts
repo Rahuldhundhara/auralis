@@ -22,6 +22,9 @@ export interface Thumbnail {
 export interface ArtistRef {
   id?: string;
   name: string;
+  /** Resolved from YouTube Music at taste-selection time so Home never has to
+   *  re-search for a picture the user already picked. */
+  thumbnail?: string;
 }
 
 export interface AlbumRef {

@@ -14,6 +14,13 @@ import type {
 
 export type Raw = any;
 
+/** Normalize YouTube Music's browse wrappers into a playable video id. */
+export function playableVideoId(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const id = value.startsWith('MPED') && value.length === 15 ? value.slice(4) : value;
+  return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : undefined;
+}
+
 export const textOf = (value: Raw): string => {
   if (!value) return '';
   if (typeof value === 'string') return value;
@@ -291,7 +298,7 @@ export function parseResponsiveItem(
     .map((c: Raw) => textOf(c?.musicResponsiveListItemFixedColumnRenderer?.text))
     .join(' ');
   const duration = parsedSubtitle.duration || parseDuration(fixed);
-  const id = watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId;
+  const id = playableVideoId(watchId || renderer?.navigationEndpoint?.browseEndpoint?.browseId);
   if (!id) return undefined;
   const videoType =
     nav?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
@@ -385,7 +392,7 @@ function humanDurationSeconds(text: string): number {
 function parseMultiRowItem(renderer: Raw): Track | undefined {
   const title = textOf(renderer?.title).trim();
   const watch = renderer?.onTap?.watchEndpoint || renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint;
-  const id = watch?.videoId;
+  const id = playableVideoId(watch?.videoId);
   if (!title || !id) return undefined;
   const durationText = textOf(renderer?.playbackProgress?.musicPlaybackProgressRenderer?.durationText);
   return {
@@ -394,7 +401,7 @@ function parseMultiRowItem(renderer: Raw): Track | undefined {
     title,
     artists: [],
     duration: humanDurationSeconds(durationText),
-    thumbnail: thumbnailsOf(renderer?.thumbnail),
+    thumbnail: thumbnailsOf(renderer),
     isVideo: false,
     source: 'youtube',
   };
@@ -811,7 +818,7 @@ function parseMusicCardShelf(renderer: Raw): Card | undefined {
   // MPED pages are non-music audio tracks/podcast episodes. Their browse id
   // wraps the real playable video id; expose that track directly so cards can
   // play it instead of trying to browse a synthetic id.
-  const trackId = id.startsWith('MPED') && id.length === 15 ? id.slice(4) : undefined;
+  const trackId = playableVideoId(id);
   // Song/video/episode top results are directly playable. Build the track from
   // the real artist/album runs instead of leaving callers to guess from the
   // subtitle's first chip — that chip is often the "Song" type label.
@@ -900,10 +907,72 @@ function searchCard(renderer: Raw, track: Track, type: Card['type'], subtitle: s
   };
 }
 
+/** Responsive rows are also used for artists, albums and podcasts now. Those
+ *  rows carry a browseId, not a playable videoId, so `parseResponsiveItem`
+ *  cannot represent them. Build a Card directly from the same flex columns. */
+function responsiveSearchCard(renderer: Raw, type: Card['type'], subtitle: string): Card | undefined {
+  const endpoint = endpointOf(firstEndpointNav(renderer));
+  const browseId = endpoint?.browseId;
+  const id = browseId || endpoint?.playlistId || endpoint?.videoId;
+  const title = textOf(renderer?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text).trim();
+  if (!title || !id) return undefined;
+
+  const runs: Raw[] = [];
+  for (const column of renderer?.flexColumns || []) {
+    const columnRuns = column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+    if (Array.isArray(columnRuns)) runs.push(...columnRuns);
+  }
+  const firstRuns = renderer?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.length || 0;
+  const parsed = parseSubtitleRuns(runs.slice(firstRuns));
+  const label = subtitle.split(' • ')[0]?.trim().toLowerCase() || '';
+  let resolved = type;
+  if (resolved === 'album' && label.includes('single')) resolved = 'single';
+  if (resolved === 'album' && label === 'ep') resolved = 'ep';
+  const trackCount = subtitle.match(/(\d+)\s+(songs?|tracks?|episodes?)/i);
+  return {
+    type: resolved,
+    id,
+    browseId,
+    title,
+    subtitle: subtitle || undefined,
+    thumbnail: thumbnailsOf(renderer?.thumbnail),
+    round: resolved === 'artist' || resolved === 'profile',
+    artists: parsed.artists.filter((artist) => artist.name),
+    year: subtitle.match(/\b(19|20)\d{2}\b/)?.[0],
+    trackCount: trackCount ? Number(trackCount[1]) : undefined,
+    params: endpoint?.params,
+  };
+}
+
 function addSearchRenderer(result: SearchResults, renderer: Raw, shelfTitle = ''): void {
   const pageType = navigationPageType(renderer);
   const subtitle = responsiveSubtitle(renderer);
   const label = (subtitle.split(' • ')[0] || shelfTitle).trim().toLowerCase();
+  const nav = firstEndpointNav(renderer);
+  const endpoint = endpointOf(nav);
+  const watchId =
+    renderer?.playlistItemData?.videoId ||
+    nav?.watchEndpoint?.videoId ||
+    renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint?.watchEndpoint?.videoId;
+
+  // Browse-only rows: artists, albums, playlists, podcast shows.
+  if (!watchId && (endpoint?.browseId || endpoint?.playlistId)) {
+    let type: Card['type'] = typeFromId(endpoint?.browseId, 'playlist');
+    if (pageType === 'MUSIC_PAGE_TYPE_ARTIST' || /^artist\b/.test(label)) type = 'artist';
+    else if (pageType === 'MUSIC_PAGE_TYPE_USER_CHANNEL' || /^profile\b/.test(label)) type = 'profile';
+    else if (pageType === 'MUSIC_PAGE_TYPE_ALBUM' || /^(album|single|ep)\b/.test(label)) type = 'album';
+    else if (pageType === 'MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE' || /^podcast\b/.test(label)) type = 'podcast';
+    else if (pageType === 'MUSIC_PAGE_TYPE_PLAYLIST' || /^playlist\b/.test(label)) type = 'playlist';
+    const card = responsiveSearchCard(renderer, type, subtitle);
+    if (!card) return;
+    if (card.type === 'album' || card.type === 'single' || card.type === 'ep') result.albums.push(card);
+    else if (card.type === 'artist' || card.type === 'profile') result.artists.push(card);
+    else if (card.type === 'podcast') result.podcasts.push(card);
+    else result.playlists.push(card);
+    return;
+  }
+
   const track = parseResponsiveItem(renderer, label.includes('episode') ? 'episode' : undefined);
   if (!track) return;
 
@@ -965,6 +1034,9 @@ export function parseSearch(json: Raw): SearchResults {
       for (const child of section.itemSectionRenderer.contents || []) {
         if (child?.musicResponsiveListItemRenderer) {
           addSearchRenderer(result, child.musicResponsiveListItemRenderer);
+        } else if (child?.musicMultiRowListItemRenderer) {
+          const track = parseMultiRowItem(child.musicMultiRowListItemRenderer);
+          if (track) result.episodes.push(track);
         }
       }
       cont = continuationOf(section.itemSectionRenderer) || cont;
@@ -976,6 +1048,11 @@ export function parseSearch(json: Raw): SearchResults {
     for (const item of shelf.contents || []) {
       if (item?.musicResponsiveListItemRenderer) {
         addSearchRenderer(result, item.musicResponsiveListItemRenderer, title);
+      } else if (item?.musicMultiRowListItemRenderer) {
+        // Podcast episode filters carry multi-row renderers instead of the
+        // responsive rows used by songs.
+        const track = parseMultiRowItem(item.musicMultiRowListItemRenderer);
+        if (track) result.episodes.push(track);
       } else if (item?.musicTwoRowItemRenderer) {
         const card = parseTwoRowItem(item.musicTwoRowItemRenderer);
         if (!card) continue;
@@ -991,7 +1068,7 @@ export function parseSearch(json: Raw): SearchResults {
   if (!result.top) {
     result.top = result.songs[0]
       ? { type: 'song', id: result.songs[0].id, title: result.songs[0].title, subtitle: result.songs[0].artists.map((a) => a.name).join(', '), thumbnail: result.songs[0].thumbnail }
-      : result.artists[0] || result.albums[0] || result.playlists[0] || result.podcasts[0];
+      : result.artists[0] || result.albums[0] || result.playlists[0] || result.podcasts[0] || result.episodes[0];
   }
   return result;
 }
@@ -1222,6 +1299,9 @@ export function parseSearchContinuation(json: Raw): SearchResults {
   for (const item of shelf?.contents || []) {
     if (item?.musicResponsiveListItemRenderer) {
       addSearchRenderer(results, item.musicResponsiveListItemRenderer, title);
+    } else if (item?.musicMultiRowListItemRenderer) {
+      const track = parseMultiRowItem(item.musicMultiRowListItemRenderer);
+      if (track) results.episodes.push(track);
     }
   }
   for (const section of continuation?.contents || []) {
@@ -1229,6 +1309,9 @@ export function parseSearchContinuation(json: Raw): SearchResults {
       for (const item of section.itemSectionRenderer.contents || []) {
         if (item?.musicResponsiveListItemRenderer) {
           addSearchRenderer(results, item.musicResponsiveListItemRenderer);
+        } else if (item?.musicMultiRowListItemRenderer) {
+          const track = parseMultiRowItem(item.musicMultiRowListItemRenderer);
+          if (track) results.episodes.push(track);
         }
       }
     }

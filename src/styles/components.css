@@ -66,7 +66,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   padding: 2px 2px 7px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scrollbar-width: none;
 }
 
@@ -308,7 +308,7 @@
   background: rgba(12, 12, 18, 0.68);
   color: #f5f2ff;
   opacity: 0;
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
   transition: opacity var(--fast);
 }
 
@@ -327,7 +327,7 @@
   border-radius: 7px;
   background: rgba(9, 9, 14, 0.62);
   color: #f2efff;
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 
 .card-text {
@@ -608,7 +608,7 @@
   padding: 0 19px;
   border-top: 1px solid var(--border);
   background: var(--player-bg);
-  backdrop-filter: blur(22px);
+  backdrop-filter: none;
   z-index: 90;
 }
 
@@ -855,7 +855,7 @@
   display: flex;
   justify-content: flex-end;
   background: rgba(4, 4, 8, 0.35);
-  backdrop-filter: blur(2px);
+  backdrop-filter: none;
   animation: fade-in 160ms var(--ease);
 }
 
@@ -1295,7 +1295,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(var(--bg-rgb), 0.35);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
 }
 
 .np-tabs button {
@@ -1338,7 +1338,7 @@
   border: 1px solid var(--border);
   border-radius: 18px;
   background: rgba(var(--surface-rgb), 0.42);
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
 }
 
 .np-about {
@@ -2117,7 +2117,7 @@
   align-items: center;
   justify-content: center;
   background: rgba(4, 4, 8, 0.55);
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
   animation: fade-in 160ms var(--ease);
 }
 
@@ -2809,7 +2809,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   background: rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
 }
 
 .np-tabs .np-tab {
@@ -3569,7 +3569,7 @@
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.13);
   color: var(--genre-accent);
-  backdrop-filter: blur(6px);
+  backdrop-filter: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
   transition: transform 180ms var(--ease), background 180ms var(--ease);
 }

@@ -121,6 +121,12 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const [loadingMore, setLoadingMore] = useState(false);
   const addHistory = useAppStore((state) => state.addSearchHistory);
   const key = FILTER_KEYS[filter];
+  // SearchPage is kept alive across top-bar searches now. A new query must
+  // still start from the requested filter instead of inheriting the previous
+  // result tab.
+  useEffect(() => {
+    setFilter(initialFilter && FILTERS.includes(initialFilter as any) ? initialFilter : 'All');
+  }, [query, initialFilter]);
   const { data, loading, error, reload, setData } = useAsync<SearchResults>(
     () => (query ? window.auralis.yt.search(query, key) : Promise.resolve({ songs: [], videos: [], albums: [], artists: [], playlists: [], podcasts: [], episodes: [], profiles: [] })),
     [query, key],

@@ -3,7 +3,6 @@ import type { PodcastArtVariant } from '../lib/podcastThemes';
 
 interface SceneIds {
   vignette: string;
-  grain: string;
   soft: string;
   glow: string;
   grid: string;
@@ -24,7 +23,6 @@ export function PodcastScene({ art }: { art: PodcastArtVariant }) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const ids: SceneIds = {
     vignette: `${uid}-vignette`,
-    grain: `${uid}-grain`,
     soft: `${uid}-soft`,
     glow: `${uid}-glow`,
     grid: `${uid}-grid`,
@@ -80,23 +78,11 @@ export function PodcastScene({ art }: { art: PodcastArtVariant }) {
         <filter id={ids.glow} x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="10" />
         </filter>
-        <filter id={ids.grain} x="0" y="0" width="100%" height="100%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.78" numOctaves="3" seed="7" stitchTiles="stitch" />
-          <feColorMatrix type="saturate" values="0" />
-        </filter>
       </defs>
 
       <rect width="1600" height="560" fill="var(--pc-base)" />
       {sceneFor(art, ids)}
       <rect width="1600" height="560" fill={`url(#${ids.vignette})`} pointerEvents="none" />
-      <rect
-        width="1600"
-        height="560"
-        filter={`url(#${ids.grain})`}
-        opacity="0.13"
-        style={{ mixBlendMode: 'soft-light' }}
-        pointerEvents="none"
-      />
     </svg>
   );
 }

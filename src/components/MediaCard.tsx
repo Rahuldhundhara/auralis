@@ -87,7 +87,7 @@ export function MediaCard({
           aria-label={card.track ? `Play ${card.title}` : `Open ${card.title}`}
           title={card.title}
         >
-          <Artwork src={card.thumbnail} alt={card.title} round={round} className="card-art" />
+          <Artwork src={card.thumbnail} alt={card.title} round={round} eager={round} className="card-art" />
           {card.type === 'podcast' ? (
             <span className="card-kind" title="Podcast">
               <Podcast size={13} />
@@ -207,7 +207,15 @@ export function Shelf({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigateEndpoint = useNavStore((state) => state.navigateEndpoint);
-  const items = shelf.items.filter((card) => card.type !== 'video' && !card.track?.isVideo && card.track?.type !== 'video');
+  // Podcast episodes are YouTube videos at the source (`isVideo: true`) but
+  // are first-class audio content here. Only filter actual video songs out of
+  // shelves; keep playable episode cards visible in podcast rows.
+  const items = shelf.items.filter(
+    (card) =>
+      card.type !== 'video' &&
+      card.track?.type !== 'video' &&
+      (card.type === 'episode' || !card.track?.isVideo),
+  );
   const shown = maxItems && maxItems > 0 ? items.slice(0, maxItems) : items;
   const tracks = tracksFromPage({ shelves: [{ ...shelf, items: shown }] });
   const queue = tracks.length ? tracks : queueForShelf(shown);
@@ -236,10 +244,10 @@ export function Shelf({
             ) : null}
             {!showAsList && shown.length > 3 ? (
               <div className="shelf-scroll-buttons">
-                <IconButton label="Scroll left" size="sm" variant="surface" onClick={() => scrollRef.current?.scrollBy({ left: -560, behavior: 'smooth' })}>
+                <IconButton label="Scroll left" size="sm" variant="surface" onClick={() => scrollRef.current?.scrollBy({ left: -560, behavior: 'auto' })}>
                   <ChevronLeft size={16} />
                 </IconButton>
-                <IconButton label="Scroll right" size="sm" variant="surface" onClick={() => scrollRef.current?.scrollBy({ left: 560, behavior: 'smooth' })}>
+                <IconButton label="Scroll right" size="sm" variant="surface" onClick={() => scrollRef.current?.scrollBy({ left: 560, behavior: 'auto' })}>
                   <ChevronRight size={16} />
                 </IconButton>
               </div>

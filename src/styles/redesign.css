@@ -81,7 +81,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
   color: var(--accent-light, #34d399);
   font-size: 11px;
   font-weight: 700;
@@ -172,7 +172,7 @@
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   border-color: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
 }
 
 .vibe-btn-secondary:hover { background: rgba(255, 255, 255, 0.15); border-color: rgba(var(--accent-rgb), 0.4); }
@@ -193,7 +193,7 @@
   border-radius: 16px;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
   flex-shrink: 0;
   align-self: flex-start;
 }
@@ -984,7 +984,7 @@
   font-size: 12.5px;
   font-weight: 650;
   white-space: nowrap;
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
   transition: background var(--fast), border-color var(--fast), color var(--fast), transform var(--fast), box-shadow var(--fast);
 }
 
@@ -1730,8 +1730,8 @@
 /* Frosted, translucent player bar */
 .player-bar {
   background: color-mix(in srgb, var(--sidebar) 72%, transparent);
-  -webkit-backdrop-filter: blur(26px) saturate(1.35);
-  backdrop-filter: blur(26px) saturate(1.35);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   border-top: 1px solid rgba(52, 211, 153, 0.14);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
@@ -1787,8 +1787,8 @@
 .player-bar {
   overflow: hidden;
   background: rgba(6, 11, 9, 0.5);
-  -webkit-backdrop-filter: blur(32px) saturate(1.5);
-  backdrop-filter: blur(32px) saturate(1.5);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   border-top: 1px solid rgba(52, 211, 153, 0.16);
 }
 
@@ -2135,10 +2135,10 @@ h1, h2, h3, span, div {
   z-index: 0;
   background-position: center;
   background-size: cover;
-  filter: blur(60px) saturate(1.4);
-  opacity: 0.55;
-  transform: scale(1.15);
-  transition: background-image 1.2s ease, opacity 0.8s ease;
+  filter: blur(34px) saturate(1.25);
+  opacity: 0.5;
+  transform: scale(1.08);
+  transition: opacity 0.4s ease;
 }
 
 .dynamic-hero-shade {
@@ -2244,8 +2244,8 @@ h1, h2, h3, span, div {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   background: rgba(8, 12, 10, 0.62);
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   color: #f7fffb;
   font-size: 12.5px;
   font-weight: 700;
@@ -2310,11 +2310,11 @@ h1, h2, h3, span, div {
 
 /* Cross-fade hero backdrop when track changes */
 .dynamic-hero-backdrop {
-  transition: background-image 1.1s ease, opacity 0.7s ease, background-color 0.8s ease, transform 1.2s ease;
+  transition: opacity 0.4s ease, background-color 0.4s ease;
 }
 
 .dynamic-hero {
-  transition: background-color 0.8s ease, border-color 0.8s ease;
+  transition: background-color 0.4s ease, border-color 0.4s ease;
 }
 
 /* Global focus smoothness (no outline flash / heavy ring on most elements) */
@@ -2720,7 +2720,7 @@ h1, h2, h3, span, div {
     linear-gradient(90deg, rgba(52, 211, 153, 0.06), transparent 48%),
     linear-gradient(180deg, rgba(16, 20, 26, 0.84), rgba(10, 13, 17, 0.8));
   border-color: rgba(255, 255, 255, 0.075);
-  backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: none;
 }
 
 .top-search .search-field:hover {

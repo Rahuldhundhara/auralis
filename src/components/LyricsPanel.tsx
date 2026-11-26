@@ -129,7 +129,9 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
     let frame = 0;
     let last = 0;
     const tick = (time: number) => {
-      if (time - last >= 40) {
+      // 10 Hz is enough for karaoke highlighting and avoids re-rendering the
+      // panel 25 times a second while music is playing.
+      if (time - last >= 100 && !document.hidden) {
         last = time;
         // The store position is the user's chosen timestamp during a seek and
         // the element's real position otherwise. When the two diverge (a seek
@@ -141,7 +143,8 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
         // genuinely lands, then return to the real audio clock.
         const audioPos = getAudioPosition();
         const storePos = usePlayerStore.getState().position;
-        setSmoothPosition(isSeeking() ? storePos : audioPos);
+        const next = isSeeking() ? storePos : audioPos;
+        setSmoothPosition((prev) => (Math.abs(prev - next) > 0.12 ? next : prev));
       }
       frame = window.requestAnimationFrame(tick);
     };

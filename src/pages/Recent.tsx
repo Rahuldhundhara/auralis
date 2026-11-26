@@ -5,7 +5,7 @@ import { usePlayerStore } from '../stores/player';
 import { confirmDialog, useUiStore } from '../stores/ui';
 import { formatLongDuration, shuffleArray, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
-import { proxiedArtwork } from '../lib/image';
+import { displayArtwork } from '../lib/image';
 import { Artwork, Button, EmptyState, ErrorPanel, IconButton, PageSkeleton } from '../components/primitives';
 import { ShelfGrid } from '../components/MediaCard';
 import { TrackList } from '../components/TrackList';
@@ -39,7 +39,7 @@ export function RecentPage() {
   return (
     <div className="page recent-page">
       <section className="detail-hero detail-hero-recent">
-        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${proxiedArtwork(cover)})` } : undefined} aria-hidden="true" />
+        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${displayArtwork(cover)})` } : undefined} aria-hidden="true" />
         <div className="detail-hero-inner">
           <div className="detail-cover recent-cover">
             <Artwork src={cover} alt="Recently played" className="detail-art" />

@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { create } from 'zustand';
 import { initials } from '../lib/format';
-import { proxiedArtwork } from '../lib/image';
+import { displayArtwork } from '../lib/image';
 
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
@@ -99,13 +99,15 @@ export function Artwork({
   size?: number;
   eager?: boolean;
 }) {
-  const resolved = proxiedArtwork(src);
+  const resolved = displayArtwork(src);
   const imgRef = useRef<HTMLImageElement>(null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  // A new track must never inherit the previous cover while its own image is
-  // still in flight: reset both flags whenever the source changes.
+  // Chromium's native lazy loading stalls for `auralis-media://` covers inside
+  // kept-alive pages. The proxy already caps concurrency and deduplicates
+  // requests, so eager mounting is both reliable and bounded here. Reset the
+  // flags so a new track never inherits the previous cover while loading.
   useEffect(() => {
     setFailed(false);
     setLoaded(false);
@@ -124,7 +126,7 @@ export function Artwork({
           ref={imgRef}
           src={resolved}
           alt={alt}
-          loading={eager ? 'eager' : 'lazy'}
+          loading="eager"
           fetchPriority={eager ? 'high' : 'auto'}
           decoding="async"
           draggable={false}

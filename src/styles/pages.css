@@ -214,7 +214,7 @@
   opacity: 0;
   transform: translateY(-50%);
   transition: opacity var(--fast), background var(--fast);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
 }
 
 .quick-carousel-wrap:hover .quick-carousel-arrow,
@@ -830,7 +830,7 @@
   background: rgba(10, 10, 16, 0.38);
   color: #ffffff;
   box-shadow: 0 12px 35px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
   transform: translate(-50%, -50%);
 }
 
@@ -943,7 +943,7 @@
   border-radius: 11px;
   background: rgba(var(--surface-rgb), 0.4);
   text-align: left;
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
   transition: background var(--fast), border-color var(--fast);
 }
 
@@ -1192,7 +1192,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(var(--surface-rgb), 0.4);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 
 .download-stat.is-warning {
@@ -1682,7 +1682,7 @@
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.16em;
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
   transition: color 520ms var(--ease);
 }
 
@@ -1811,7 +1811,7 @@
   border-radius: 999px;
   background: var(--pc-search);
   color: var(--pc-muted);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
   transition: border-color 300ms var(--ease), box-shadow 300ms var(--ease), background 520ms var(--ease);
 }
 
@@ -1857,7 +1857,7 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
   background: linear-gradient(155deg, rgba(12, 14, 20, 0.72), rgba(4, 6, 10, 0.5));
-  backdrop-filter: blur(14px);
+  backdrop-filter: none;
   box-shadow: 0 20px 50px -30px rgba(0, 0, 0, 0.9);
 }
 
@@ -1910,17 +1910,13 @@
   text-transform: uppercase;
 }
 
-.podcasts-hero-scene .pc-drift {
-  animation: podcasts-scene-drift 18s ease-in-out infinite alternate;
-  transform-origin: center;
-}
-
-.podcasts-hero-scene .pc-pulse {
-  animation: podcasts-scene-pulse 4.2s ease-in-out infinite;
-}
-
+/* Keep the scene static between category crossfades. Continuous transform
+   animations on a full-bleed SVG force repaints and were the main source of
+   scroll jank on the podcast page. */
+.podcasts-hero-scene .pc-drift,
+.podcasts-hero-scene .pc-pulse,
 .podcasts-hero-scene .pc-float {
-  animation: podcasts-scene-float 7s ease-in-out infinite alternate;
+  animation: none;
 }
 
 @keyframes podcasts-scene-drift {
@@ -2431,7 +2427,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
 }
 
 .explore-feature-queue {
@@ -3211,7 +3207,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
 }
 
 .explore-feature-queue {

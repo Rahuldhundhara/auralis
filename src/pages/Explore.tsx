@@ -575,6 +575,7 @@ export function ExplorePage(_props: { tab?: 'explore' | 'charts' | 'new' | 'mood
               onClick={toggleHeroPlayback}
               disabled={mixing}
               aria-label={isPlaying ? 'Pause' : 'Play'}
+              data-playing={isPlaying ? 'true' : 'false'}
             >
               {isPlaying ? (
                 <Pause size={20} fill="currentColor" strokeWidth={0} />

@@ -89,7 +89,11 @@ export function Onboarding({ onComplete, editing = false }: OnboardingProps) {
     if (!artist.id) return;
     setSelectedArtists((prev) => (isArtistSelected(artist)
       ? prev.filter((entry) => entry.id !== artist.id)
-      : [...prev, { id: artist.id, name: artist.name }]));
+      : [...prev, {
+          id: artist.id,
+          name: artist.name,
+          thumbnail: artist.thumbnail || getResolvedArtistArt(artist.name).thumbnail,
+        }]));
   };
 
   /* --------------------------------------------------------------
@@ -173,7 +177,13 @@ export function Onboarding({ onComplete, editing = false }: OnboardingProps) {
     void resolveArtistArt(last.name).then((resolved) => {
       if (!resolved.browseId) return;
       setSelectedArtists((prev) => prev.map((artist) =>
-        artist.id === last.id ? { ...artist, id: resolved.browseId as string } : artist,
+        artist.id === last.id
+          ? {
+              ...artist,
+              id: resolved.browseId as string,
+              thumbnail: artist.thumbnail || resolved.thumbnail,
+            }
+          : artist,
       ));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

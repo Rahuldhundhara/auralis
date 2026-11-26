@@ -27,16 +27,16 @@ import { settingsStore, sessionStore } from './store';
 import { streams } from './streams';
 
 export const SEARCH_FILTERS: Record<string, string> = {
-  songs: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D',
-  videos: 'EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D',
-  albums: 'EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D',
-  artists: 'EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D',
-  playlists: 'EgWKAQIoAWoKEAkQChAFEAMQBA%3D%3D',
+  songs: 'EgWKAQIIAWoMEA4QChADEAQQCRAF',
+  videos: 'EgWKAQIQAWoMEA4QChADEAQQCRAF',
+  albums: 'EgWKAQIYAWoMEA4QChADEAQQCRAF',
+  artists: 'EgWKAQIgAWoMEA4QChADEAQQCRAF',
+  playlists: 'Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D',
   featuredPlaylists: 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D',
   communityPlaylists: 'EgeKAQQoAEABagoQAxAEEAoQCRAF',
-  podcasts: 'EgWKAQJQAWoKEAkQChAFEAMQBA%3D%3D',
-  episodes: 'EgWKAQJYAWoKEAkQChAFEAMQBA%3D%3D',
-  profiles: 'EgWKAQJYAWoSEAUQCRADEAQQEBAVEAoQDhAR',
+  podcasts: 'EgWKAQJQAWoMEA4QChADEAQQCRAF',
+  episodes: 'EgWKAQJIAWoMEA4QChADEAQQCRAF',
+  profiles: 'EgWKAQJYAWoMEA4QChADEAQQCRAF',
 };
 
 function syncLocale() {
@@ -54,10 +54,33 @@ export class YtmService {
   private homeCache?: { at: number; page: BrowsePage };
   private searchCache = new Map<string, { at: number; result: SearchResults }>();
   private suggestionCache = new Map<string, { at: number; result: SearchSuggestion[] }>();
+  private pageCache = new Map<string, { at: number; page: BrowsePage }>();
 
   private async browse(id?: string, params?: string, continuation?: string, login = false): Promise<any> {
     syncLocale();
     return innertube.browse(id, params, continuation, login);
+  }
+
+  /**
+   * Browse responses are immutable snapshots and are shared by Home, Explore
+   * and detail pages. A short cache prevents repeat navigation from paying
+   * the round-trip twice while still picking up fresh content during a
+   * listening session.
+   */
+  private async cachedPage(
+    key: string,
+    ttlMs: number,
+    load: () => Promise<BrowsePage>,
+  ): Promise<BrowsePage> {
+    const cached = this.pageCache.get(key);
+    if (cached && Date.now() - cached.at < ttlMs) return cached.page;
+    const page = await load();
+    if (this.pageCache.size >= 64) {
+      const oldest = this.pageCache.keys().next().value;
+      if (oldest) this.pageCache.delete(oldest);
+    }
+    this.pageCache.set(key, { at: Date.now(), page });
+    return page;
   }
 
   async home(continuation?: string): Promise<BrowsePage> {
@@ -86,19 +109,27 @@ export class YtmService {
   }
 
   async explore(): Promise<BrowsePage> {
-    return parseBrowse(await this.browse('FEmusic_explore'));
+    return this.cachedPage('explore', 5 * 60_000, async () =>
+      parseBrowse(await this.browse('FEmusic_explore')),
+    );
   }
 
   async charts(): Promise<BrowsePage> {
-    return parseBrowse(await this.browse('FEmusic_charts'));
+    return this.cachedPage('charts', 5 * 60_000, async () =>
+      parseBrowse(await this.browse('FEmusic_charts')),
+    );
   }
 
   async newReleases(): Promise<BrowsePage> {
-    return parseBrowse(await this.browse('FEmusic_new_releases_albums'));
+    return this.cachedPage('new-releases', 5 * 60_000, async () =>
+      parseBrowse(await this.browse('FEmusic_new_releases_albums')),
+    );
   }
 
   async moods(): Promise<BrowsePage> {
-    return parseBrowse(await this.browse('FEmusic_moods_and_genres'));
+    return this.cachedPage('moods', 5 * 60_000, async () =>
+      parseBrowse(await this.browse('FEmusic_moods_and_genres')),
+    );
   }
 
   async browsePage(id?: string, params?: string, continuation?: string): Promise<BrowsePage> {
@@ -107,12 +138,16 @@ export class YtmService {
       return raw?.continuationContents ? parseBrowseContinuation(raw) : parseBrowse(raw);
     }
     if (!id && params) {
-      const raw = await this.browse(undefined, params);
-      return parseBrowse(raw);
+      return this.cachedPage(`params:${params}`, 2 * 60_000, async () =>
+        parseBrowse(await this.browse(undefined, params)),
+      );
     }
     if (!id) return { shelves: [] };
-    const raw = await this.browse(id, params, undefined, id.startsWith('FEmusic_library'));
-    return parseBrowse(raw);
+    const library = id.startsWith('FEmusic_library');
+    if (library) return parseBrowse(await this.browse(id, params, undefined, true));
+    return this.cachedPage(`browse:${id}:${params || ''}`, 2 * 60_000, async () =>
+      parseBrowse(await this.browse(id, params)),
+    );
   }
 
   async browseEndpoint(endpoint: NavEndpoint): Promise<BrowsePage> {
@@ -241,20 +276,25 @@ export class YtmService {
   }
 
   async album(id: string): Promise<BrowsePage> {
-    const raw = await this.browse(id);
-    return this.detailPage(raw, 'album', id);
+    return this.cachedPage(`album:${id}`, 2 * 60_000, async () => {
+      const raw = await this.browse(id);
+      return this.detailPage(raw, 'album', id);
+    });
   }
 
   async playlist(id: string): Promise<BrowsePage> {
-    const browseId = id.startsWith('VL') ? id : `VL${id}`;
-    const raw = await this.browse(browseId);
-    return this.detailPage(raw, 'playlist', browseId.replace(/^VL/, ''));
+    return this.cachedPage(`playlist:${id}`, 2 * 60_000, async () => {
+      const browseId = id.startsWith('VL') ? id : `VL${id}`;
+      const raw = await this.browse(browseId);
+      return this.detailPage(raw, 'playlist', browseId.replace(/^VL/, ''));
+    });
   }
 
   async podcast(id: string): Promise<BrowsePage> {
-    const browseId = id.startsWith('MPSP') ? id : id;
-    const raw = await this.browse(browseId);
-    return this.detailPage(raw, 'podcast', browseId);
+    return this.cachedPage(`podcast:${id}`, 2 * 60_000, async () => {
+      const raw = await this.browse(id);
+      return this.detailPage(raw, 'podcast', id);
+    });
   }
 
   async detailContinuation(continuation: string): Promise<{ tracks: Track[]; continuation?: string }> {

@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Download, FolderCheck, Heart, ListMusic, Mic, MicVocal, MoreHorizontal, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ChevronLeft, Download, FolderCheck, Heart, ListMusic, Mic, MicVocal } from 'lucide-react';
 import { downloadForTrack, useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
-import { downloadTrackAction, showTrackMenu, toggleLikeTrack } from '../lib/actions';
+import { downloadTrackAction, toggleLikeTrack } from '../lib/actions';
 import { Artwork, IconButton } from './primitives';
-import { proxiedArtwork } from '../lib/image';
+import { displayArtwork } from '../lib/image';
+import { atmospherePalette, extractPalette, type ArtPalette } from '../lib/artColor';
 import { SeekBar, TransportControls, VolumeControl } from './PlayerBar';
 import { LyricsPanel } from './LyricsPanel';
 import { QueuePanel } from './QueuePanel';
@@ -25,6 +26,31 @@ export function NowPlaying() {
   const navigate = useNavStore((state) => state.navigate);
   const [artLoaded, setArtLoaded] = useState(false);
   const swipeStart = useRef<number | null>(null);
+  const [artPalette, setArtPalette] = useState<ArtPalette | null>(null);
+
+  // The lyrics backdrop follows the poster instead of showing a stretched,
+  // blurred copy of the artwork. Keep the last palette while a new cover is
+  // loading so a track change never flashes the fallback green.
+  useEffect(() => {
+    if (!current?.thumbnail) return;
+    let alive = true;
+    extractPalette(current.thumbnail).then((next) => {
+      if (alive && next) setArtPalette(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [current?.id, current?.thumbnail]);
+
+  const atmosphere = useMemo(
+    () => atmospherePalette(artPalette?.primary ?? { r: 16, g: 185, b: 129 }),
+    [artPalette],
+  );
+  const paletteStyle = {
+    '--np-main-rgb': `${atmosphere.primary.r}, ${atmosphere.primary.g}, ${atmosphere.primary.b}`,
+    '--np-deep-rgb': `${atmosphere.secondary.r}, ${atmosphere.secondary.g}, ${atmosphere.secondary.b}`,
+    '--np-glow-rgb': `${atmosphere.accent.r}, ${atmosphere.accent.g}, ${atmosphere.accent.b}`,
+  } as CSSProperties;
 
   useEffect(() => {
     if (!open) return;
@@ -44,12 +70,9 @@ export function NowPlaying() {
   if (!open || !current) return null;
 
   return (
-    <div className="now-playing" role="dialog" aria-label="Now playing">
-      <div
-        className="np-backdrop"
-        style={current.thumbnail ? { backgroundImage: `url(${proxiedArtwork(current.thumbnail)})` } : undefined}
-      />
-      <div className="np-overlay" />
+    <div className="now-playing" role="dialog" aria-label="Now playing" style={paletteStyle}>
+      <div className="np-backdrop" aria-hidden="true" />
+      <div className="np-overlay" aria-hidden="true" />
       <header
         className="np-header"
         onPointerDown={(event) => {
@@ -61,22 +84,14 @@ export function NowPlaying() {
           if (start !== null && event.clientY - start > 80) setOpen(false);
         }}
       >
-        <IconButton label="Back" size="md" className="np-round-btn" onClick={() => setOpen(false)}>
+        <IconButton
+          label="Back to player"
+          size="md"
+          className="np-round-btn np-back"
+          onClick={() => setOpen(false)}
+        >
           <ChevronLeft size={20} />
         </IconButton>
-        <div className="np-header-actions">
-          <IconButton
-            label="More options"
-            size="md"
-            className="np-round-btn"
-            onClick={(event) => showTrackMenu(current, event)}
-          >
-            <MoreHorizontal size={18} />
-          </IconButton>
-          <IconButton label="Close now playing" size="md" className="np-round-btn" onClick={() => setOpen(false)}>
-            <X size={18} />
-          </IconButton>
-        </div>
       </header>
 
       <div className="np-layout">
@@ -84,7 +99,7 @@ export function NowPlaying() {
           <div className="np-art-frame">
             <Artwork src={current.thumbnail} alt={current.title} className="np-art" />
             {!artLoaded && current.thumbnail ? (
-              <img src={proxiedArtwork(current.thumbnail)} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} />
+              <img src={displayArtwork(current.thumbnail)} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} />
             ) : null}
           </div>
           <div className="np-track-meta">
@@ -109,9 +124,6 @@ export function NowPlaying() {
                   }}
                 >
                   {downloaded ? <FolderCheck size={17} /> : <Download size={17} />}
-                </IconButton>
-                <IconButton label="More options" size="sm" onClick={(event) => showTrackMenu(current, event)}>
-                  <MoreHorizontal size={17} />
                 </IconButton>
               </div>
             </div>
@@ -175,7 +187,7 @@ export function NowPlaying() {
               {upcomingCount > 0 ? <span className="np-tab-count">{upcomingCount}</span> : null}
             </button>
           </div>
-          <div className="np-tab-body">
+          <div className={`np-tab-body ${tab === 'lyrics' ? 'is-lyrics' : ''}`}>
             {tab === 'queue' ? (
               <QueuePanel />
             ) : (

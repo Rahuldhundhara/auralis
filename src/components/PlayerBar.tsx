@@ -189,6 +189,7 @@ export function TransportControls({ size = 'md' }: { size?: 'md' | 'lg' }) {
         type="button"
         className={`play-button ${big ? 'is-large' : ''}`}
         aria-label={playing ? 'Pause' : 'Play'}
+        data-playing={playing ? 'true' : 'false'}
         onClick={() => usePlayerStore.getState().toggle()}
       >
         {loading || buffering ? (
@@ -241,17 +242,6 @@ export function VolumeControl() {
         onValueChange={setVolume}
         aria-label="Volume"
       />
-      <IconButton
-        className="volume-max"
-        label="Set volume to maximum"
-        size="sm"
-        onClick={() => {
-          if (muted) toggleMute();
-          setVolume(1);
-        }}
-      >
-        <Volume2 size={17} />
-      </IconButton>
     </div>
   );
 }

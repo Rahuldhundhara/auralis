@@ -216,7 +216,8 @@ async function hydrateMissingMetadata(
 ): Promise<void> {
   if (track.thumbnail && track.duration > 0) return;
   try {
-    const result = await window.auralis.yt.next({ videoId: track.id });
+    const videoId = track.id.startsWith('MPED') && track.id.length === 15 ? track.id.slice(4) : track.id;
+    const result = await window.auralis.yt.next({ videoId });
     if (!isCurrent()) return;
     const remote =
       (result?.tracks || []).find((item) => item?.id === track.id) ||
@@ -573,7 +574,10 @@ function attachAudioListeners() {
       usePlayerStore.setState({ duration });
       return;
     }
-    usePlayerStore.setState({ position, duration });
+    const stateBefore = usePlayerStore.getState();
+    if (Math.abs(stateBefore.position - position) > 0.15 || stateBefore.duration !== duration) {
+      usePlayerStore.setState({ position, duration });
+    }
     if (Date.now() - lastPositionUpdate > 1000) {
       lastPositionUpdate = Date.now();
       updatePositionState();

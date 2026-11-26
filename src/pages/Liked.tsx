@@ -5,7 +5,7 @@ import { useNavStore } from '../stores/nav';
 import { usePlayerStore } from '../stores/player';
 import { confirmDialog, toast } from '../stores/ui';
 import { formatLongDuration, shuffleArray } from '../lib/format';
-import { proxiedArtwork } from '../lib/image';
+import { displayArtwork } from '../lib/image';
 import { Artwork, Button, EmptyState, IconButton, Spinner } from '../components/primitives';
 import { TrackList } from '../components/TrackList';
 
@@ -62,7 +62,7 @@ export function LikedPage() {
   return (
     <div className="page liked-page">
       <section className="detail-hero detail-hero-liked">
-        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${proxiedArtwork(cover)})` } : undefined} aria-hidden="true" />
+        <div className="detail-hero-bg" style={cover ? { backgroundImage: `url(${displayArtwork(cover)})` } : undefined} aria-hidden="true" />
         <div className="detail-hero-inner">
           <div className="detail-cover liked-cover">
             <Artwork src={cover} alt="Liked songs" className="detail-art" />
