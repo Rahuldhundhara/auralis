@@ -29,6 +29,8 @@ export interface YtLocale {
 export interface RequestOptions {
   /** Send the account cookies / auth headers for this request. */
   login?: boolean;
+  /** Never attach cookies, even when a session exists (used by the fast path). */
+  omitCookies?: boolean;
   timeoutMs?: number;
   extraHeaders?: Record<string, string>;
   /** Overrides the public API key for endpoints that use a different one. */
@@ -181,6 +183,14 @@ export class Innertube {
         lockedSafetyMode: false,
       },
     };
+    if (client?.name === 'ANDROID') {
+      // The Android player client returns direct streaming URLs in a single
+      // request, which is what makes sub-second startup possible. These fields
+      // are ignored by the web client and harmless there.
+      ctx.client.androidSdkVersion = 30;
+      ctx.client.osName = 'Android';
+      ctx.client.osVersion = '11';
+    }
     if (login && this.dataSyncId) {
       ctx.user.onBehalfOfUser = this.dataSyncId;
     }
@@ -188,7 +198,7 @@ export class Innertube {
   }
 
   async request(endpoint: string, body: any, options: RequestOptions = {}): Promise<any> {
-    const login = options.login !== false && Boolean(this.cookie);
+    const login = !options.omitCookies && options.login !== false && Boolean(this.cookie);
     const url = `${API_BASE}/${endpoint}?prettyPrint=false&key=${options.apiKey || API_KEY}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -204,7 +214,7 @@ export class Innertube {
       ...options.extraHeaders,
     };
     if (this.visitorData) headers['X-Goog-Visitor-Id'] = this.visitorData;
-    if (this.cookie) headers.Cookie = this.cookie;
+    if (this.cookie && !options.omitCookies) headers.Cookie = this.cookie;
     if (login && this.cookie) {
       const sapisid =
         cookieValue(this.cookie, 'SAPISID') ||
@@ -330,7 +340,7 @@ export class Innertube {
     }, { login: true });
   }
 
-  player(videoId: string, playlistId?: string): Promise<any> {
+  player(videoId: string, playlistId?: string, timeoutMs = 25000): Promise<any> {
     return this.request('player', {
       videoId,
       playlistId,
@@ -342,7 +352,16 @@ export class Innertube {
       },
       contentCheckOk: true,
       racyCheckOk: true,
-    }, { login: false });
+    }, {
+      login: false,
+      omitCookies: true,
+      timeoutMs,
+      // A single ANDROID player request returns direct media URLs; the
+      // WEB_REMIX client usually returns ciphered formats that need yt-dlp.
+      // Cookies are deliberately omitted: an anonymous player request avoids
+      // account-specific bot checks and is much faster on signed-in devices.
+      client: { name: 'ANDROID', version: '20.10.38', id: '3' },
+    });
   }
 
   lyrics(endpoint: NavEndpoint): Promise<any> {

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Base64;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import fi.iki.elonen.NanoHTTPD;
@@ -47,6 +48,7 @@ import okhttp3.ResponseBody;
 public final class LocalServer extends NanoHTTPD {
     private static final String TAG = "AuralisServer";
     private static final int MAX_BODY = 32 * 1024 * 1024;
+    private static final String PLAYER_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL0kn8m3XvR0";
     private static final Set<String> SKIP_REQUEST_HEADERS = new HashSet<>();
     private static final Set<String> ALLOWED_EXTERNAL = new HashSet<>();
 
@@ -124,6 +126,10 @@ public final class LocalServer extends NanoHTTPD {
                 if (value == null || value.isEmpty()) return text(Status.BAD_REQUEST, "Missing media path");
                 if (path.equals("/local")) return serveFile(new File(value), session);
                 return proxyMedia(value, session);
+            }
+            if (path.equals("/__fast/resolve")) {
+                if (session.getMethod() != Method.POST) return text(Status.METHOD_NOT_ALLOWED, "POST required");
+                return fastResolve(readBody(session));
             }
             if (path.startsWith("/__ytdlp/")) {
                 return ytDlpEndpoint(path.substring("/__ytdlp/".length()), readBody(session));
@@ -252,6 +258,27 @@ public final class LocalServer extends NanoHTTPD {
         }
     }
 
+    /**
+     * YouTube's CDN rejects open-ended ranges such as "bytes=0-" for some
+     * player responses while accepting bounded 1 MB chunks. WebView media
+     * elements use open-ended ranges, so bound them here. The browser simply
+     * asks for the next chunk when it needs more audio.
+     */
+    private static String clampRange(String range) {
+        if (range == null) return range;
+        String text = range.trim();
+        if (!text.startsWith("bytes=")) return text;
+        String spec = text.substring(6).split(",")[0].trim();
+        int dash = spec.indexOf('-');
+        if (dash < 0 || dash != spec.length() - 1) return text;
+        try {
+            long start = Long.parseLong(spec.substring(0, dash).trim());
+            if (start >= 0) return "bytes=" + start + "-" + (start + 1024 * 1024 - 1);
+        } catch (NumberFormatException ignored) {
+        }
+        return text;
+    }
+
     private Response proxyMedia(String encoded, IHTTPSession session) {
         try {
             String remote;
@@ -267,7 +294,7 @@ public final class LocalServer extends NanoHTTPD {
                     .header("Referer", "https://music.youtube.com/")
                     .header("Origin", "https://music.youtube.com");
             String range = session.getHeaders().get("range");
-            if (range != null && !range.isEmpty()) builder.header("Range", range);
+            if (range != null && !range.isEmpty()) builder.header("Range", clampRange(range));
             boolean head = session.getMethod() == Method.HEAD;
             okhttp3.Response upstream = mediaClient.newCall(builder.get().build()).execute();
             ResponseBody body = upstream.body();
@@ -350,6 +377,159 @@ public final class LocalServer extends NanoHTTPD {
         }
     }
 
+    /**
+     * Direct audio lookup, ported from the Windows app's fast path. VISIONOS,
+     * ANDROID_VR and IOS return full, un-ciphered audio URLs without spawning
+     * yt-dlp. Every candidate URL is probed with the exact open-ended range the
+     * media element sends, so a 403 cannot surface after playback starts.
+     */
+    private Response fastResolve(String rawBody) {
+        try {
+            JSONObject requestBody = new JSONObject(rawBody);
+            String videoId = requestBody.optString("videoId", "");
+            int preferredBitrate = requestBody.optInt("bitrate", 192000);
+            boolean video = requestBody.optBoolean("video", false);
+            String visitorData = requestBody.optString("visitorData", "");
+            if (videoId.isEmpty()) return text(Status.BAD_REQUEST, "Missing videoId");
+
+            String[] names = {"VISIONOS", "ANDROID_VR", "IOS"};
+            String[] versions = {"1.02", "1.62.27", "20.10.4"};
+            String[] ids = {"101", "28", "5"};
+            String[] keys = {
+                    "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+                    "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
+                    "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
+            };
+            String[] agents = {
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+                    "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1) gzip",
+                    "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+            };
+            JSONObject[] extras = new JSONObject[3];
+            extras[0] = new JSONObject()
+                    .put("deviceMake", "Apple")
+                    .put("deviceModel", "RealityDevice17,1")
+                    .put("osName", "visionOS")
+                    .put("osVersion", "26.5.23O471");
+            extras[1] = new JSONObject().put("androidSdkVersion", 30);
+            extras[2] = new JSONObject()
+                    .put("deviceMake", "Apple")
+                    .put("deviceModel", "iPhone16,2")
+                    .put("osName", "iPhone")
+                    .put("osVersion", "18.3.2");
+
+            OkHttpClient clientHttp = apiClient.newBuilder().callTimeout(5, TimeUnit.SECONDS).build();
+            for (int profile = 0; profile < names.length; profile += 1) {
+                try {
+                    JSONObject client = new JSONObject(extras[profile].toString());
+                    client.put("clientName", names[profile]);
+                    client.put("clientVersion", versions[profile]);
+                    client.put("hl", "en");
+                    client.put("gl", "US");
+                    if (!visitorData.isEmpty()) client.put("visitorData", visitorData);
+                    JSONObject context = new JSONObject().put("client", client);
+                    JSONObject payload = new JSONObject();
+                    payload.put("context", context);
+                    payload.put("videoId", videoId);
+                    payload.put("playbackContext", new JSONObject().put("contentPlaybackContext",
+                            new JSONObject().put("signatureTimestamp", 20000)
+                                    .put("html5Preference", "HTML5_PREF_WANTS")));
+                    payload.put("contentCheckOk", true);
+                    payload.put("racyCheckOk", true);
+
+                    Request request = new Request.Builder()
+                            .url("https://music.youtube.com/youtubei/v1/player?prettyPrint=false&key=" + keys[profile])
+                            .header("Content-Type", "application/json")
+                            .header("User-Agent", agents[profile])
+                            .header("X-YouTube-Client-Name", ids[profile])
+                            .header("X-YouTube-Client-Version", versions[profile])
+                            .header("Referer", "https://music.youtube.com/")
+                            .header("Origin", "https://music.youtube.com")
+                            .post(RequestBody.create(MediaType.parse("application/json"), payload.toString()))
+                            .build();
+                    JSONObject json;
+                    try (okhttp3.Response upstream = clientHttp.newCall(request).execute()) {
+                        ResponseBody upstreamBody = upstream.body();
+                        json = new JSONObject(upstreamBody == null ? "" : upstreamBody.string());
+                    }
+                    JSONObject playability = json.optJSONObject("playabilityStatus");
+                    if (playability == null || !"OK".equals(playability.optString("status"))) continue;
+                    JSONObject streaming = json.optJSONObject("streamingData");
+                    if (streaming == null) continue;
+
+                    JSONObject best = null;
+                    boolean bestPreferred = false;
+                    int bestScore = -1;
+                    JSONArray[] lists = new JSONArray[]{
+                            streaming.optJSONArray("adaptiveFormats"),
+                            streaming.optJSONArray("formats"),
+                    };
+                    for (JSONArray list : lists) {
+                        if (list == null) continue;
+                        for (int i = 0; i < list.length(); i += 1) {
+                            JSONObject format = list.optJSONObject(i);
+                            if (format == null) continue;
+                            String mime = format.optString("mimeType", "");
+                            String url = format.optString("url", "");
+                            if (url.isEmpty()) continue;
+                            boolean preferred;
+                            int score;
+                            if (video) {
+                                if (!mime.startsWith("video/mp4")) continue;
+                                int height = format.optInt("height", 0);
+                                if (height <= 0 || height > 720) continue;
+                                preferred = true;
+                                score = height;
+                            } else {
+                                if (!mime.startsWith("audio/")) continue;
+                                int bitrate = format.optInt("bitrate", 0);
+                                preferred = mime.toLowerCase(Locale.US).contains("mp4");
+                                score = bitrate;
+                            }
+                            boolean better = best == null
+                                    || (preferred && !bestPreferred)
+                                    || (preferred == bestPreferred && score > bestScore);
+                            if (better) {
+                                best = format;
+                                bestPreferred = preferred;
+                                bestScore = score;
+                            }
+                        }
+                    }
+                    if (best == null) continue;
+                    String url = best.optString("url");
+                    if (!urlPlayable(url, agents[profile])) continue;
+                    JSONObject result = new JSONObject();
+                    result.put("url", url);
+                    result.put("format", video ? "video" : (bestPreferred ? "m4a" : "audio"));
+                    return json(Status.OK, result.toString());
+                } catch (Throwable ignored) {
+                    // Try the next player profile.
+                }
+            }
+            return text(Status.INTERNAL_ERROR, "No playable direct audio URL was returned.");
+        } catch (Throwable error) {
+            return text(Status.INTERNAL_ERROR, readable(error));
+        }
+    }
+
+    /** Probes a candidate URL with the exact open-ended range the player uses. */
+    private boolean urlPlayable(String url, String userAgent) {
+        Request request = new Request.Builder()
+                .url(url)
+                .header("Range", "bytes=0-")
+                .header("User-Agent", userAgent)
+                .header("Referer", "https://music.youtube.com/")
+                .header("Origin", "https://music.youtube.com")
+                .build();
+        OkHttpClient probe = apiClient.newBuilder().callTimeout(4, TimeUnit.SECONDS).build();
+        try (okhttp3.Response response = probe.newCall(request).execute()) {
+            return response.code() == 200 || response.code() == 206;
+        } catch (Throwable error) {
+            return false;
+        }
+    }
+
     private Response ytDlpEndpoint(String endpoint, String rawBody) throws Exception {
         if (endpoint.equals("version")) {
             JSONObject json = new JSONObject();
@@ -370,6 +550,10 @@ public final class LocalServer extends NanoHTTPD {
         if (endpoint.equals("invalidate")) {
             JSONObject body = new JSONObject(rawBody);
             ytDlp.invalidateStream(body.optString("videoId", ""));
+            return json(Status.OK, "{\"ok\":true}");
+        }
+        if (endpoint.equals("cancel")) {
+            ytDlp.cancelResolves();
             return json(Status.OK, "{\"ok\":true}");
         }
         if (endpoint.equals("download/start")) {

@@ -311,6 +311,7 @@ const api: AuralisApi = {
     resolve: async (track: Track): Promise<StreamInfo> => streams.resolve(track),
     resolveVideo: async (track: Track): Promise<StreamInfo> => streams.resolveVideo(track),
     prefetch: async (track) => streams.prefetch(track),
+    warmResolve: async (track: Track): Promise<StreamInfo> => streams.resolveForWarm(track),
     download: async (track) =>
       streams.download(track, (progress: DownloadProgress) => emitEvent('download-progress', progress)),
     cancelDownload: async (id) => {

@@ -3,6 +3,11 @@ import { localMediaUrl, mediaUrl, nativeJson, nativeJsonGet } from './http';
 import { ensureDownloadsDir, libraryStore, newId, sessionStore, settingsStore } from './store';
 
 const CACHE_TTL_MS = 90 * 60_000;
+const PERSISTED_CACHE_KEY = 'auralis.streams.v1';
+const PERSISTED_CACHE_LIMIT = 18;
+const FAST_RESOLVE_TIMEOUT_MS = 1800;
+const FAST_FALLBACK_DELAY_MS = 180;
+const FAST_FAILURE_COOLDOWN_MS = 10 * 60_000;
 
 interface CachedStream {
   info: StreamInfo;
@@ -12,6 +17,7 @@ interface CachedStream {
 const streamCache = new Map<string, CachedStream>();
 const pendingStreams = new Map<string, Promise<StreamInfo>>();
 const activeDownloads = new Map<string, string>();
+const fastResolveBlockedUntil = new Map<string, number>();
 const STREAM_CACHE_LIMIT = 48;
 
 function rememberStream(key: string, info: StreamInfo) {
@@ -22,6 +28,85 @@ function rememberStream(key: string, info: StreamInfo) {
     if (oldest === undefined) break;
     streamCache.delete(oldest);
   }
+  schedulePersistedCache();
+}
+
+let persistTimer: number | undefined;
+
+function schedulePersistedCache() {
+  window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(persistStreamCache, 1200);
+}
+
+/**
+ * Resolved googlevideo URLs stay valid for hours. Keeping the newest few in
+ * localStorage turns a cold app start, or a reload after Android reclaimed the
+ * WebView, into an instant start for the songs the listener actually plays.
+ */
+function persistStreamCache() {
+  try {
+    const now = Date.now();
+    const entries = [...streamCache.entries()]
+      .filter(([, cached]) => now - cached.at < CACHE_TTL_MS)
+      .slice(-PERSISTED_CACHE_LIMIT);
+    localStorage.setItem(
+      PERSISTED_CACHE_KEY,
+      JSON.stringify(entries.map(([key, cached]) => ({ key, info: cached.info, at: cached.at }))),
+    );
+  } catch {
+    // Storage can be full or disabled; the in-memory cache still works.
+  }
+}
+
+function restoreStreamCache() {
+  try {
+    const raw = localStorage.getItem(PERSISTED_CACHE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as Array<{ key: string; info: StreamInfo; at: number }>;
+    if (!Array.isArray(saved)) return;
+    const now = Date.now();
+    for (const entry of saved) {
+      if (!entry?.key || !entry.info?.url || now - entry.at >= CACHE_TTL_MS) continue;
+      streamCache.set(entry.key, { info: entry.info, at: entry.at });
+    }
+  } catch {
+    // Ignore corrupt caches.
+  }
+}
+
+restoreStreamCache();
+
+/**
+ * Some player responses carry a URL that the media element cannot actually
+ * decode (for example a stale signature timestamp). Validate it through the
+ * same /media proxy the player uses before committing it as the fast path.
+ */
+function validateStreamUrl(url: string, timeoutMs = 1100): Promise<boolean> {
+  return new Promise((resolve) => {
+    const element = new Audio();
+    element.preload = 'metadata';
+    let settled = false;
+    const done = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      element.removeAttribute('src');
+      element.load();
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => done(true), timeoutMs);
+    element.addEventListener('loadedmetadata', () => done(true), { once: true });
+    element.addEventListener('error', () => done(false), { once: true });
+    element.src = url;
+  });
+}
+
+function preferredAudioBitrate(quality: string): number {
+  // Matches the Windows app's quality caps (kbps); auto/best are uncapped.
+  if (quality === 'low') return 128;
+  if (quality === 'medium') return 192;
+  if (quality === 'high') return 256;
+  return 10_000;
 }
 
 function qualityFormat(quality: string): string {
@@ -51,7 +136,7 @@ function extOf(path: string): string {
 
 export class StreamService {
   async resolve(track: Track): Promise<StreamInfo> {
-    return this.resolveStream(track, false);
+    return this.resolveStream(track, false, true);
   }
 
   /**
@@ -61,10 +146,37 @@ export class StreamService {
    * artwork when this rejects.
    */
   async resolveVideo(track: Track): Promise<StreamInfo> {
-    return this.resolveStream(track, true);
+    const quality = settingsStore.get().audioQuality;
+    const key = `${track.id}:${quality}:video`;
+    const cached = streamCache.get(key);
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
+    try {
+      const result = await nativeJson<{ url: string; format: string }>('/__fast/resolve', {
+        videoId: track.id,
+        bitrate: 0,
+        video: true,
+        visitorData: sessionStore.visitorData || '',
+      });
+      if (result.url) {
+        const info: StreamInfo = {
+          url: mediaUrl(result.url),
+          format: result.format || 'video',
+          quality,
+          title: track.title,
+          duration: track.duration,
+          expiresAt: Date.now() + CACHE_TTL_MS,
+          video: true,
+        };
+        rememberStream(key, info);
+        return info;
+      }
+    } catch {
+      // yt-dlp remains the fallback for videos the fast client cannot resolve.
+    }
+    return this.resolveStream(track, true, true);
   }
 
-  private async resolveStream(track: Track, video: boolean): Promise<StreamInfo> {
+  private async resolveStream(track: Track, video: boolean, cancelSlow = true): Promise<StreamInfo> {
     if (track.localPath) {
       return {
         url: localMediaUrl(track.localPath),
@@ -78,49 +190,16 @@ export class StreamService {
     const quality = settingsStore.get().audioQuality;
     const key = `${track.id}:${quality}${video ? ':video' : ''}`;
     const cached = streamCache.get(key);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.info;
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      // Refresh recency without changing the URL.
+      streamCache.delete(key);
+      streamCache.set(key, cached);
+      return cached.info;
+    }
     const pending = pendingStreams.get(key);
     if (pending) return pending;
 
-    const task = (async () => {
-      let result: { url: string } | undefined;
-      let lastError: any;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          result = await nativeJson<{ url: string }>('/__ytdlp/resolve', {
-            videoId: track.id,
-            quality,
-            video,
-            cookie: cookie(),
-            proxy: settingsStore.get().proxy || '',
-          });
-          if (result.url) break;
-          lastError = new Error(
-            video
-              ? 'yt-dlp did not return a playable video URL.'
-              : 'yt-dlp did not return a playable audio URL.',
-          );
-        } catch (error) {
-          lastError = error;
-        }
-        // One short retry covers transient network and extractor hiccups
-        // without doubling the wait for a permanent failure such as a
-        // YouTube bot check.
-        if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 650));
-      }
-      if (!result?.url) throw lastError || new Error('Could not resolve this track.');
-      const info: StreamInfo = {
-        url: mediaUrl(result.url),
-        format: video ? 'video' : 'audio',
-        quality,
-        title: track.title,
-        duration: track.duration,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-        video,
-      };
-      rememberStream(key, info);
-      return info;
-    })();
+    const task = this.resolveFresh(track, quality, video, cancelSlow);
     pendingStreams.set(key, task);
     void task
       .finally(() => {
@@ -130,9 +209,203 @@ export class StreamService {
     return task;
   }
 
+  /**
+   * Starts the direct Innertube player request and the bundled yt-dlp worker
+   * together. The fast path usually wins on a warm connection; the yt-dlp
+   * worker is still there for ciphered formats, PO-token challenges and bot
+   * checks. Whichever produces a playable URL first is cached and used.
+   */
+  private async resolveFresh(
+    track: Track,
+    quality: string,
+    video: boolean,
+    cancelSlow = true,
+  ): Promise<StreamInfo> {
+    const key = `${track.id}:${quality}${video ? ':video' : ''}`;
+    const blockedUntil = fastResolveBlockedUntil.get(track.id) || 0;
+    const tryFast = !video && Date.now() >= blockedUntil;
+    try {
+      (window as unknown as { __auralisFastDebug?: any[] }).__auralisFastDebug = [
+        ...((window as unknown as { __auralisFastDebug?: any[] }).__auralisFastDebug || []),
+        { id: track.id, video, tryFast, blockedIn: Math.max(0, blockedUntil - Date.now()) },
+      ].slice(-10);
+    } catch {
+      // ignore
+    }
+
+    let fastTimer: number | undefined;
+    let fastRetryTimer: number | undefined;
+    let slowTimer: number | undefined;
+    let fastAttempts = 0;
+    let slowStarted = false;
+    let settled = false;
+    let fastDone = !tryFast;
+    let slowDone = false;
+    let fastError: any;
+    let slowError: any;
+    const MAX_FAST_ATTEMPTS = 2;
+
+    return new Promise<StreamInfo>((resolve, reject) => {
+      const finish = (info: StreamInfo) => {
+        if (settled) return;
+        settled = true;
+        try {
+          (window as unknown as { __auralisResolveSource?: string }).__auralisResolveSource = info.format === 'm4a' ? 'fast' : 'slow';
+        } catch {
+          // ignore
+        }
+        window.clearTimeout(fastTimer);
+        window.clearTimeout(fastRetryTimer);
+        window.clearTimeout(slowTimer);
+        // Never cancel native workers here. A warming resolve for the next
+        // song may be in flight and cancelling it produced visible
+        // YoutubeDL$CancelledException toasts during playback and seeking.
+        rememberStream(key, info);
+        resolve(info);
+      };
+
+      // The direct request may time out before the yt-dlp worker has finished
+      // a cold start. Reject only when *both* paths are done; otherwise the
+      // slower-but-working fallback was thrown away for no reason.
+      const maybeFail = () => {
+        if (settled || !fastDone || !slowDone) return;
+        settled = true;
+        window.clearTimeout(fastTimer);
+        window.clearTimeout(fastRetryTimer);
+        window.clearTimeout(slowTimer);
+        reject(
+          slowError ||
+            fastError ||
+            new Error(video ? 'Could not resolve a video.' : 'Could not resolve this track.'),
+        );
+      };
+
+      const fastFail = (error: any) => {
+        if (settled || fastDone) return;
+        window.clearTimeout(fastTimer);
+        try {
+          const target = window as unknown as { __auralisFastErrors?: string[] };
+          target.__auralisFastErrors = [
+            ...(target.__auralisFastErrors || []),
+            `${track.id}: ${error?.message || error}`,
+          ].slice(-12);
+        } catch {
+          // ignore
+        }
+        fastError = error;
+        fastAttempts += 1;
+        if (fastAttempts < MAX_FAST_ATTEMPTS) {
+          // A transient bot check or cold connection should not force the
+          // slow extractor. One short retry keeps the sub-second path alive.
+          fastRetryTimer = window.setTimeout(runFast, 350);
+          return;
+        }
+        fastDone = true;
+        maybeFail();
+      };
+
+      const slowFail = (error: any) => {
+        if (settled) return;
+        slowDone = true;
+        slowError = error;
+        maybeFail();
+      };
+
+      const runFast = () => {
+        if (settled || fastDone) return;
+        fastTimer = window.setTimeout(() => {
+          fastFail(new Error('Direct stream lookup timed out.'));
+        }, FAST_RESOLVE_TIMEOUT_MS);
+        // Native OkHttp resolves the player response directly. This avoids the
+        // JS fetch bridge and its extra serialization on every song change.
+        nativeJson<{ url: string; format: string }>('/__fast/resolve', {
+          videoId: track.id,
+          bitrate: preferredAudioBitrate(quality) * 1000,
+          visitorData: sessionStore.visitorData || '',
+        })
+          .then(async (result) => {
+            if (!result.url) throw new Error('No direct audio format was available.');
+            const info: StreamInfo = {
+              url: mediaUrl(result.url),
+              format: result.format || 'audio',
+              quality,
+              title: track.title,
+              duration: track.duration,
+              expiresAt: Date.now() + CACHE_TTL_MS,
+              video,
+            };
+            if (!(await validateStreamUrl(info.url))) {
+              throw new Error('Direct URL was rejected by the media element.');
+            }
+            finish(info);
+          })
+          .catch(fastFail);
+      };
+      if (tryFast) runFast();
+
+      const startSlow = () => {
+        slowStarted = true;
+        this.resolveWithYtDlp(track, quality, video).then(
+          (info) => finish(info),
+          (error) => slowFail(error),
+        );
+      };
+      // Give the direct request a short head start without making a failed
+      // fast path add its full timeout to the yt-dlp wait.
+      slowTimer = window.setTimeout(startSlow, tryFast ? FAST_FALLBACK_DELAY_MS : 0);
+    });
+  }
+
+  private async resolveWithYtDlp(track: Track, quality: string, video: boolean): Promise<StreamInfo> {
+    let result: { url: string } | undefined;
+    let lastError: any;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        result = await nativeJson<{ url: string }>('/__ytdlp/resolve', {
+          videoId: track.id,
+          quality,
+          video,
+          cookie: cookie(),
+          proxy: settingsStore.get().proxy || '',
+        });
+        if (result.url) break;
+        lastError = new Error(
+          video
+            ? 'yt-dlp did not return a playable video URL.'
+            : 'yt-dlp did not return a playable audio URL.',
+        );
+      } catch (error) {
+        // A cancellation (for example from a stale worker) is not a real
+        // failure; retry quietly instead of surfacing it to the user.
+        if (/CancelledException|superseded/i.test(String((error as any)?.message || error))) continue;
+        lastError = error;
+      }
+      // One short retry covers transient network and extractor hiccups
+      // without doubling the wait for a permanent failure such as a
+      // YouTube bot check.
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 650));
+    }
+    if (!result?.url) throw lastError || new Error('Could not resolve this track.');
+    return {
+      url: mediaUrl(result.url),
+      format: video ? 'video' : 'audio',
+      quality,
+      title: track.title,
+      duration: track.duration,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      video,
+    };
+  }
+
+  async resolveForWarm(track: Track): Promise<StreamInfo> {
+    return this.resolveStream(track, false, false);
+  }
+
   async prefetch(track: Track): Promise<void> {
     try {
-      await this.resolve(track);
+      // Prefetches must not cancel other workers: they often run alongside the
+      // song that is currently starting.
+      await this.resolveStream(track, false, false);
     } catch {
       // Prefetch failures are silent; playback will surface a real error.
     }
@@ -145,6 +418,11 @@ export class StreamService {
     for (const key of pendingStreams.keys()) {
       if (key.startsWith(`${trackId}:`)) pendingStreams.delete(key);
     }
+    // If a direct URL was rejected by the media element, do not hand it back
+    // on the immediate retry. yt-dlp gets the next attempt; the fast path is
+    // allowed again after the cooldown.
+    fastResolveBlockedUntil.set(trackId, Date.now() + FAST_FAILURE_COOLDOWN_MS);
+    persistStreamCache();
     void nativeJson('/__ytdlp/invalidate', { videoId: trackId }).catch(() => {});
   }
 

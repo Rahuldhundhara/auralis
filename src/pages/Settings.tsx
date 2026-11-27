@@ -3,6 +3,8 @@ import {
   AudioLines,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Disc3,
   Download,
@@ -431,7 +433,7 @@ function PlaybackTab() {
 
   return (
     <>
-      <SettingsCard title="Audio quality" description="Streaming quality is resolved through yt-dlp for every track." icon={<Gauge size={19} />}>
+      <SettingsCard title="Audio quality" description="Automatic uses a direct stream first, with yt-dlp as a reliable fallback." icon={<Gauge size={19} />}>
         <SettingRow label="Streaming quality" description="Automatic picks the best available format for your connection.">
           <Select value={settings.audioQuality} onChange={(value) => void update({ audioQuality: value as Settings['audioQuality'] })}>
             <option value="auto">Automatic</option>
@@ -1272,10 +1274,138 @@ function AboutTab() {
   );
 }
 
+function SettingsTabPanel({ tab }: { tab: SettingsTab }) {
+  return (
+    <>
+      {tab === 'general' ? <GeneralTab /> : null}
+      {tab === 'appearance' ? <AppearanceTab /> : null}
+      {tab === 'playback' ? <PlaybackTab /> : null}
+      {tab === 'lyrics' ? <LyricsTab /> : null}
+      {tab === 'downloads' ? <DownloadsTab /> : null}
+      {tab === 'integrations' ? <IntegrationsTab /> : null}
+      {tab === 'account' ? <AccountTab /> : null}
+      {tab === 'about' ? <AboutTab /> : null}
+    </>
+  );
+}
+
+const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
+  general: 'Language, region, startup and Windows behaviour.',
+  appearance: 'Theme, accent colour and sidebar layout.',
+  playback: 'Streaming quality, volume, speed and the ten-band equalizer.',
+  lyrics: 'Provider order, translations and lyric keys.',
+  downloads: 'Offline storage, quality and network proxy.',
+  integrations: 'Last.fm, Discord and your YouTube Music session.',
+  account: 'Your connected account and local library.',
+  about: 'Versions, bundled tools and open-source credits.',
+};
+
+function tabDescription(tab: SettingsTab): string {
+  if (isAndroidShell) {
+    if (tab === 'general') return 'Language, region, startup and app behaviour.';
+    if (tab === 'appearance') return 'Theme and accent colour.';
+    if (tab === 'integrations') return 'Last.fm and your YouTube Music session.';
+  }
+  return TAB_DESCRIPTIONS[tab];
+}
+
 export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
   const tab: SettingsTab = TABS.some((entry) => entry.id === initialTab) ? (initialTab as SettingsTab) : 'general';
   const navigate = useNavStore((state) => state.navigate);
-  const current = TABS.find((entry) => entry.id === tab) || TABS[0];
+  const [selected, setSelected] = useState<SettingsTab>(tab);
+  const [showIndex, setShowIndex] = useState(!initialTab);
+
+  useEffect(() => {
+    if (initialTab) {
+      setSelected(tab);
+      setShowIndex(false);
+    } else {
+      setShowIndex(true);
+    }
+  }, [initialTab, tab]);
+
+  // On Android the hardware back button first closes the nested settings
+  // screen. App.tsx owns the bridge callback, so chain it only while a nested
+  // screen is visible and restore it on unmount.
+  useEffect(() => {
+    if (!isAndroidShell || showIndex) return;
+    const target = window as unknown as { __auralisAndroidBack?: () => boolean };
+    const original = target.__auralisAndroidBack;
+    const handler = () => {
+      if (initialTab) navigate({ page: 'settings' }, true);
+      else setShowIndex(true);
+      return true;
+    };
+    target.__auralisAndroidBack = handler;
+    return () => {
+      if (target.__auralisAndroidBack === handler) target.__auralisAndroidBack = original;
+    };
+  }, [initialTab, navigate, showIndex]);
+
+  const current = TABS.find((entry) => entry.id === selected) || TABS[0];
+
+  if (isAndroidShell && showIndex) {
+    return (
+      <div className="page settings-page settings-page-android">
+        <header className="page-hero settings-hero settings-hero-compact">
+          <div>
+            <span className="eyebrow">
+              <Settings2 size={14} /> Preferences
+            </span>
+            <h1>Settings</h1>
+            <p>Shape Auralis around your library, your audio gear and the way you listen.</p>
+          </div>
+        </header>
+        <nav className="settings-category-list" aria-label="Settings categories">
+          {TABS.map((entry) => (
+            <button
+              type="button"
+              key={entry.id}
+              className="settings-category"
+              onClick={() => {
+                setSelected(entry.id);
+                setShowIndex(false);
+              }}
+            >
+              <span className="settings-category-icon">{entry.icon}</span>
+              <span className="settings-category-copy">
+                <strong>{entry.label}</strong>
+                <span>{tabDescription(entry.id)}</span>
+              </span>
+              <ChevronRight size={18} className="settings-category-chevron" />
+            </button>
+          ))}
+        </nav>
+      </div>
+    );
+  }
+
+  if (isAndroidShell) {
+    return (
+      <div className="page settings-page settings-page-android">
+        <header className="settings-detail-head">
+          <button
+            type="button"
+            className="settings-back"
+            onClick={() => {
+              if (initialTab) navigate({ page: 'settings' }, true);
+              else setShowIndex(true);
+            }}
+          >
+            <ChevronLeft size={18} /> All settings
+          </button>
+          <span className="settings-panel-icon">{current.icon}</span>
+          <div>
+            <h1>{current.label}</h1>
+            <p>{tabDescription(current.id)}</p>
+          </div>
+        </header>
+        <div className="settings-panel">
+          <SettingsTabPanel tab={current.id} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page settings-page">
@@ -1313,36 +1443,9 @@ export function SettingsPage({ tab: initialTab }: { tab?: SettingsTab }) {
               <p>{tabDescription(tab)}</p>
             </div>
           </div>
-          {tab === 'general' ? <GeneralTab /> : null}
-          {tab === 'appearance' ? <AppearanceTab /> : null}
-          {tab === 'playback' ? <PlaybackTab /> : null}
-          {tab === 'lyrics' ? <LyricsTab /> : null}
-          {tab === 'downloads' ? <DownloadsTab /> : null}
-          {tab === 'integrations' ? <IntegrationsTab /> : null}
-          {tab === 'account' ? <AccountTab /> : null}
-          {tab === 'about' ? <AboutTab /> : null}
+          <SettingsTabPanel tab={tab} />
         </div>
       </div>
     </div>
   );
-}
-
-const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
-  general: 'Language, region, startup and Windows behaviour.',
-  appearance: 'Theme, accent colour and sidebar layout.',
-  playback: 'Streaming quality, volume, speed and the ten-band equalizer.',
-  lyrics: 'Provider order, translations and lyric keys.',
-  downloads: 'Offline storage, quality and network proxy.',
-  integrations: 'Last.fm, Discord and your YouTube Music session.',
-  account: 'Your connected account and local library.',
-  about: 'Versions, bundled tools and open-source credits.',
-};
-
-function tabDescription(tab: SettingsTab): string {
-  if (isAndroidShell) {
-    if (tab === 'general') return 'Language, region, startup and app behaviour.';
-    if (tab === 'appearance') return 'Theme and accent colour.';
-    if (tab === 'integrations') return 'Last.fm and your YouTube Music session.';
-  }
-  return TAB_DESCRIPTIONS[tab];
 }

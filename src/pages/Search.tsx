@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AudioLines, Clock3, Mic, Play, Search, Sparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioLines, Clock3, Loader2, Mic, Play, Search, Sparkles, X } from 'lucide-react';
 import type { Card, SearchResults, Shelf as ShelfType } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
@@ -25,6 +25,15 @@ const FILTER_KEYS: Record<string, string | undefined> = {
   Playlists: 'playlists',
   Podcasts: 'podcasts',
 };
+
+function SearchLogoBackground() {
+  return (
+    <div className="search-logo-bg" aria-hidden="true">
+      <span className="search-logo-word">AURALIS</span>
+      <img src="./icon.png" alt="" draggable={false} />
+    </div>
+  );
+}
 
 function TopResult({ card }: { card: Card }) {
   const round = card.type === 'artist';
@@ -135,6 +144,9 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const [extra, setExtra] = useState<SearchResults | null>(null);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const prefetchedRef = useRef('');
   const addHistory = useAppStore((state) => state.addSearchHistory);
   const player = usePlayerStore();
   const key = FILTER_KEYS[filter];
@@ -169,11 +181,29 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
     };
   }, [data, extra]);
 
-  if (!query) return <SearchLanding />;
+  // Warm the most likely next tap while the results list is still being read.
+  // These are silent stream-URL resolutions (not audio downloads), cached for
+  // 90 minutes; the user still has to choose a song before anything plays.
+  useEffect(() => {
+    if (!query || !results?.songs?.length) return;
+    const candidates = results.songs.filter((track) => !track.localPath).slice(0, 3);
+    if (!candidates.length) return;
+    const signature = `${query}:${candidates.map((track) => track.id).join(',')}`;
+    if (prefetchedRef.current === signature) return;
+    prefetchedRef.current = signature;
+    const timers = candidates.map((track, index) =>
+      window.setTimeout(() => {
+        void usePlayerStore.getState().warmTrack(track);
+      }, 650 + index * 1400),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [query, results?.songs]);
 
   const loadMore = async () => {
+    if (!query || loadingMoreRef.current) return;
     const next = continuation || data?.continuation;
     if (!next) return;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const page = await window.auralis.yt.search(query, key, next);
@@ -191,7 +221,10 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
         };
       });
       setContinuation(page.continuation);
+    } catch {
+      // Leave the sentinel in place; scrolling retries the request.
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -199,9 +232,35 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
   const hasAny = results
     ? results.songs.length + results.videos.length + results.albums.length + results.artists.length + results.playlists.length + results.podcasts.length + results.episodes.length > 0
     : false;
+  const hasMore = Boolean(continuation || data?.continuation);
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !query || !hasAny || !hasMore) return;
+    const root = node.closest('.content-scroll') as HTMLElement | null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+      },
+      { root, rootMargin: '650px 0px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasAny, hasMore, query, filter, continuation, data?.continuation]);
+
+  if (!query) {
+    return (
+      <div className="page search-page search-landing-page">
+        <SearchLogoBackground />
+        <SearchLanding />
+      </div>
+    );
+  }
 
   return (
-    <div className="page search-page">
+    <div className={`page search-page ${hasAny ? 'is-results' : ''}`}>
+      <SearchLogoBackground />
       <header className="page-hero search-hero">
         <span className="eyebrow">Search results</span>
         <h1>{query}</h1>
@@ -283,11 +342,10 @@ export function SearchPage({ q, filter: initialFilter }: { q?: string; filter?: 
             ) : null
           ) : null}
 
-          {data?.continuation || continuation ? (
-            <div className="load-more-row">
-              <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </Button>
+          {hasMore ? (
+            <div ref={sentinelRef} className="infinite-sentinel is-loading" aria-live="polite">
+              <Loader2 size={16} className={loadingMore ? 'spin' : ''} />
+              <span>{loadingMore ? 'Loading more results…' : 'Keep scrolling for more results'}</span>
             </div>
           ) : null}
         </div>

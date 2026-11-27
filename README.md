@@ -15,6 +15,8 @@
 
 > Auralis is an independent, unofficial client. It is not affiliated with, endorsed by or sponsored by YouTube or Google. You are responsible for how you use it and for following the terms of the services you access.
 
+> **Android 1.0.4** is now available as a signed test build (`versionCode` `10004`). Install it over 1.0.3 — your playlists, likes, downloads and settings stay intact. See [the 1.0.4 release notes](docs/RELEASE-1.0.4.md) for changes, measurements and screenshots.
+
 ![Auralis home](docs/screenshots/home.png)
 
 ## What's inside
@@ -70,6 +72,26 @@ These community builds are not code-signed, so Windows SmartScreen may show "Win
 4. Start typing in the search bar, or pick something from Home.
 
 Anonymous browsing works immediately. A YouTube Music account unlocks your cloud library, remote playlist edits, subscriptions and account history.
+
+## Android 1.0.4
+
+The Android build is a native-shell WebView app with the same renderer and library as the Windows edition. It keeps the package identity `com.auralis.music` and upgrades cleanly from 1.0.3.
+
+| | |
+|---|---|
+| **Signed APK** | [`Auralis-1.0.4-android.apk`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-1.0.4-android.apk) |
+| **AAB** | [`Auralis-1.0.4-android.aab`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-1.0.4-android.aab) |
+| **Checksums** | [`Auralis-1.0.4-android.sha256`](https://github.com/Rahuldhundhara/auralis/releases/latest/download/Auralis-1.0.4-android.sha256) |
+
+Highlights:
+
+- **Fast playback** — a native Innertube resolver and bounded range requests cut cold start to ~200 ms when the direct path succeeds; yt-dlp remains the fallback.
+- **First-run setup** — easy Google sign-in, then pick languages, genres and artists. Those choices drive Home and every radio station.
+- **Smarter recommendations** — next songs are re-ranked against your picked artists, likes and recent plays so a station stays in the same vibe.
+- **Clean Home** — logo wash, personal shelves, artist stations and a **+** button in the bottom nav that creates a playlist instantly.
+- **Synced lyrics** — the current line is centred, follows playback and stops following as soon as you scroll.
+
+See the [full 1.0.4 notes](docs/RELEASE-1.0.4.md) and [screenshots](docs/screenshots/).
 
 ### What's new in 1.0.3
 

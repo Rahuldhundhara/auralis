@@ -226,8 +226,11 @@ public final class YtDlpManager {
         }
         waitUntilReady();
         // Rapid taps supersede each other. Waiting briefly avoids spawning a
-        // Python process for a request that will be cancelled milliseconds later.
-        Thread.sleep(120);
+        // Python process for a request that will be cancelled milliseconds
+        // later. A normal first play has no active worker, so it pays nothing.
+        if (!activeResolveIds.isEmpty()) {
+            Thread.sleep(80);
+        }
         File cookieFile = cookieFile(cookie);
         String processId = beginResolve();
         try {
@@ -302,11 +305,9 @@ public final class YtDlpManager {
         String processId = "resolve-" + UUID.randomUUID();
         latestResolveId = processId;
         activeResolveIds.add(processId);
-        for (String other : activeResolveIds) {
-            if (!other.equals(processId) && activeResolveIds.remove(other)) {
-                destroyResolveProcess(other, true);
-            }
-        }
+        // Do not kill other resolves here. Warming the next song and resolving
+        // the current one legitimately overlap; cancelling the older worker
+        // surfaced as YoutubeDL$CancelledException during playback and seeking.
         return processId;
     }
 
@@ -331,9 +332,8 @@ public final class YtDlpManager {
     }
 
     private void ensureCurrentResolve(String processId) throws Exception {
-        if (!processId.equals(latestResolveId)) {
-            throw new Exception("Playback request was superseded.");
-        }
+        // Kept for API compatibility. Concurrent warm/playback resolves are
+        // allowed, so a worker is no longer considered "superseded".
     }
 
     private void retireResolve(String processId) {

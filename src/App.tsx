@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
@@ -32,6 +33,8 @@ import { RecentPage, HistoryPage } from './pages/Recent';
 import { DownloadsPage } from './pages/Downloads';
 import { LocalPlaylistPage } from './pages/LocalPlaylist';
 import { SettingsPage } from './pages/Settings';
+import { LoginPage } from './pages/Login';
+import { OnboardingPage } from './pages/Onboarding';
 
 /* ------------------------------------------------------------------ */
 /* Error boundary                                                      */
@@ -173,6 +176,17 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const startApplied = useRef(false);
   const key = routeKey(route);
+  const session = useAppStore((state) => state.session);
+  const onboardingComplete = useAppStore((state) => state.settings.onboardingComplete);
+  const gate: 'login' | 'taste' | null = isAndroidShell && ready
+    ? !session.hasCookies
+      ? 'login'
+      : !onboardingComplete
+        ? 'taste'
+        : null
+    : null;
+  const gateRef = useRef(false);
+  gateRef.current = gate !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -224,6 +238,7 @@ export default function App() {
     // in-app history left, the native shell moves the task to the background.
     const androidWindow = window as unknown as { __auralisAndroidBack?: () => boolean };
     androidWindow.__auralisAndroidBack = () => {
+      if (gateRef.current) return true;
       const nav = useNavStore.getState();
       if (!nav.canBack()) return false;
       nav.back();
@@ -278,6 +293,16 @@ export default function App() {
     }, 90);
     return () => window.clearTimeout(timer);
   }, [key]);
+
+  if (gate) {
+    return (
+      <div className="app-shell is-onboarding">
+        {gate === 'login' ? <LoginPage /> : <OnboardingPage />}
+        <DialogHost />
+        <Toasts />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">

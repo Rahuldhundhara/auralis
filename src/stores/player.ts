@@ -3,6 +3,7 @@ import type { Settings, Track } from '@shared/types';
 import { useAppStore } from './app';
 import { useUiStore } from './ui';
 import { isTypingTarget, safeJson, shuffleArray } from '../lib/format';
+import { rankRadioCandidates, tastePool } from '../lib/smartRadio';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -58,6 +59,8 @@ interface PlayerState {
   setSleepTimer: (minutes: number | 'end' | null) => void;
   clearSleepTimer: () => void;
   stop: () => void;
+  /** Silently resolve and buffer a track so a later tap starts instantly. */
+  warmTrack: (track: Track) => Promise<void>;
 }
 
 const STORAGE_KEY = 'auralis.player.v1';
@@ -79,6 +82,17 @@ function boundedQueue(queue: Track[], index: number) {
 
 let audio: HTMLAudioElement | null = null;
 let audioContext: AudioContext | null = null;
+
+interface WarmedAudio {
+  element: HTMLAudioElement;
+  url: string;
+  format?: string;
+}
+
+/** Upcoming songs that are already resolved and have buffered their first bytes. */
+const warmedAudio = new Map<string, WarmedAudio>();
+const elementSources = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
+const MAX_WARMED = 2;
 let sourceNode: MediaElementAudioSourceNode | null = null;
 let preampNode: GainNode | null = null;
 let bassNode: BiquadFilterNode | null = null;
@@ -103,6 +117,27 @@ let shuffleBackup: { queue: Track[]; index: number } | null = null;
 let errorRetries = 0;
 let mediaHandlersBound = false;
 let lastNativeSync = 0;
+
+interface PlaybackTrace {
+  trackId: string;
+  requestedAt: number;
+  resolvedAt?: number;
+  startedAt?: number;
+  format?: string;
+}
+
+/**
+ * Small QA-only trace used to measure real playback startup on a device.
+ * Nothing in the interface reads it; it is available to automated tests and
+ * `adb`/CDP inspections as `window.__auralisPlaybackTrace`.
+ */
+function setPlaybackTrace(trace: PlaybackTrace) {
+  try {
+    (window as unknown as { __auralisPlaybackTrace?: PlaybackTrace }).__auralisPlaybackTrace = trace;
+  } catch {
+    // ignore
+  }
+}
 
 function mediaArtwork(track: Track | undefined) {
   if (!track?.thumbnail) return [];
@@ -190,6 +225,81 @@ function ensureAudio(): HTMLAudioElement {
   return audio;
 }
 
+/** Reuse a warm element as the active one without breaking the DSP graph. */
+function activateAudioElement(element: HTMLAudioElement) {
+  if (audio === element) return;
+  audio?.pause();
+  if (sourceNode && audioContext && preampNode) {
+    try {
+      sourceNode.disconnect();
+    } catch {
+      // already disconnected
+    }
+    let nextSource = elementSources.get(element);
+    if (!nextSource) {
+      nextSource = audioContext.createMediaElementSource(element);
+      elementSources.set(element, nextSource);
+    }
+    sourceNode = nextSource;
+    sourceNode.connect(preampNode);
+  }
+  audio = element;
+  attachAudioListeners();
+}
+
+function forgetWarmed(trackId: string) {
+  const warmed = warmedAudio.get(trackId);
+  if (!warmed) return;
+  warmed.element.pause();
+  warmed.element.removeAttribute('src');
+  warmed.element.load();
+  warmedAudio.delete(trackId);
+}
+
+/**
+ * Resolve a track and let the WebView buffer its opening seconds in a muted,
+ * silent element. When the listener taps that song we hand this element to the
+ * player instead of creating a new network request.
+ */
+async function warmTrack(track: Track): Promise<void> {
+  if (track.localPath || warmedAudio.has(track.id)) return;
+  if (usePlayerStore.getState().current?.id === track.id) return;
+  try {
+    const warmResolve = window.auralis.player.warmResolve;
+    const stream = warmResolve
+      ? await warmResolve(playableTrack(track))
+      : await window.auralis.player.resolve(playableTrack(track));
+    if (!stream.url || warmedAudio.has(track.id)) return;
+    if (usePlayerStore.getState().current?.id === track.id) return;
+    const element = new Audio();
+    element.src = stream.url;
+    element.preload = 'auto';
+    element.muted = true;
+    element.volume = 0;
+    element.setAttribute('playsinline', 'true');
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      element.addEventListener('loadeddata', finish, { once: true });
+      element.addEventListener('canplay', finish, { once: true });
+      element.addEventListener('error', finish, { once: true });
+      window.setTimeout(finish, 3500);
+    });
+    warmedAudio.set(track.id, { element, url: stream.url, format: stream.format });
+    while (warmedAudio.size > MAX_WARMED) {
+      const oldest = warmedAudio.keys().next().value;
+      if (!oldest) break;
+      forgetWarmed(oldest);
+    }
+  } catch {
+    // Warming is best-effort; normal playback still resolves on demand.
+  }
+}
+
 function buildGraph() {
   if (graphAttempted || !audio) return;
   graphAttempted = true;
@@ -197,6 +307,7 @@ function buildGraph() {
     const Ctor = window.AudioContext || (window as any).webkitAudioContext;
     audioContext = new Ctor();
     sourceNode = audioContext.createMediaElementSource(audio);
+    elementSources.set(audio, sourceNode);
     preampNode = audioContext.createGain();
     bassNode = audioContext.createBiquadFilter();
     bassNode.type = 'lowshelf';
@@ -320,7 +431,7 @@ function cancelPrefetch() {
 function schedulePrefetch(track: Track | undefined, token: number) {
   cancelPrefetch();
   if (!track) return;
-  // Resolve the next song as soon as the current one is audible. yt-dlp
+  // Resolve the next song immediately after the current stream starts. yt-dlp
   // stream URLs stay cached for 90 minutes, so starting early keeps the
   // transition instant without changing what is downloaded.
   prefetchTimer = window.setTimeout(() => {
@@ -328,17 +439,10 @@ function schedulePrefetch(track: Track | undefined, token: number) {
     if (token !== loadToken) return;
     const state = usePlayerStore.getState();
     if (state.queue[state.index + 1]?.id !== track.id) return;
-    window.auralis.player.prefetch(playableTrack(track)).catch(() => {});
-    const after = state.queue[state.index + 2];
-    if (!after || after.id === track.id || after.localPath) return;
-    prefetchIdle = window.setTimeout(() => {
-      prefetchIdle = undefined;
-      const latest = usePlayerStore.getState();
-      if (token !== loadToken) return;
-      if (latest.queue[latest.index + 1]?.id !== track.id) return;
-      window.auralis.player.prefetch(playableTrack(after)).catch(() => {});
-    }, 4200);
-  }, 350);
+    // Only the immediate next song is warmed. Warming two songs ahead cost
+    // extra network and memory on phones without improving tap-to-play time.
+    void warmTrack(track);
+  }, 0);
 }
 
 function finalizePlayback(completed = false) {
@@ -398,6 +502,11 @@ function attachAudioListeners() {
   });
   audio.addEventListener('play', () => {
     usePlayerStore.setState({ playing: true, buffering: false, error: undefined });
+    const trace = (window as unknown as { __auralisPlaybackTrace?: PlaybackTrace }).__auralisPlaybackTrace;
+    if (trace && trace.trackId === usePlayerStore.getState().current?.id && trace.startedAt === undefined) {
+      trace.startedAt = performance.now();
+      setPlaybackTrace(trace);
+    }
     updateMediaSession(usePlayerStore.getState().current, true);
     notifyDiscord();
   });
@@ -441,7 +550,7 @@ function attachAudioListeners() {
         if (current.current?.id === track.id) {
           current.playAt(current.index);
         }
-      }, 700);
+      }, 250);
       return;
     }
     usePlayerStore.setState({
@@ -577,7 +686,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       finalizePlayback(false);
       errorRetries = 0;
     }
-    const el = ensureAudio();
+    const warmed = warmedAudio.get(track.id);
+    if (warmed) activateAudioElement(warmed.element);
+    else ensureAudio();
+    const el = audio!;
     buildGraph();
     cancelPrefetch();
     loadToken++;
@@ -585,6 +697,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     recorded = false;
     playbackStartedAt = Date.now();
     pendingSeek = startAt;
+    const trace: PlaybackTrace = { trackId: track.id, requestedAt: performance.now() };
+    setPlaybackTrace(trace);
     el.pause();
     set({
       current: track,
@@ -604,15 +718,50 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       window.auralis.lastfm.nowPlaying(track).catch(() => {});
     }
     notifyDiscord();
+    // Start warming the next item now, in parallel with the current resolve.
+    // Waiting until the current song starts leaves Next cold on slow networks.
+    const immediateNext = get().queue[get().index + 1];
+    if (immediateNext && immediateNext.id !== track.id) void warmTrack(immediateNext);
     try {
+      if (warmed) {
+        // The URL is already resolved and the opening seconds are buffered in
+        // this exact element. No network round-trip is needed for the tap.
+        warmedAudio.delete(track.id);
+        trace.resolvedAt = performance.now();
+        trace.format = warmed.format;
+        setPlaybackTrace(trace);
+        audioContext?.resume().catch(() => {});
+        el.playbackRate = settings.playbackRate || 1;
+        el.volume = settings.muted ? 0 : settings.volume;
+        el.muted = settings.muted;
+        if (startAt > 0 && Number.isFinite(el.duration)) {
+          el.currentTime = Math.min(startAt, Math.max(0, el.duration - 0.5));
+          pendingSeek = 0;
+        }
+        set({ streamFormat: warmed.format });
+        if (autoplay) {
+          try {
+            await el.play();
+          } catch (error: any) {
+            set({ playing: false, loading: false, error: error?.message || 'Playback was blocked.' });
+          }
+        } else {
+          set({ loading: false });
+        }
+        const readyNext = get().queue[get().index + 1];
+        schedulePrefetch(readyNext, token);
+        return;
+      }
       const stream = await window.auralis.player.resolve(playableTrack(track));
       if (token !== loadToken || get().current?.id !== track.id) return;
+      trace.resolvedAt = performance.now();
+      trace.format = stream.format;
+      setPlaybackTrace(trace);
       audioContext?.resume().catch(() => {});
       el.src = stream.url;
       el.playbackRate = settings.playbackRate || 1;
       el.volume = settings.muted ? 0 : settings.volume;
       el.muted = settings.muted;
-      el.load();
       set({ streamFormat: stream.format });
       if (autoplay) {
         try {
@@ -627,6 +776,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       schedulePrefetch(nextTrack, token);
     } catch (error: any) {
       if (token !== loadToken) return;
+      if (/CancelledException|superseded/i.test(String(error?.message || error)) && errorRetries < 1) {
+        errorRetries += 1;
+        window.setTimeout(() => {
+          const current = get();
+          if (current.current?.id === track.id) current.playAt(current.index);
+        }, 200);
+        return;
+      }
       set({
         loading: false,
         playing: false,
@@ -653,6 +810,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     set({ radioLoading: true });
     let nextToken = continuation;
     try {
+      const seedTrack = get().queue.find((track) => track.id === seed) || get().current;
+      const pool = await tastePool().catch(() => []);
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const result = await window.auralis.yt.next(
           { videoId: seed, playlistId: `RDAMVM${seed}` },
@@ -660,11 +819,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         );
         if (get().radioSeed !== seed) return 'stale';
         const existing = new Set(get().queue.map((track) => track.id));
-        const extra = result.tracks.filter((track) => {
-          if (existing.has(track.id)) return false;
-          existing.add(track.id);
-          return true;
-        });
+        // YouTube's related list drifts after a few songs. Re-rank it against
+        // the listener's picked artists, likes and recent plays, and mix in a
+        // small pool of songs from those artists to keep the same vibe.
+        const extra = rankRadioCandidates([...result.tracks, ...pool], seedTrack, existing).slice(0, 16);
+        extra.forEach((track) => existing.add(track.id));
         nextToken = result.continuation;
         if (!extra.length) {
           if (!nextToken) break;
@@ -730,6 +889,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       restoreSession();
       setupMediaSession();
       bindKeyboard();
+
+      // Warm the restored song while the listener decides what to do. This is
+      // silent and does not autoplay; pressing play then starts immediately.
+      const restoredTrack = get().current;
+      if (restoredTrack) {
+        window.setTimeout(() => {
+          const state = get();
+          if (state.current?.id !== restoredTrack.id || state.loading || state.playing || audio?.src) return;
+          void warmTrack(restoredTrack);
+        }, 700);
+      }
 
       window.auralis.events.onMediaKey((payload) => {
         let action = payload;
@@ -834,11 +1004,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         });
         if (get().radioSeed !== track.id) return;
         const existing = new Set(get().queue.map((item) => item.id));
-        const extra = result.tracks.filter((item) => {
-          if (existing.has(item.id)) return false;
-          existing.add(item.id);
-          return true;
-        });
+        const pool = await tastePool().catch(() => []);
+        const extra = rankRadioCandidates([...result.tracks, ...pool], track, existing).slice(0, 16);
+        extra.forEach((item) => existing.add(item.id));
         const merged = [...get().queue, ...radioTracksForQueue(extra)];
         const bounded = boundedQueue(merged, get().index);
         set({
@@ -1148,8 +1316,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     clearSleepTimer: () => set({ sleepTimerEnd: undefined, sleepTimerEndOfTrack: false }),
 
+    warmTrack: (track) => warmTrack(track),
+
     stop: () => {
       cancelPrefetch();
+      for (const id of [...warmedAudio.keys()]) forgetWarmed(id);
       finalizePlayback(false);
       if (audio) {
         audio.pause();

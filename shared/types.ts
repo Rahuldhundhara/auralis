@@ -214,12 +214,27 @@ export interface TranslationSettings {
   openaiModel: string;
 }
 
+export interface TasteArtist {
+  id: string;
+  name: string;
+  thumbnail?: string;
+  subtitle?: string;
+}
+
 export interface Settings {
   theme: ThemeMode;
   accent: string;
   language: string;
   region: string;
   startPage: 'home' | 'explore' | 'library';
+  /** Language ids picked in the two-step taste onboarding. */
+  tasteLanguages?: string[];
+  /** Artists picked in the two-step taste onboarding. */
+  tasteArtists?: TasteArtist[];
+  /** Genres picked in the taste onboarding. */
+  tasteGenres?: string[];
+  /** False until the taste onboarding is finished or skipped once. */
+  onboardingComplete?: boolean;
   audioQuality: AudioQuality;
   volume: number;
   muted: boolean;

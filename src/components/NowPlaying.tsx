@@ -11,6 +11,8 @@ import {
   MicVocal,
   MoreHorizontal,
   Radio,
+  Video,
+  VideoOff,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { useNavStore } from '../stores/nav';
@@ -120,9 +122,16 @@ export function NowPlaying() {
   const navigate = useNavStore((state) => state.navigate);
   const openDialog = useUiStore((state) => state.openDialog);
   const videoClips = useAppStore((state) => Boolean(state.settings.videoClips));
+  const updateSettings = useAppStore((state) => state.updateSettings);
   const [artLoaded, setArtLoaded] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | undefined>();
+  const [videoMode, setVideoMode] = useState(videoClips);
+  const [videoStatus, setVideoStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    setVideoMode(videoClips);
+  }, [videoClips]);
 
   useEffect(() => {
     if (!open) return;
@@ -136,28 +145,37 @@ export function NowPlaying() {
   useEffect(() => {
     setArtLoaded(false);
     setVideoUrl(undefined);
+    setVideoStatus('idle');
   }, [current?.id]);
 
   useEffect(() => {
     setVideoUrl(undefined);
-    if (!open || !videoClips || !current || current.localPath || !isAndroidShell) return;
+    if (!open || !videoMode || !current || current.localPath || !isAndroidShell) {
+      setVideoStatus('idle');
+      return;
+    }
     const resolveVideo = window.auralis.player.resolveVideo;
-    if (!resolveVideo) return;
+    if (!resolveVideo) {
+      setVideoStatus('unavailable');
+      return;
+    }
     let cancelled = false;
     const trackId = current.id;
+    setVideoStatus('loading');
     resolveVideo(current)
       .then((stream) => {
         if (cancelled || !stream.url) return;
         if (usePlayerStore.getState().current?.id !== trackId) return;
         setVideoUrl(stream.url);
+        setVideoStatus('ready');
       })
       .catch(() => {
-        // Artwork remains the fallback when no progressive video exists.
+        if (!cancelled) setVideoStatus('unavailable');
       });
     return () => {
       cancelled = true;
     };
-  }, [open, videoClips, current]);
+  }, [open, videoMode, current]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -206,6 +224,22 @@ export function NowPlaying() {
         </IconButton>
         <span className="np-header-title">Now playing</span>
         <div className="np-header-actions">
+          {isAndroidShell ? (
+            <IconButton
+              label={videoMode ? 'Turn immersive video off' : 'Turn immersive video on'}
+              size="sm"
+              active={videoMode}
+              onClick={() => {
+                const next = !videoMode;
+                setVideoMode(next);
+                setVideoStatus(next ? 'loading' : 'idle');
+                if (!next) setVideoUrl(undefined);
+                void updateSettings({ videoClips: next }).catch(() => {});
+              }}
+            >
+              {videoMode ? <Video size={18} /> : <VideoOff size={18} />}
+            </IconButton>
+          ) : null}
           <IconButton label="Queue" size="sm" active={tab === 'queue'} onClick={() => setTab('queue')}>
             <ListMusic size={18} />
           </IconButton>
@@ -218,8 +252,10 @@ export function NowPlaying() {
           </IconButton>
         </div>
       </header>
-      <div className="np-layout">
-        <section className={`np-left ${artLoaded ? 'is-loaded' : ''}`}>
+      <div
+        className={`np-layout ${videoUrl && videoMode ? 'is-immersive-video' : ''} ${tab === 'lyrics' ? 'is-lyrics-open' : ''}`}
+      >
+        <section className={`np-left ${artLoaded ? 'is-loaded' : ''} ${videoUrl && videoMode ? 'is-video-immersive' : ''}`}>
           <div className={`np-art-frame ${videoUrl ? 'has-video' : ''}`}>
             <Artwork src={artworkSrc} alt={current.title} className="np-art" />
             {videoUrl ? (
@@ -233,9 +269,12 @@ export function NowPlaying() {
                   preload="metadata"
                   disablePictureInPicture
                   aria-label={`Video clip for ${current.title}`}
-                  onError={() => setVideoUrl(undefined)}
+                  onError={() => {
+                    setVideoUrl(undefined);
+                    setVideoStatus('unavailable');
+                  }}
                 />
-                <span className="np-video-badge">Video</span>
+                <span className="np-video-badge">Immersive video</span>
               </>
             ) : null}
             {!artLoaded && !videoUrl ? <img src={artworkSrc} alt="" className="preload-img" onLoad={() => setArtLoaded(true)} /> : null}
@@ -299,6 +338,16 @@ export function NowPlaying() {
             <IconButton label="Add to playlist" size="md" onClick={() => openDialog({ type: 'add-to-playlist', track: current })}>
               <ListPlus size={21} />
             </IconButton>
+            <button
+              type="button"
+              className={`np-lyrics-cta ${tab === 'lyrics' ? 'is-active' : ''}`}
+              aria-expanded={tab === 'lyrics'}
+              onClick={() => setTab(tab === 'lyrics' ? 'queue' : 'lyrics')}
+            >
+              <MicVocal size={17} />
+              <span>Lyrics</span>
+              <ChevronDown size={14} className={tab === 'lyrics' ? 'is-flipped' : ''} />
+            </button>
             <IconButton label="More options" size="md" onClick={(event) => showTrackMenu(current, event)}>
               <MoreHorizontal size={21} />
             </IconButton>
@@ -319,6 +368,12 @@ export function NowPlaying() {
               </>
             ) : null}
           </div>
+          {videoMode && videoStatus === 'loading' ? (
+            <div className="np-video-status"><Video size={13} /> Preparing immersive video…</div>
+          ) : null}
+          {videoMode && videoStatus === 'unavailable' ? (
+            <div className="np-video-status is-muted"><VideoOff size={13} /> Video unavailable for this track — artwork stays.</div>
+          ) : null}
         </section>
 
         <section className="np-right">

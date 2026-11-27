@@ -21,6 +21,10 @@ export function MediaCard({
   const [busy, setBusy] = useState(false);
   const round = Boolean(card.round) || card.type === 'artist' || card.type === 'profile';
   const playable = Boolean(card.track) || ['song', 'video', 'episode', 'album', 'single', 'ep', 'playlist', 'podcast'].includes(card.type);
+  // Some home carousel cards only carry a nested track. Use that track's real
+  // artwork so exploration shelves never show an empty tile. Mood/genre tiles
+  // intentionally keep their colour orb instead of a placeholder image.
+  const artwork = card.thumbnail || card.track?.thumbnail;
 
   if (card.type === 'mood') {
     return (
@@ -76,7 +80,7 @@ export function MediaCard({
           aria-label={card.track ? `Play ${card.title}` : `Open ${card.title}`}
           title={card.title}
         >
-          <Artwork src={card.thumbnail} alt={card.title} round={round} className="card-art" />
+          <Artwork src={artwork} alt={card.title} round={round} className="card-art" />
           {card.type === 'video' ? (
             <span className="card-kind" title="Video">
               <Video size={13} />

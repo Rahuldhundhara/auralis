@@ -33,6 +33,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
   const autoTranslatedRef = useRef('');
+  const lastFollowRef = useRef<number | null>(null);
 
   const load = async (force = false) => {
     if (!track) return;
@@ -55,6 +56,7 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
   useEffect(() => {
     if (!active || !track) return;
     setResult(null);
+    lastFollowRef.current = null;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, track?.id, track?.title]);
@@ -67,8 +69,25 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
     const container = scrollRef.current;
     const element = activeRef.current;
     if (!container || !element) return;
-    const target = element.offsetTop - container.clientHeight / 2 + element.clientHeight / 2;
-    container.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    // `offsetTop` is relative to the nearest positioned ancestor, which is the
+    // Now Playing layout on Android, not the lyrics scroller. Use viewport
+    // rectangles so the active line lands in the middle of the visible panel.
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const target = Math.max(
+      0,
+      container.scrollTop +
+        (elementRect.top - containerRect.top) -
+        container.clientHeight / 2 +
+        elementRect.height / 2,
+    );
+    const distance = Math.abs(target - container.scrollTop);
+    const firstPosition = lastFollowRef.current === null;
+    container.scrollTo({
+      top: target,
+      behavior: firstPosition || distance > container.clientHeight * 1.5 ? 'auto' : 'smooth',
+    });
+    lastFollowRef.current = index;
   }, [index, follow]);
 
   const translate = async () => {
@@ -230,6 +249,9 @@ export function LyricsPanel({ track, active = true }: { track?: Track; active?: 
           ref={scrollRef}
           className={`lyrics-scroll ${synced ? 'is-synced' : 'is-plain'}`}
           onWheel={() => {
+            if (synced) setFollow(false);
+          }}
+          onTouchMove={() => {
             if (synced) setFollow(false);
           }}
         >

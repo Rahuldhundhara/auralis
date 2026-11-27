@@ -27,8 +27,14 @@ import androidx.core.view.WindowCompat;
  */
 public class LoginActivity extends AppCompatActivity {
     public static final String EXTRA_COOKIE = "cookie";
-    private static final String DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+    // A normal Android Chrome UA (no "; wv" token). Google rejects the generic
+    // WebView UA with "This browser or app may not be secure".
+    private static final String BROWSER_UA =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36";
+    private static final String CHROME_BRIDGE_JS =
+            "(function(){try{if(!window.chrome){window.chrome={runtime:{},loadTimes:function(){return {};},csi:function(){return {};}};}" +
+                    "if(navigator.webdriver){Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;}});}" +
+                    "}catch(e){}})()";
     private WebView webView;
 
     @Override
@@ -82,17 +88,29 @@ public class LoginActivity extends AppCompatActivity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setUserAgentString(DESKTOP_UA);
+        settings.setUserAgentString(BROWSER_UA);
+        settings.setSupportMultipleWindows(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+                // Google's sign-in sometimes opens a second window. Keep it in
+                // this activity instead of losing the cookie jar to a popup.
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(webView);
+                resultMsg.sendToTarget();
+                return true;
+            }
+        });
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                view.evaluateJavascript(CHROME_BRIDGE_JS, null);
                 Uri uri = Uri.parse(url);
                 String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
                 if (host.equals("music.youtube.com") && (uri.getPath() == null || uri.getPath().equals("/"))) {

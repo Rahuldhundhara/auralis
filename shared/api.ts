@@ -119,6 +119,8 @@ export interface AuralisApi {
     resolve(track: Track): Promise<StreamInfo>;
     resolveVideo?(track: Track): Promise<StreamInfo>;
     prefetch(track: Track): Promise<void>;
+    /** Resolve without cancelling other workers, for silent next-track warming. */
+    warmResolve?(track: Track): Promise<StreamInfo>;
     download(track: Track): Promise<DownloadItem>;
     cancelDownload(id: string): Promise<void>;
     invalidate(trackId: string): Promise<void>;
